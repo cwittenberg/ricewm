@@ -1,4 +1,4 @@
-name: Core and SDK
+name: Desktop, core and SDK
 on: [push, pull_request]
 permissions:
   contents: read
@@ -17,3 +17,7 @@ jobs:
       - run: cargo build --locked -p rice-display --target wasm32-unknown-unknown
       - run: node examples/display-smoke.mjs target/wasm32-unknown-unknown/debug/rice_display.wasm /tmp/ricewm-display.png
       - run: npm test
+      - run: npm install --ignore-scripts
+      - run: npx playwright install --with-deps chromium
+      - run: npm run build
+      - run: npm run test:web

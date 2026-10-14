@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <meta charset="utf-8" /><meta
+    name="viewport"
+    content="width=device-width,initial-scale=1"
+  /><title>RiceWM</title>
+  <link
+    rel="icon"
+    href="./web/assets/img/ricewm-logo.svg"
+    type="image/svg+xml"
+  />
+  <link rel="stylesheet" href="./web/desktop.css" />
+  <script type="importmap">
+    {
+      "imports": {
+        "@ricewm/app": "./sdk/versions/1.0.0/runtime/sdk/js/index.mjs"
+      }
+    }
+  </script>
+  <body>
+    <main id="desktop">
+      <canvas id="screen" tabindex="0" aria-label="RiceWM desktop"></canvas>
+      <div id="status" role="status">Starting RiceWM…</div>
+    </main>
+    <script type="module" src="./web/desktop.mjs"></script>
+  </body>
+</html>

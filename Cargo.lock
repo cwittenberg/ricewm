@@ -39,6 +39,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "rice-apps"
+version = "0.1.0"
+dependencies = [
+ "rice-calc",
+ "rice-desktop",
+ "rice-files",
+ "rice-i18n",
+ "rice-native-app-protocol",
+ "rice-ui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "rice-box"
 version = "0.1.0"
 

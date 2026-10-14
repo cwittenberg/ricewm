@@ -1,0 +1,17 @@
+[package]
+name="rice-apps"
+version.workspace=true
+edition.workspace=true
+license.workspace=true
+repository.workspace=true
+[lib]
+crate-type=["cdylib","rlib"]
+[dependencies]
+rice-i18n={workspace=true,features=["browser-catalogs"]}
+rice-desktop.workspace=true
+rice-calc.workspace=true
+rice-native-app-protocol.workspace=true
+rice-ui.workspace=true
+serde_json="1"
+rice-files.workspace=true
+serde={version="1",features=["derive"]}

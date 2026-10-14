@@ -5,9 +5,15 @@
   "type": "module",
   "exports": "./sdk/versions/1.0.0/runtime/sdk/js/index.mjs",
   "scripts": {
-    "test": "node --experimental-global-webcrypto --test tests/sdk.test.mjs"
+    "test": "node --experimental-global-webcrypto --test tests/sdk.test.mjs",
+    "build": "node tools/build-web.mjs",
+    "start": "node tools/serve-web.mjs",
+    "test:web": "node tests/web/desktop-chromium.mjs"
   },
   "engines": {
     "node": ">=18"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
   }
 }

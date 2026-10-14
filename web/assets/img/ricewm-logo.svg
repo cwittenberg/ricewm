@@ -1,0 +1,33 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" role="img" aria-labelledby="title desc">
+  <title id="title">riceWM logo</title>
+  <desc id="desc">A bold hexagonal ice crystal outline containing a filled rice grain with a cutout stem.</desc>
+
+  <g fill="none" stroke="#536B91" stroke-width="18" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M128 14
+             L226 70
+             L226 186
+             L128 242
+             L30 186
+             L30 70
+             Z"/>
+  </g>
+
+  <path
+    fill="#536B91"
+    fill-rule="evenodd"
+    d="M128 48
+       C102 67 88 96 88 128
+       C88 163 101 194 124 211
+       C127 213 130 213 133 211
+       C156 194 168 163 168 128
+       C168 96 154 67 128 48
+       Z
+
+       M124 184
+       C116 169 113 153 114 137
+       C115 123 119 111 126 99
+       C123 116 122 132 123 148
+       C124 162 127 175 132 188
+       C129 187 126 186 124 184
+       Z"/>
+</svg>

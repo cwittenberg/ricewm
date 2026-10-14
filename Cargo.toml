@@ -1,6 +1,7 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/rice-apps",
     "crates/rice-i18n",
     "crates/rice-native-app-protocol",
     "crates/rice-display",
