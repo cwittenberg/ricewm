@@ -13,4 +13,7 @@ jobs:
           node-version: 22
       - run: cargo test --workspace --locked
       - run: cargo run --locked -p ricewm-core-demo -- /tmp/ricewm-demo.txt
+      - run: rustup target add wasm32-unknown-unknown
+      - run: cargo build --locked -p rice-display --target wasm32-unknown-unknown
+      - run: node examples/display-smoke.mjs target/wasm32-unknown-unknown/debug/rice_display.wasm /tmp/ricewm-display.png
       - run: npm test

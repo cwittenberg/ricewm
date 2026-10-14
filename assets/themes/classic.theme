@@ -1,0 +1,27 @@
+# Win32-familiar RiceWM theme. The stable filename preserves saved settings.
+name=Familiar
+taskbar.bar=f0f0f0
+taskbar.ridge=ffffff
+taskbar.start=f0f0f0
+taskbar.task=f0f0f0
+taskbar.tray=f0f0f0
+taskbar.text=000000
+accent=0078d7
+icon=000000
+icon.hover=000000
+icon.variant=color
+icon.overrides=downloads:folder-color;desktop-folder:desktop-color
+menu.background=f0f0f0
+menu.alternate=ffffff
+menu.separator=a0a0a0
+menu.hover=0078d7
+menu.selected=e5f1fb
+menu.text=000000
+frame.active=0078d7
+frame.inactive=a0a0a0
+frame.border=f0f0f0
+frame.body=f0f0f0
+frame.text=ffffff
+frame.control=f0f0f0
+frame.close=e81123
+frame.pressed=c50f1f

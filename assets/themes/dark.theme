@@ -1,0 +1,27 @@
+# High-contrast dark RiceWM theme.
+name=Dark
+taskbar.bar=111827
+taskbar.ridge=334155
+taskbar.start=293548
+taskbar.task=1f2937
+taskbar.tray=0b1120
+taskbar.text=f8fafc
+accent=60a5fa
+icon=f8fafc
+icon.hover=60a5fa
+icon.variant=color
+icon.overrides=
+menu.background=111827
+menu.alternate=172233
+menu.separator=334155
+menu.hover=e95420
+menu.selected=482730
+menu.text=f8fafc
+frame.active=1e40af
+frame.inactive=334155
+frame.border=475f7d
+frame.body=10151c
+frame.text=ffffff
+frame.control=3e526d
+frame.close=b93c4c
+frame.pressed=0f172a

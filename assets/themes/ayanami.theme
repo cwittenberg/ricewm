@@ -1,0 +1,338 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Ayanami",
+  "description": "Signal-console chrome with selectable color palettes and the original five-image Ayanami collection.",
+  "appearance": {
+    "taskbar.bar": "0a0a0a",
+    "taskbar.ridge": "cc1515",
+    "taskbar.start": "cc1515",
+    "taskbar.task": "141414",
+    "taskbar.tray": "141414",
+    "taskbar.text": "e8e8e8",
+    "accent": "cc1515",
+    "icon": "e8e8e8",
+    "icon.hover": "cc1515",
+    "icon.variant": "monochrome",
+    "icon.overrides": "",
+    "menu.background": "0a0a0a",
+    "menu.alternate": "141414",
+    "menu.separator": "412525",
+    "menu.hover": "cc1515",
+    "menu.selected": "cc1515",
+    "menu.text": "e8e8e8",
+    "frame.active": "cc1515",
+    "frame.inactive": "141414",
+    "frame.border": "777777",
+    "frame.body": "0a0a0a",
+    "frame.text": "e8e8e8",
+    "frame.control": "cc1515",
+    "frame.close": "cc1515",
+    "frame.pressed": "cc1515",
+    "chrome.profile": "standard",
+    "material": "solid",
+    "corner.radius": "0",
+    "decoration.asset": "",
+    "decoration.layout": "none",
+    "decoration.opacity": "0",
+    "decoration.enabled": "false",
+    "button.style": "default",
+    "window.shape": "default",
+    "control.layout": "grouped",
+    "panel.position": "bottom",
+    "sidebar.material": "solid",
+    "menu.material": "solid"
+  },
+  "version": 1,
+  "wallpapers": [
+    {
+      "id": "ayanami-01",
+      "name": "Ayanami 01",
+      "source": "/usr/share/ricewm/wallpapers/ayanami-01.webp",
+      "credit": "cwittenberg / theme-ayanami",
+      "type": "image",
+      "mode": "Crop",
+      "flight": {
+        "enabled": true,
+        "duration": 1400,
+        "views": {
+          "desktop": {
+            "x": 0.5,
+            "y": 0.5,
+            "zoom": 1
+          },
+          "rice-files": {
+            "x": 0.25,
+            "y": 0.53,
+            "zoom": 1.8
+          },
+          "rice-bowl": {
+            "x": 0.78,
+            "y": 0.35,
+            "zoom": 2.1
+          }
+        }
+      }
+    },
+    {
+      "id": "ayanami-02",
+      "name": "Ayanami 02",
+      "source": "/usr/share/ricewm/wallpapers/ayanami-02.webp",
+      "credit": "cwittenberg / theme-ayanami",
+      "type": "image",
+      "mode": "Crop"
+    },
+    {
+      "id": "ayanami-03",
+      "name": "Ayanami 03",
+      "source": "/usr/share/ricewm/wallpapers/ayanami-03.webp",
+      "credit": "cwittenberg / theme-ayanami",
+      "type": "image",
+      "mode": "Crop"
+    },
+    {
+      "id": "ayanami-04",
+      "name": "Ayanami 04",
+      "source": "/usr/share/ricewm/wallpapers/ayanami-04.webp",
+      "credit": "cwittenberg / theme-ayanami",
+      "type": "image",
+      "mode": "Crop"
+    },
+    {
+      "id": "ayanami-05",
+      "name": "Ayanami 05",
+      "source": "/usr/share/ricewm/wallpapers/ayanami-05.webp",
+      "credit": "cwittenberg / theme-ayanami",
+      "type": "image",
+      "mode": "Crop"
+    }
+  ],
+  "appViewsEnabled": false,
+  "defaultWallpaper": "ayanami-03",
+  "extensions": [
+    {
+      "uuid": "quick-notes@ricewm",
+      "required": true,
+      "settings": {}
+    }
+  ],
+  "motion": {
+    "window.open": {
+      "preset": "Curtain",
+      "duration": 780
+    },
+    "window.close": {
+      "preset": "Curtain",
+      "duration": 510
+    },
+    "menu.open": {
+      "preset": "Curtain",
+      "duration": 156
+    },
+    "menu.close": {
+      "preset": "Curtain",
+      "duration": 102
+    },
+    "menu.fold": {
+      "preset": "Fold",
+      "duration": 240,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "scaleY": 0.15,
+          "opacity": 0.3
+        },
+        {
+          "at": 1,
+          "scaleY": 1,
+          "opacity": 1
+        }
+      ]
+    },
+    "notification.open": {
+      "preset": "Curtain",
+      "duration": 780
+    },
+    "notification.close": {
+      "preset": "Curtain",
+      "duration": 510
+    },
+    "deck.open": {
+      "preset": "Curtain",
+      "duration": 780
+    },
+    "deck.close": {
+      "preset": "Curtain",
+      "duration": 510
+    },
+    "hover": {
+      "preset": "Slide",
+      "duration": 140,
+      "easing": "ease-out",
+      "keyframes": [
+        {
+          "at": 0,
+          "x": -5,
+          "opacity": 0.78
+        },
+        {
+          "at": 1,
+          "x": 0,
+          "opacity": 1
+        }
+      ]
+    },
+    "deck.switch": {
+      "preset": "Fade",
+      "duration": 160
+    }
+  },
+  "deck": [
+    "applications",
+    "controls",
+    "wallpapers",
+    "notes",
+    "clipboard",
+    "notifications"
+  ],
+  "settings": {
+    "dock.top_bar.visible": "true",
+    "appearance.animations": "true",
+    "appearance.animations.elastic": "false",
+    "appearance.windows.rounded": "false",
+    "appearance.background.type": "Image",
+    "appearance.wallpaper.mode": "Crop",
+    "dock.position": "Bottom"
+  },
+  "background": {
+    "type": "image",
+    "source": "/usr/share/ricewm/wallpapers/ayanami-03.webp",
+    "mode": "Crop",
+    "fallback": {
+      "type": "gradient",
+      "start": "#0a0a0a",
+      "middle": "#201014",
+      "end": "#090909",
+      "accent": "#cc1515"
+    }
+  },
+  "overrides": {},
+  "quickMenu": {
+    "applications": "list",
+    "density": "compact",
+    "font": "monospace",
+    "width": 720
+  },
+  "surface": {
+    "frame": "bracket",
+    "edge": "#c0c0c0",
+    "cornerLength": 8,
+    "inset": 5,
+    "titleInk": "#101010"
+  },
+  "widgets": [
+    {
+      "key": "glava",
+      "package": "org.glava.visualizer",
+      "required": true,
+      "workspace": "all",
+      "placement": "bottom-full-width",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1024,
+        "height": 112
+      },
+      "surface": {
+        "background": "none",
+        "border": false
+      }
+    }
+  ],
+  "defaultPalette": "signal-red",
+  "palettes": [
+    {
+      "id": "signal-red",
+      "name": "Signal Red",
+      "appearance": {
+        "taskbar.ridge": "cc1515",
+        "taskbar.start": "cc1515",
+        "accent": "cc1515",
+        "icon.hover": "cc1515",
+        "menu.hover": "cc1515",
+        "menu.selected": "cc1515",
+        "frame.active": "cc1515",
+        "frame.control": "cc1515",
+        "frame.close": "cc1515",
+        "frame.pressed": "cc1515"
+      },
+      "wallpaper": "ayanami-03"
+    },
+    {
+      "id": "polar-white",
+      "name": "Polar White",
+      "appearance": {
+        "taskbar.ridge": "dce7f0",
+        "taskbar.start": "dce7f0",
+        "accent": "dce7f0",
+        "icon.hover": "dce7f0",
+        "menu.hover": "dce7f0",
+        "menu.selected": "dce7f0",
+        "frame.active": "dce7f0",
+        "frame.control": "dce7f0",
+        "frame.close": "dce7f0",
+        "frame.pressed": "dce7f0",
+        "menu.separator": "34414d",
+        "frame.body": "0d1218",
+        "menu.background": "0d1218",
+        "menu.alternate": "18212a",
+        "taskbar.bar": "090e14"
+      },
+      "wallpaper": "ayanami-02"
+    },
+    {
+      "id": "graphite",
+      "name": "Graphite",
+      "appearance": {
+        "taskbar.ridge": "91a5b8",
+        "taskbar.start": "91a5b8",
+        "accent": "91a5b8",
+        "icon.hover": "91a5b8",
+        "menu.hover": "91a5b8",
+        "menu.selected": "91a5b8",
+        "frame.active": "91a5b8",
+        "frame.control": "91a5b8",
+        "frame.close": "91a5b8",
+        "frame.pressed": "91a5b8",
+        "menu.separator": "34414d",
+        "frame.body": "0d1218",
+        "menu.background": "0d1218",
+        "menu.alternate": "18212a",
+        "taskbar.bar": "090e14"
+      },
+      "wallpaper": "ayanami-04"
+    },
+    {
+      "id": "hazard-amber",
+      "name": "Hazard Amber",
+      "appearance": {
+        "taskbar.ridge": "e6ad4b",
+        "taskbar.start": "e6ad4b",
+        "accent": "e6ad4b",
+        "icon.hover": "e6ad4b",
+        "menu.hover": "e6ad4b",
+        "menu.selected": "e6ad4b",
+        "frame.active": "e6ad4b",
+        "frame.control": "e6ad4b",
+        "frame.close": "e6ad4b",
+        "frame.pressed": "e6ad4b",
+        "menu.separator": "34414d",
+        "frame.body": "0d1218",
+        "menu.background": "0d1218",
+        "menu.alternate": "18212a",
+        "taskbar.bar": "090e14"
+      },
+      "wallpaper": "ayanami-05"
+    }
+  ]
+}

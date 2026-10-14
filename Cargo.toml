@@ -1,6 +1,10 @@
 [workspace]
 resolver = "3"
 members = [
+    "crates/rice-i18n",
+    "crates/rice-native-app-protocol",
+    "crates/rice-display",
+    "crates/rice-x11-core",
     "crates/rice-desktop",
     "crates/rice-box",
     "crates/rice-calc",
@@ -13,7 +17,6 @@ members = [
     "crates/rice-tray",
     "crates/rice-web-render-protocol",
     "crates/rice-ui",
-    "crates/rice-layout",
     "examples/core-demo",
 ]
 
@@ -24,6 +27,11 @@ license = "MIT"
 repository = "https://github.com/cwittenberg/ricewm"
 
 [workspace.dependencies]
+yserver-protocol = { git = "https://github.com/joske/yserver.git", rev = "f3de5026a9675bba0e449594a05d35c30ca5d53a" }
+rice-i18n = { path = "crates/rice-i18n" }
+rice-native-app-protocol = { path = "crates/rice-native-app-protocol" }
+rice-display = { path = "crates/rice-display" }
+rice-x11-core = { path = "crates/rice-x11-core" }
 rice-desktop = { path = "crates/rice-desktop" }
 rice-box = { path = "crates/rice-box" }
 rice-calc = { path = "crates/rice-calc" }
@@ -36,7 +44,6 @@ rice-image-contract = { path = "crates/rice-image-contract" }
 rice-tray = { path = "crates/rice-tray" }
 rice-web-render-protocol = { path = "crates/rice-web-render-protocol" }
 rice-ui = { path = "crates/rice-ui" }
-rice-layout = { path = "crates/rice-layout" }
 
 [workspace.lints.rust]
 unsafe_op_in_unsafe_fn = "deny"

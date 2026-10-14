@@ -1,0 +1,396 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Frosted Ice",
+  "version": 1,
+  "description": "Clear liquid glass with deep refraction, spectral edges and smooth window transitions.",
+  "appearance": {
+    "taskbar.bar": "0f1113",
+    "taskbar.ridge": "9d90b5",
+    "taskbar.start": "1f222a",
+    "taskbar.task": "1f222a",
+    "taskbar.tray": "0e0f12",
+    "taskbar.text": "eaf7fb",
+    "accent": "9d90b5",
+    "icon": "eaf7fb",
+    "icon.hover": "9d90b5",
+    "icon.variant": "color",
+    "icon.overrides": "",
+    "menu.background": "1f222a",
+    "menu.alternate": "1f222a",
+    "menu.separator": "31505a",
+    "menu.hover": "21313b",
+    "menu.selected": "21313b",
+    "menu.text": "f3f8fa",
+    "frame.active": "1f222a",
+    "frame.inactive": "1f222a",
+    "frame.border": "36333e",
+    "frame.body": "1f222a",
+    "frame.text": "f6fbfc",
+    "frame.control": "21313b",
+    "frame.close": "9d90b5",
+    "frame.pressed": "21313b",
+    "material": "frosted-ice",
+    "corner.radius": "16"
+  },
+  "glass": {
+    "model": "hyprglass"
+  },
+  "tiling": {
+    "enabled": false,
+    "preserveCurrent": true
+  },
+  "settings": {
+    "appearance.animations": "true",
+    "appearance.animations.elastic": "false",
+    "appearance.windows.rounded": "true",
+    "appearance.frosted_ice.enabled": "true",
+    "appearance.frosted_ice.windows": "true",
+    "appearance.frosted_ice.menus": "true",
+    "appearance.frosted_ice.panels": "true",
+    "appearance.frosted_ice.system": "true",
+    "appearance.frosted_ice.pointer_light": "false",
+    "appearance.frosted_ice.window_content_pointer_light": "false",
+    "appearance.frosted_ice.thickness": "58",
+    "appearance.frosted_ice.opacity": "42",
+    "appearance.frosted_ice.blur": "62",
+    "appearance.frosted_ice.refraction": "60",
+    "appearance.frosted_ice.chroma": "50",
+    "appearance.frosted_ice.window_border": "35",
+    "appearance.frosted_ice.widget_border": "0",
+    "appearance.frosted_ice.widgets.buttons": "false",
+    "appearance.frosted_ice.widgets.switches": "false",
+    "appearance.frosted_ice.widgets.sliders": "false",
+    "appearance.frosted_ice.widgets.scrollbars": "false",
+    "appearance.windows.active_shadow": "false",
+    "appearance.windows.inactive_translucency": "false"
+  },
+  "motion": {
+    "window.open": {
+      "preset": "Spring",
+      "duration": 320,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.84,
+          "scaleY": 0.84,
+          "y": 0
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "window.close": {
+      "preset": "Spring",
+      "duration": 200,
+      "easing": "ease-out",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.84,
+          "scaleY": 0.84,
+          "y": 0
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "menu.open": {
+      "preset": "Spring",
+      "duration": 180,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "menu.close": {
+      "preset": "Spring",
+      "duration": 110,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "deck.open": {
+      "preset": "Spring",
+      "duration": 240,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "deck.close": {
+      "preset": "Spring",
+      "duration": 150,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "notification.open": {
+      "preset": "Spring",
+      "duration": 220,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "notification.close": {
+      "preset": "Spring",
+      "duration": 140,
+      "easing": "out-expo",
+      "keyframes": [
+        {
+          "at": 0,
+          "opacity": 0,
+          "scaleX": 0.96,
+          "scaleY": 0.96,
+          "y": 10
+        },
+        {
+          "at": 1,
+          "opacity": 1,
+          "scaleX": 1,
+          "scaleY": 1,
+          "y": 0
+        }
+      ]
+    },
+    "hover": {
+      "preset": "Fade",
+      "duration": 90
+    },
+    "deck.switch": {
+      "preset": "Slide",
+      "duration": 160
+    },
+    "menu.fold": {
+      "preset": "Fold",
+      "duration": 160
+    },
+    "window.layout": {
+      "preset": "Slide",
+      "duration": 360
+    }
+  },
+  "background": {
+    "type": "image",
+    "source": "/usr/share/ricewm/wallpapers/hyprglass-ribbons.svg",
+    "mode": "Crop"
+  },
+  "defaultPalette": "reference",
+  "defaultWallpaper": "reference",
+  "palettes": [
+    {
+      "id": "reference",
+      "name": "Liquid",
+      "appearance": {
+        "accent": "9d90b5",
+        "icon.hover": "9d90b5",
+        "taskbar.ridge": "9d90b5",
+        "frame.close": "9d90b5",
+        "menu.hover": "21313b",
+        "menu.selected": "21313b",
+        "frame.pressed": "21313b",
+        "frame.body": "1f222a",
+        "frame.active": "1f222a",
+        "frame.inactive": "1f222a",
+        "menu.background": "1f222a",
+        "menu.alternate": "1f222a",
+        "frame.border": "36333e",
+        "taskbar.bar": "0f1113",
+        "taskbar.tray": "0e0f12",
+        "taskbar.start": "1f222a",
+        "taskbar.task": "1f222a",
+        "frame.control": "21313b"
+      },
+      "wallpaper": "reference"
+    },
+    {
+      "id": "glacier",
+      "name": "Glacier",
+      "appearance": {
+        "accent": "76d5ec",
+        "icon.hover": "76d5ec",
+        "taskbar.ridge": "76d5ec",
+        "frame.close": "76d5ec",
+        "menu.hover": "183840",
+        "menu.selected": "183840",
+        "frame.pressed": "183840",
+        "frame.body": "101e28",
+        "frame.active": "101e28",
+        "frame.inactive": "101e28",
+        "menu.background": "101e28",
+        "menu.alternate": "101e28",
+        "frame.border": "183840",
+        "taskbar.bar": "0f1113",
+        "taskbar.tray": "0e0f12",
+        "taskbar.start": "101e28",
+        "taskbar.task": "101e28",
+        "frame.control": "183840"
+      },
+      "wallpaper": "glacier"
+    },
+    {
+      "id": "amethyst",
+      "name": "Amethyst",
+      "appearance": {
+        "accent": "c3a2ed",
+        "icon.hover": "c3a2ed",
+        "taskbar.ridge": "c3a2ed",
+        "frame.close": "c3a2ed",
+        "menu.hover": "34263e",
+        "menu.selected": "34263e",
+        "frame.pressed": "34263e",
+        "frame.body": "191422",
+        "frame.active": "191422",
+        "frame.inactive": "191422",
+        "menu.background": "191422",
+        "menu.alternate": "191422",
+        "frame.border": "34263e",
+        "taskbar.bar": "0f1113",
+        "taskbar.tray": "0e0f12",
+        "taskbar.start": "191422",
+        "taskbar.task": "191422",
+        "frame.control": "34263e"
+      },
+      "wallpaper": "amethyst"
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "appearance": {
+        "accent": "edb97a",
+        "icon.hover": "edb97a",
+        "taskbar.ridge": "edb97a",
+        "frame.close": "edb97a",
+        "menu.hover": "3f3024",
+        "menu.selected": "3f3024",
+        "frame.pressed": "3f3024",
+        "frame.body": "201812",
+        "frame.active": "201812",
+        "frame.inactive": "201812",
+        "menu.background": "201812",
+        "menu.alternate": "201812",
+        "frame.border": "3f3024",
+        "taskbar.bar": "0f1113",
+        "taskbar.tray": "0e0f12",
+        "taskbar.start": "201812",
+        "taskbar.task": "201812",
+        "frame.control": "3f3024"
+      },
+      "wallpaper": "ember"
+    }
+  ],
+  "wallpapers": [
+    {
+      "id": "reference",
+      "name": "Liquid",
+      "source": "/usr/share/ricewm/wallpapers/hyprglass-ribbons.svg",
+      "type": "image",
+      "mode": "Crop",
+      "credit": "Original RiceWM vector artwork"
+    },
+    {
+      "id": "glacier",
+      "name": "Glacier",
+      "source": "/usr/share/ricewm/wallpapers/hyprglass-glacier.svg",
+      "type": "image",
+      "mode": "Crop",
+      "credit": "Original RiceWM vector artwork"
+    },
+    {
+      "id": "amethyst",
+      "name": "Amethyst",
+      "source": "/usr/share/ricewm/wallpapers/hyprglass-amethyst.svg",
+      "type": "image",
+      "mode": "Crop",
+      "credit": "Original RiceWM vector artwork"
+    },
+    {
+      "id": "ember",
+      "name": "Ember",
+      "source": "/usr/share/ricewm/wallpapers/hyprglass-ember.svg",
+      "type": "image",
+      "mode": "Crop",
+      "credit": "Original RiceWM vector artwork"
+    }
+  ]
+}

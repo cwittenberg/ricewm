@@ -6,6 +6,6 @@ license.workspace = true
 publish = false
 
 [dependencies]
-rice-layout.workspace = true
+rice-x11-core.workspace = true
 rice-calc.workspace = true
 rice-files.workspace = true

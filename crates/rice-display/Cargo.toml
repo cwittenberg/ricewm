@@ -1,0 +1,26 @@
+[package]
+name = "rice-display"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+rice-i18n = { workspace = true, features = ["browser-catalogs"] }
+rice-native-app-protocol.workspace = true
+rice-ui.workspace = true
+rice-tray.workspace = true
+rice-x11-core.workspace = true
+rice-web-render-protocol.workspace = true
+
+[features]
+desktop-raster = ["rice-x11-core/desktop-raster"]
+
+[dev-dependencies]
+serde_json = "1"
+
+[lints]
+workspace = true

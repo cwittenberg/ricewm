@@ -1,0 +1,204 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Emerald",
+  "description": "Smoked emerald glass with code rain that assembles the actual window content.",
+  "appearance": {
+    "taskbar.bar": "050807",
+    "taskbar.ridge": "5ae0ae",
+    "taskbar.start": "062f24",
+    "taskbar.task": "0a100e",
+    "taskbar.tray": "030705",
+    "taskbar.text": "d6ffe1",
+    "accent": "5ae0ae",
+    "icon": "8adfa5",
+    "icon.hover": "d6ffe1",
+    "icon.variant": "monochrome",
+    "icon.overrides": "",
+    "menu.background": "030a06",
+    "menu.alternate": "091b10",
+    "menu.separator": "226d3b",
+    "menu.hover": "123d22",
+    "menu.selected": "1b532f",
+    "menu.text": "d6ffe1",
+    "frame.active": "0a211a",
+    "frame.inactive": "08110c",
+    "frame.border": "39795d",
+    "frame.body": "030a06",
+    "frame.text": "d6ffe1",
+    "frame.control": "15392c",
+    "frame.close": "cf797e",
+    "frame.pressed": "226d3b",
+    "chrome.profile": "standard",
+    "material": "frosted-ice",
+    "corner.radius": "5",
+    "button.style": "chamfered"
+  },
+  "version": 1,
+  "settings": {
+    "appearance.animations": "true",
+    "appearance.animations.elastic": "false",
+    "appearance.windows.rounded": "true",
+    "appearance.background.type": "Image",
+    "appearance.frosted_ice.enabled": "true",
+    "appearance.frosted_ice.windows": "true",
+    "appearance.frosted_ice.menus": "true",
+    "appearance.frosted_ice.opacity": "72",
+    "appearance.frosted_ice.blur": "55",
+    "appearance.frosted_ice.refraction": "0",
+    "appearance.frosted_ice.chroma": "0",
+    "appearance.frosted_ice.window_border": "0",
+    "appearance.frosted_ice.pointer_light": "false",
+    "appearance.frosted_ice.window_content_pointer_light": "false",
+    "appearance.frosted_ice.thickness": "8",
+    "appearance.frosted_ice.widget_border": "0",
+    "appearance.frosted_ice.widgets.buttons": "false",
+    "appearance.frosted_ice.widgets.switches": "false",
+    "appearance.frosted_ice.widgets.sliders": "false",
+    "appearance.frosted_ice.widgets.scrollbars": "false",
+    "appearance.windows.active_shadow": "false",
+    "appearance.menus.shadow": "false",
+    "appearance.wallpaper.mode": "Crop"
+  },
+  "background": {
+    "type": "image",
+    "source": "https://raw.githubusercontent.com/cwittenberg/theme-emerald/9501518f94e2bb013cbc6b18b104039d6e7efcfc/03.webp",
+    "mode": "Crop",
+    "fallback": {
+      "type": "gradient",
+      "start": "#010503",
+      "middle": "#071d10",
+      "end": "#000201",
+      "accent": "#53ff87"
+    }
+  },
+  "wallpapers": [
+    {
+      "id": "emerald-01",
+      "name": "Emerald 01",
+      "source": "https://raw.githubusercontent.com/cwittenberg/theme-emerald/9501518f94e2bb013cbc6b18b104039d6e7efcfc/01.webp",
+      "credit": "cwittenberg / theme-emerald",
+      "type": "image",
+      "mode": "Crop"
+    },
+    {
+      "id": "emerald-02",
+      "name": "Emerald 02",
+      "source": "https://raw.githubusercontent.com/cwittenberg/theme-emerald/9501518f94e2bb013cbc6b18b104039d6e7efcfc/02.webp",
+      "credit": "cwittenberg / theme-emerald",
+      "type": "image",
+      "mode": "Crop"
+    },
+    {
+      "id": "emerald-03",
+      "name": "Emerald 03",
+      "source": "https://raw.githubusercontent.com/cwittenberg/theme-emerald/9501518f94e2bb013cbc6b18b104039d6e7efcfc/03.webp",
+      "credit": "cwittenberg / theme-emerald",
+      "type": "image",
+      "mode": "Crop"
+    }
+  ],
+  "extensions": [
+    {
+      "uuid": "matrix-rain@cwittenberg",
+      "required": true,
+      "settings": {
+        "glow-enabled": true,
+        "soft-blur-enabled": false,
+        "font-size": 16,
+        "glyph-scale": 77,
+        "rain-speed": 133,
+        "stream-density": 167,
+        "effect-opacity": 86
+      }
+    }
+  ],
+  "motion": {
+    "window.open": {
+      "preset": "Curtain",
+      "duration": 1100
+    },
+    "window.close": {
+      "preset": "Curtain",
+      "duration": 650
+    },
+    "menu.open": {
+      "preset": "Curtain",
+      "duration": 380
+    },
+    "menu.close": {
+      "preset": "Curtain",
+      "duration": 240
+    },
+    "deck.open": {
+      "preset": "Curtain",
+      "duration": 850
+    },
+    "deck.close": {
+      "preset": "Curtain",
+      "duration": 500
+    },
+    "notification.open": {
+      "preset": "Curtain",
+      "duration": 340
+    },
+    "notification.close": {
+      "preset": "Curtain",
+      "duration": 220
+    },
+    "deck.switch": {
+      "preset": "Slide",
+      "duration": 150
+    },
+    "menu.fold": {
+      "preset": "Fold",
+      "duration": 180
+    },
+    "hover": {
+      "preset": "Fade",
+      "duration": 110
+    }
+  },
+  "deck": [
+    "applications",
+    "controls",
+    "wallpapers",
+    "notes",
+    "clipboard",
+    "notifications"
+  ],
+  "overrides": {},
+  "surface": {
+    "frame": "matrix",
+    "edge": "#5ae0ae",
+    "titleInk": "#d6ffe1",
+    "cornerLength": 16,
+    "inset": 1
+  },
+  "quickMenu": {
+    "applications": "list",
+    "density": "compact",
+    "font": "monospace",
+    "width": 760
+  },
+  "defaultWallpaper": "emerald-03",
+  "appViewsEnabled": false,
+  "widgets": [
+    {
+      "key": "glava",
+      "package": "org.glava.visualizer",
+      "required": true,
+      "workspace": "all",
+      "placement": "bottom-full-width",
+      "rect": {
+        "x": 0,
+        "y": 0,
+        "width": 1024,
+        "height": 112
+      },
+      "surface": {
+        "background": "none",
+        "border": false
+      }
+    }
+  ]
+}

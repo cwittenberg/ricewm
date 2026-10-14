@@ -1,0 +1,27 @@
+# RiceWM default theme (Yaru-inspired).
+name=RiceWM
+taskbar.bar=3d3846
+taskbar.ridge=615369
+taskbar.start=504654
+taskbar.task=504654
+taskbar.tray=2c001e
+taskbar.text=f8fafc
+accent=e95420
+icon=f8fafc
+icon.hover=e95420
+icon.variant=monochrome
+icon.overrides=ricewm-logo:ricewm-logo-color
+menu.background=312b35
+menu.alternate=38303b
+menu.separator=564b5e
+menu.hover=e95420
+menu.selected=7a321f
+menu.text=f8fafc
+frame.active=e95420
+frame.inactive=504654
+frame.border=615369
+frame.body=2c001e
+frame.text=ffffff
+frame.control=3e526d
+frame.close=b93c4c
+frame.pressed=7a321f

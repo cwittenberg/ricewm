@@ -1,0 +1,78 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Command Deck",
+  "description": "Segmented starship console with a Starfield background effect.",
+  "appearance": {
+    "chrome.profile": "command-deck",
+    "material": "solid",
+    "corner.radius": "18",
+    "decoration.asset": "command-deck-atlas.png",
+    "decoration.layout": "hud-frame",
+    "decoration.opacity": "92",
+    "decoration.enabled": "true",
+    "button.style": "pill",
+    "taskbar.bar": "08080c",
+    "taskbar.ridge": "f2a65a",
+    "taskbar.start": "ff9966",
+    "taskbar.task": "6d5a8d",
+    "taskbar.tray": "15111f",
+    "taskbar.text": "fff4dc",
+    "accent": "ffcc66",
+    "icon": "ffcc99",
+    "icon.hover": "ffffff",
+    "icon.variant": "monochrome",
+    "icon.overrides": "",
+    "menu.background": "07070b",
+    "menu.alternate": "111018",
+    "menu.separator": "cc99cc",
+    "menu.hover": "ffcc66",
+    "menu.selected": "ffcc66",
+    "menu.text": "fff4dc",
+    "frame.active": "07070b",
+    "frame.inactive": "15111f",
+    "frame.border": "ef8b72",
+    "frame.body": "07070b",
+    "frame.text": "fff4dc",
+    "frame.control": "ffcc66",
+    "frame.close": "ff6666",
+    "frame.pressed": "cc6699"
+  },
+  "version": 1,
+  "settings": {
+    "appearance.animations": "true"
+  },
+  "background": {
+    "type": "gradient",
+    "start": "#08080c",
+    "middle": "#15111f",
+    "end": "#07070b",
+    "accent": "#ffcc66"
+  },
+  "wallpapers": [],
+  "extensions": [
+    {
+      "uuid": "starfield@cwittenberg",
+      "required": true,
+      "settings": {}
+    }
+  ],
+  "motion": {
+    "window.open": {
+      "preset": "Fold",
+      "duration": 260
+    },
+    "menu.open": {
+      "preset": "Slide",
+      "duration": 180
+    }
+  },
+  "deck": [
+    "applications",
+    "controls",
+    "wallpapers",
+    "notes",
+    "clipboard",
+    "notifications"
+  ],
+  "overrides": {}
+}

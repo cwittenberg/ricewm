@@ -1,5 +1,5 @@
 use std::{fs::{self, OpenOptions}, io::Write, path::PathBuf};
-use rice_layout::{Rect, TileLayout};
+use rice_x11_core::{Rect, TileLayout};
 use rice_files::GuestPath;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {

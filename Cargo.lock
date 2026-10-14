@@ -64,6 +64,19 @@ name = "rice-desktop"
 version = "0.1.0"
 
 [[package]]
+name = "rice-display"
+version = "0.1.0"
+dependencies = [
+ "rice-i18n",
+ "rice-native-app-protocol",
+ "rice-tray",
+ "rice-ui",
+ "rice-web-render-protocol",
+ "rice-x11-core",
+ "serde_json",
+]
+
+[[package]]
 name = "rice-files"
 version = "0.1.0"
 dependencies = [
@@ -71,12 +84,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "rice-i18n"
+version = "0.1.0"
+
+[[package]]
 name = "rice-image-contract"
 version = "0.1.0"
 
 [[package]]
-name = "rice-layout"
+name = "rice-native-app-protocol"
 version = "0.1.0"
+dependencies = [
+ "rice-web-render-protocol",
+]
 
 [[package]]
 name = "rice-spatial"
@@ -89,6 +109,12 @@ version = "0.1.0"
 [[package]]
 name = "rice-ui"
 version = "0.1.0"
+dependencies = [
+ "rice-i18n",
+ "rice-native-app-protocol",
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "rice-view"
@@ -102,12 +128,21 @@ name = "rice-web-render-protocol"
 version = "0.1.0"
 
 [[package]]
+name = "rice-x11-core"
+version = "0.1.0"
+dependencies = [
+ "rice-i18n",
+ "rice-tray",
+ "yserver-protocol",
+]
+
+[[package]]
 name = "ricewm-core-demo"
 version = "0.1.0"
 dependencies = [
  "rice-calc",
  "rice-files",
- "rice-layout",
+ "rice-x11-core",
 ]
 
 [[package]]
@@ -169,6 +204,11 @@ name = "unicode-ident"
 version = "1.0.27"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "a2c754d6c33795a1c324727428e5a7dedb5b06195f9890bdbcba760d3e246563"
+
+[[package]]
+name = "yserver-protocol"
+version = "1.4.0"
+source = "git+https://github.com/joske/yserver.git?rev=f3de5026a9675bba0e449594a05d35c30ca5d53a#f3de5026a9675bba0e449594a05d35c30ca5d53a"
 
 [[package]]
 name = "zmij"

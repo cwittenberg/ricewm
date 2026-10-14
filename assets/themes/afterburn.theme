@@ -1,0 +1,501 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Afterburn",
+  "description": "Graphite industrial surfaces, precise accent lines and mechanical shutter motion. Four coordinated color palettes.",
+  "appearance": {
+    "taskbar.bar": "0c1015",
+    "taskbar.ridge": "f4ef18",
+    "taskbar.start": "f4ef18",
+    "taskbar.task": "171e20",
+    "taskbar.tray": "101719",
+    "taskbar.text": "e8eee6",
+    "accent": "f4ef18",
+    "icon": "e8e8e8",
+    "icon.hover": "f4ef18",
+    "icon.variant": "monochrome",
+    "icon.overrides": "",
+    "menu.background": "101419",
+    "menu.alternate": "1a2129",
+    "menu.separator": "38424d",
+    "menu.hover": "f4ef18",
+    "menu.selected": "f4ef18",
+    "menu.text": "e8eee6",
+    "frame.active": "101419",
+    "frame.inactive": "151a20",
+    "frame.border": "38424d",
+    "frame.body": "101419",
+    "frame.text": "e8eee6",
+    "frame.control": "242c34",
+    "frame.close": "f4ef18",
+    "frame.pressed": "f4ef18",
+    "chrome.profile": "standard",
+    "material": "solid",
+    "corner.radius": "0",
+    "decoration.asset": "",
+    "decoration.layout": "none",
+    "decoration.opacity": "0",
+    "decoration.enabled": "false",
+    "button.style": "chamfered",
+    "window.shape": "default",
+    "control.layout": "grouped",
+    "panel.position": "bottom",
+    "sidebar.material": "solid",
+    "menu.material": "solid"
+  },
+  "version": 1,
+  "wallpapers": [
+    {
+      "id": "signal-yellow",
+      "name": "Signal Yellow \u2014 Industrial",
+      "source": "/usr/share/ricewm/wallpapers/afterburn-signal-yellow.svg",
+      "credit": "Original RiceWM vector artwork. 8192 \u00d7 4608 canvas.",
+      "type": "image",
+      "mode": "Crop",
+      "flight": {
+        "enabled": true,
+        "duration": 900,
+        "views": {
+          "desktop": {
+            "x": 0.5,
+            "y": 0.5,
+            "zoom": 1
+          },
+          "rice-files": {
+            "x": 0.36,
+            "y": 0.48,
+            "zoom": 1.15
+          },
+          "rice-term": {
+            "x": 0.56,
+            "y": 0.62,
+            "zoom": 1.18
+          },
+          "rice-bowl": {
+            "x": 0.72,
+            "y": 0.32,
+            "zoom": 1.16
+          },
+          "rice-box": {
+            "x": 0.7,
+            "y": 0.7,
+            "zoom": 1.15
+          },
+          "rice-paper": {
+            "x": 0.3,
+            "y": 0.6,
+            "zoom": 1.12
+          },
+          "rice-settings": {
+            "x": 0.62,
+            "y": 0.4,
+            "zoom": 1.15
+          },
+          "rice-calc": {
+            "x": 0.5,
+            "y": 0.55,
+            "zoom": 1.12
+          }
+        }
+      }
+    },
+    {
+      "id": "ion-cyan",
+      "name": "Ion Cyan \u2014 Industrial",
+      "source": "/usr/share/ricewm/wallpapers/afterburn-ion-cyan.svg",
+      "credit": "Original RiceWM vector artwork. 8192 \u00d7 4608 canvas.",
+      "type": "image",
+      "mode": "Crop",
+      "flight": {
+        "enabled": true,
+        "duration": 900,
+        "views": {
+          "desktop": {
+            "x": 0.5,
+            "y": 0.5,
+            "zoom": 1
+          },
+          "rice-files": {
+            "x": 0.36,
+            "y": 0.48,
+            "zoom": 1.15
+          },
+          "rice-term": {
+            "x": 0.56,
+            "y": 0.62,
+            "zoom": 1.18
+          },
+          "rice-bowl": {
+            "x": 0.72,
+            "y": 0.32,
+            "zoom": 1.16
+          },
+          "rice-box": {
+            "x": 0.7,
+            "y": 0.7,
+            "zoom": 1.15
+          },
+          "rice-paper": {
+            "x": 0.3,
+            "y": 0.6,
+            "zoom": 1.12
+          },
+          "rice-settings": {
+            "x": 0.62,
+            "y": 0.4,
+            "zoom": 1.15
+          },
+          "rice-calc": {
+            "x": 0.5,
+            "y": 0.55,
+            "zoom": 1.12
+          }
+        }
+      }
+    },
+    {
+      "id": "infrared",
+      "name": "Infrared \u2014 Industrial",
+      "source": "/usr/share/ricewm/wallpapers/afterburn-infrared.svg",
+      "credit": "Original RiceWM vector artwork. 8192 \u00d7 4608 canvas.",
+      "type": "image",
+      "mode": "Crop",
+      "flight": {
+        "enabled": true,
+        "duration": 900,
+        "views": {
+          "desktop": {
+            "x": 0.5,
+            "y": 0.5,
+            "zoom": 1
+          },
+          "rice-files": {
+            "x": 0.36,
+            "y": 0.48,
+            "zoom": 1.15
+          },
+          "rice-term": {
+            "x": 0.56,
+            "y": 0.62,
+            "zoom": 1.18
+          },
+          "rice-bowl": {
+            "x": 0.72,
+            "y": 0.32,
+            "zoom": 1.16
+          },
+          "rice-box": {
+            "x": 0.7,
+            "y": 0.7,
+            "zoom": 1.15
+          },
+          "rice-paper": {
+            "x": 0.3,
+            "y": 0.6,
+            "zoom": 1.12
+          },
+          "rice-settings": {
+            "x": 0.62,
+            "y": 0.4,
+            "zoom": 1.15
+          },
+          "rice-calc": {
+            "x": 0.5,
+            "y": 0.55,
+            "zoom": 1.12
+          }
+        }
+      }
+    },
+    {
+      "id": "ultraviolet",
+      "name": "Ultraviolet \u2014 Industrial",
+      "source": "/usr/share/ricewm/wallpapers/afterburn-ultraviolet.svg",
+      "credit": "Original RiceWM vector artwork. 8192 \u00d7 4608 canvas.",
+      "type": "image",
+      "mode": "Crop",
+      "flight": {
+        "enabled": true,
+        "duration": 900,
+        "views": {
+          "desktop": {
+            "x": 0.5,
+            "y": 0.5,
+            "zoom": 1
+          },
+          "rice-files": {
+            "x": 0.36,
+            "y": 0.48,
+            "zoom": 1.15
+          },
+          "rice-term": {
+            "x": 0.56,
+            "y": 0.62,
+            "zoom": 1.18
+          },
+          "rice-bowl": {
+            "x": 0.72,
+            "y": 0.32,
+            "zoom": 1.16
+          },
+          "rice-box": {
+            "x": 0.7,
+            "y": 0.7,
+            "zoom": 1.15
+          },
+          "rice-paper": {
+            "x": 0.3,
+            "y": 0.6,
+            "zoom": 1.12
+          },
+          "rice-settings": {
+            "x": 0.62,
+            "y": 0.4,
+            "zoom": 1.15
+          },
+          "rice-calc": {
+            "x": 0.5,
+            "y": 0.55,
+            "zoom": 1.12
+          }
+        }
+      }
+    }
+  ],
+  "appViewsEnabled": true,
+  "defaultWallpaper": "signal-yellow",
+  "extensions": [
+    {
+      "uuid": "session-console@ricewm",
+      "required": true,
+      "settings": {}
+    }
+  ],
+  "motion": {
+    "window.open": {
+      "preset": "Curtain",
+      "duration": 640
+    },
+    "window.close": {
+      "preset": "Curtain",
+      "duration": 360
+    },
+    "menu.open": {
+      "preset": "Curtain",
+      "duration": 132
+    },
+    "menu.close": {
+      "preset": "Curtain",
+      "duration": 96
+    },
+    "menu.fold": {
+      "preset": "Fold",
+      "duration": 150
+    },
+    "notification.open": {
+      "preset": "Curtain",
+      "duration": 420
+    },
+    "notification.close": {
+      "preset": "Curtain",
+      "duration": 240
+    },
+    "deck.open": {
+      "preset": "Slide",
+      "duration": 260
+    },
+    "deck.close": {
+      "preset": "Slide",
+      "duration": 180
+    },
+    "hover": {
+      "preset": "Slide",
+      "duration": 140,
+      "easing": "ease-out",
+      "keyframes": [
+        {
+          "at": 0,
+          "x": -5,
+          "opacity": 0.78
+        },
+        {
+          "at": 1,
+          "x": 0,
+          "opacity": 1
+        }
+      ]
+    },
+    "deck.switch": {
+      "preset": "Fade",
+      "duration": 160
+    }
+  },
+  "deck": [
+    "dashboard",
+    "applications",
+    "workspaces",
+    "controls",
+    "wallpapers",
+    "notes",
+    "clipboard",
+    "notifications"
+  ],
+  "settings": {
+    "dock.top_bar.visible": "true",
+    "appearance.animations": "true",
+    "appearance.animations.elastic": "false",
+    "appearance.windows.rounded": "false",
+    "appearance.background.type": "Image",
+    "appearance.wallpaper.mode": "Crop",
+    "dock.position": "Bottom",
+    "dock.style": "Compact dock",
+    "desktop.activities_button.position": "Left"
+  },
+  "background": {
+    "type": "image",
+    "source": "/usr/share/ricewm/wallpapers/afterburn-signal-yellow.svg",
+    "mode": "Crop"
+  },
+  "overrides": {},
+  "quickMenu": {
+    "applications": "list",
+    "density": "compact",
+    "font": "monospace",
+    "width": 840
+  },
+  "surface": {
+    "frame": "bracket",
+    "edge": "#f4ef18",
+    "cornerLength": 12,
+    "inset": 2,
+    "titleInk": "#e8eee6",
+    "variant": "cyberpunk"
+  },
+  "widgets": [],
+  "tiling": {
+    "enabled": true,
+    "arrangement": "Scrolling"
+  },
+  "palettes": [
+    {
+      "id": "signal-yellow",
+      "name": "Signal Yellow",
+      "appearance": {
+        "taskbar.bar": "0c1015",
+        "taskbar.ridge": "f4ef18",
+        "taskbar.start": "f4ef18",
+        "taskbar.task": "171e20",
+        "taskbar.tray": "101719",
+        "taskbar.text": "e8eee6",
+        "accent": "f4ef18",
+        "icon": "e8e8e8",
+        "icon.hover": "f4ef18",
+        "menu.background": "101419",
+        "menu.alternate": "1a2129",
+        "menu.separator": "38424d",
+        "menu.hover": "f4ef18",
+        "menu.selected": "f4ef18",
+        "menu.text": "e8eee6",
+        "frame.active": "101419",
+        "frame.inactive": "151a20",
+        "frame.border": "38424d",
+        "frame.body": "101419",
+        "frame.text": "e8eee6",
+        "frame.control": "242c34",
+        "frame.close": "f4ef18",
+        "frame.pressed": "f4ef18"
+      },
+      "wallpaper": "signal-yellow"
+    },
+    {
+      "id": "ion-cyan",
+      "name": "Ion Cyan",
+      "appearance": {
+        "taskbar.bar": "0c1015",
+        "taskbar.ridge": "59d4e8",
+        "taskbar.start": "59d4e8",
+        "taskbar.task": "171e20",
+        "taskbar.tray": "101719",
+        "taskbar.text": "e8eee6",
+        "accent": "59d4e8",
+        "icon": "e8e8e8",
+        "icon.hover": "59d4e8",
+        "menu.background": "101419",
+        "menu.alternate": "1a2129",
+        "menu.separator": "38424d",
+        "menu.hover": "59d4e8",
+        "menu.selected": "59d4e8",
+        "menu.text": "e8eee6",
+        "frame.active": "101419",
+        "frame.inactive": "151a20",
+        "frame.border": "38424d",
+        "frame.body": "101419",
+        "frame.text": "e8eee6",
+        "frame.control": "242c34",
+        "frame.close": "59d4e8",
+        "frame.pressed": "59d4e8"
+      },
+      "wallpaper": "ion-cyan"
+    },
+    {
+      "id": "infrared",
+      "name": "Infrared",
+      "appearance": {
+        "taskbar.bar": "0c1015",
+        "taskbar.ridge": "ff626e",
+        "taskbar.start": "ff626e",
+        "taskbar.task": "171e20",
+        "taskbar.tray": "101719",
+        "taskbar.text": "e8eee6",
+        "accent": "ff626e",
+        "icon": "e8e8e8",
+        "icon.hover": "ff626e",
+        "menu.background": "101419",
+        "menu.alternate": "1a2129",
+        "menu.separator": "38424d",
+        "menu.hover": "ff626e",
+        "menu.selected": "ff626e",
+        "menu.text": "e8eee6",
+        "frame.active": "101419",
+        "frame.inactive": "151a20",
+        "frame.border": "38424d",
+        "frame.body": "101419",
+        "frame.text": "e8eee6",
+        "frame.control": "242c34",
+        "frame.close": "ff626e",
+        "frame.pressed": "ff626e"
+      },
+      "wallpaper": "infrared"
+    },
+    {
+      "id": "ultraviolet",
+      "name": "Ultraviolet",
+      "appearance": {
+        "taskbar.bar": "0c1015",
+        "taskbar.ridge": "b8a0f6",
+        "taskbar.start": "b8a0f6",
+        "taskbar.task": "171e20",
+        "taskbar.tray": "101719",
+        "taskbar.text": "e8eee6",
+        "accent": "b8a0f6",
+        "icon": "e8e8e8",
+        "icon.hover": "b8a0f6",
+        "menu.background": "101419",
+        "menu.alternate": "1a2129",
+        "menu.separator": "38424d",
+        "menu.hover": "b8a0f6",
+        "menu.selected": "b8a0f6",
+        "menu.text": "e8eee6",
+        "frame.active": "101419",
+        "frame.inactive": "151a20",
+        "frame.border": "38424d",
+        "frame.body": "101419",
+        "frame.text": "e8eee6",
+        "frame.control": "242c34",
+        "frame.close": "b8a0f6",
+        "frame.pressed": "b8a0f6"
+      },
+      "wallpaper": "ultraviolet"
+    }
+  ],
+  "defaultPalette": "signal-yellow"
+}

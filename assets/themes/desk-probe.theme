@@ -1,0 +1,42 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Desk Probe",
+  "appearance": {
+    "taskbar.bar": "56432d",
+    "taskbar.ridge": "897858",
+    "taskbar.start": "bcab83",
+    "taskbar.task": "d9cfb6",
+    "taskbar.tray": "d9cfb6",
+    "taskbar.text": "392f24",
+    "accent": "aa743c",
+    "menu.background": "efe6d1",
+    "menu.alternate": "f8f3e8",
+    "menu.separator": "c6b897",
+    "menu.hover": "d8c79e",
+    "menu.selected": "c9b58a",
+    "menu.text": "392f24",
+    "frame.active": "bcab83",
+    "frame.inactive": "d9cfb6",
+    "frame.border": "897858",
+    "frame.body": "f0ebde",
+    "frame.text": "392f24",
+    "frame.control": "f8f3e8",
+    "frame.close": "b35159",
+    "frame.pressed": "d8c79e",
+    "icon": "392f24",
+    "icon.hover": "aa743c",
+    "icon.variant": "color",
+    "icon.overrides": ""
+  },
+  "spatial": {
+    "engine": "rice-spatial",
+    "api": 1,
+    "world": "world.json",
+    "builtin": {
+      "asset": "assets/worlds/desk-probe.riceapp",
+      "id": "rice.scene.desk-probe",
+      "hash": "66a86e2f9153107f2fad18f8bf2d6a44307bb2169216115122bf75180b0b192a"
+    }
+  },
+  "description": "An animated under-desk drawer and live paper window probe. Full service presenters remain under development."
+}

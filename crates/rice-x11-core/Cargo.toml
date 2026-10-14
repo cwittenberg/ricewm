@@ -1,0 +1,18 @@
+[package]
+name = "rice-x11-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+autotests = false
+
+[dependencies]
+rice-i18n.workspace = true
+rice-tray.workspace = true
+yserver-protocol.workspace = true
+
+[features]
+desktop-raster = []
+
+[lints]
+workspace = true

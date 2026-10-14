@@ -1,0 +1,52 @@
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Construct",
+  "description": "Signal City: a walkable city of flowing code, centred on Rice Hub's luminous Core.",
+  "version": 1,
+  "appearance": {
+    "taskbar.bar": "04100b",
+    "taskbar.ridge": "35bc7b",
+    "taskbar.start": "092419",
+    "taskbar.task": "0a1a12",
+    "taskbar.tray": "030b07",
+    "taskbar.text": "c2f4d5",
+    "accent": "58e8a0",
+    "icon": "8adfa5",
+    "icon.hover": "d6ffe1",
+    "icon.variant": "monochrome",
+    "menu.background": "04100b",
+    "menu.alternate": "0a1d12",
+    "menu.separator": "24603f",
+    "menu.hover": "123d22",
+    "menu.selected": "1b532f",
+    "menu.text": "d6ffe1",
+    "frame.active": "0a211a",
+    "frame.inactive": "08110c",
+    "frame.border": "39795d",
+    "frame.body": "030a06",
+    "frame.text": "d6ffe1",
+    "frame.control": "15392c",
+    "frame.close": "cf797e",
+    "frame.pressed": "226d3b",
+    "chrome.profile": "standard",
+    "material": "solid",
+    "corner.radius": "4",
+    "button.style": "chamfered",
+    "icon.overrides": ""
+  },
+  "surface": {
+    "frame": "matrix",
+    "edge": "#58e8a0",
+    "titleInk": "#d6ffe1"
+  },
+  "quickMenu": {
+    "applications": "grid",
+    "density": "comfortable",
+    "font": "monospace"
+  },
+  "spatial": {
+    "engine": "rice-spatial",
+    "api": 1,
+    "world": "world.json"
+  }
+}

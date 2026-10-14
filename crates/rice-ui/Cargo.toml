@@ -6,6 +6,10 @@ license.workspace = true
 repository.workspace = true
 
 [dependencies]
+rice-i18n.workspace = true
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+rice-native-app-protocol.workspace = true
 
 [lints]
 workspace = true
