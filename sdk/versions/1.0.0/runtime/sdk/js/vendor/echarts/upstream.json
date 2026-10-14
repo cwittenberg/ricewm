@@ -1,0 +1,13 @@
+{
+  "name": "Apache ECharts",
+  "version": "6.1.0",
+  "source": "https://github.com/apache/echarts",
+  "tarball": "https://registry.npmjs.org/echarts/-/echarts-6.1.0.tgz",
+  "tarballSha256": "681aff88cc1038c3fa941a3a53d1b177a52250b05335efc607d6105ae13be481",
+  "npmIntegrity": "sha512-q0yaFPggC9FUdsWH4blavRWFmxdrIodbkoKNAjJudAI6CA9gNPxHtV2RcZNEepZVlk4yvBYkOkbk6HIVpIyHZA==",
+  "archivePath": "package/dist/echarts.esm.min.mjs",
+  "artifact": "echarts.mjs",
+  "artifactSha256": "28515f26aa57f87eb1e4ed4eb446927eaf329b5f5e02b4bfd4b0264fea40d1da",
+  "license": "Apache-2.0",
+  "modifications": "None; pinned upstream ESM distribution. LICENSE, NOTICE and embedded d3 subcomponent license retained."
+}

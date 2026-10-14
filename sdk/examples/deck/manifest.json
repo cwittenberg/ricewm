@@ -1,0 +1,55 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "org.ricewm.deck",
+  "name": "Rice Deck",
+  "version": "0.11.2-preview.1",
+  "description": "Native presentation editor with an Office ribbon, contextual clipboard tools, shape text editing, grouping, visual formatting, pictures and slide shows. Advanced PowerPoint compatibility remains in development.",
+  "entry": "app.mjs",
+  "categories": [
+    "Office"
+  ],
+  "permissions": {
+    "services": [
+      "assets.read",
+      "assets.stat",
+      "compute.open",
+      "compute.invoke",
+      "compute.cancel",
+      "compute.close",
+      "files.stat",
+      "files.read",
+      "files.write",
+      "dialogs.openFile",
+      "dialogs.saveFile",
+      "dialogs.confirm",
+      "clipboard.readText",
+      "clipboard.writeText",
+      "host.openExternal",
+      "network.fetch"
+    ],
+    "bus": {
+      "provide": [
+        "org.ricewm.deck/engine/",
+        "org.ricewm.deck/copilot/"
+      ],
+      "call": [
+        "org.ricewm.deck/engine/"
+      ]
+    },
+    "network": {
+      "origins": [
+        "https://en.wikipedia.org",
+        "https://upload.wikimedia.org",
+        "https://thumb.wikimedia.org"
+      ]
+    }
+  },
+  "mimeTypes": [
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.presentationml.template",
+    "application/vnd.openxmlformats-officedocument.presentationml.slideshow",
+    "application/vnd.oasis.opendocument.presentation",
+    "application/vnd.oasis.opendocument.presentation-template"
+  ]
+}

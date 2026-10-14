@@ -1,0 +1,33 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.sdk-guide",
+  "name": "RiceApp SDK Guide",
+  "version": "1.2.0",
+  "description": "Learn, scaffold, run, debug, install, and distribute JavaScript RiceWM apps.",
+  "entry": "app.mjs",
+  "categories": ["Development", "Utility"],
+  "permissions": {
+    "services": [
+      "files.read",
+      "files.write",
+      "files.stat",
+      "files.mkdir",
+      "clipboard.writeText",
+      "applications.editSource",
+      "applications.develop",
+      "applications.openDevelopmentWorkspace",
+      "applications.stopDevelopment",
+      "extensions.list",
+      "extensions.enable",
+      "extensions.disable",
+      "extensions.restart",
+      "extensions.openManager",
+      "extensions.call"
+    ],
+    "bus": {
+      "subscribe": ["org.ricewm.development/"],
+      "provide": ["org.ricewm.extension/demo"]
+    }
+  }
+}

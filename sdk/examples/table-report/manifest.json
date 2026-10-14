@@ -1,0 +1,24 @@
+{
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.table-report",
+  "name": "Sales Report",
+  "version": "1.0.0",
+  "description": "Linked native tables and Apache ECharts with report navigation.",
+  "entry": "app.mjs",
+  "iconName": "chart-column",
+  "window": {
+    "width": 1080,
+    "height": 880
+  },
+  "categories": [
+    "Office",
+    "Development"
+  ],
+  "permissions": {
+    "services": [],
+    "bus": {}
+  },
+  "sdk": {
+    "version": "1.0.0"
+  }
+}

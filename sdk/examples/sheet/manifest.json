@@ -1,0 +1,42 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "org.ricewm.sheet",
+  "name": "Rice Sheet",
+  "version": "0.1.0",
+  "description": "Native Rice Office spreadsheet with fast Wasm calculation and XLSX / ODS editing.",
+  "entry": "app.mjs",
+  "categories": [
+    "Office"
+  ],
+  "mimeTypes": [
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.oasis.opendocument.spreadsheet",
+    "text/csv",
+    "text/tab-separated-values"
+  ],
+  "permissions": {
+    "services": [
+      "compute.open",
+      "compute.invoke",
+      "compute.cancel",
+      "compute.close",
+      "files.read",
+      "files.write",
+      "dialogs.openFile",
+      "dialogs.saveFile",
+      "dialogs.confirm",
+      "assets.read",
+      "assets.stat"
+    ],
+    "bus": {
+      "provide": [
+        "org.ricewm.sheet/engine/",
+        "org.ricewm.sheet/copilot/"
+      ],
+      "call": [
+        "org.ricewm.sheet/engine/"
+      ]
+    }
+  }
+}

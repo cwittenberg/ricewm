@@ -1,0 +1,13 @@
+{
+  "name": "@ricewm/app",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "exports": "./sdk/versions/1.0.0/runtime/sdk/js/index.mjs",
+  "scripts": {
+    "test": "node --experimental-global-webcrypto --test tests/sdk.test.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

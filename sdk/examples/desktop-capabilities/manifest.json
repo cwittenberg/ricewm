@@ -1,0 +1,15 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "dev.herdr.generated.sdk-capabilities",
+  "name": "SDK desktop capabilities",
+  "version": "1.0.0",
+  "entry": "app.mjs",
+  "categories": ["Development"],
+  "permissions": {
+    "services": ["notifications.show", "notifications.list", "notifications.dismiss", "calendar.list", "calendar.sources", "calendar.create", "calendar.update", "calendar.delete", "calendar.watch", "hotkeys.register", "hotkeys.unregister", "hotkeys.list", "actions.register", "actions.list", "actions.unregister", "plugins.register", "plugins.list", "plugins.unregister", "plugins.context", "plugins.apply", "files.read", "dialogs.openFile"],
+    "bus": {
+      "subscribe": ["dev.herdr.generated.sdk-capabilities/notifications/action", "dev.herdr.generated.sdk-capabilities/calendar/changed", "dev.herdr.generated.sdk-capabilities/hotkeys/activated", "dev.herdr.generated.sdk-capabilities/actions/invoke", "dev.herdr.generated.sdk-capabilities/plugins/invoke"]
+    }
+  }
+}

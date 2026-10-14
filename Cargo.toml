@@ -1,0 +1,46 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/rice-desktop",
+    "crates/rice-box",
+    "crates/rice-calc",
+    "crates/rice-card",
+    "crates/rice-day",
+    "crates/rice-files",
+    "crates/rice-view",
+    "crates/rice-spatial",
+    "crates/rice-image-contract",
+    "crates/rice-tray",
+    "crates/rice-web-render-protocol",
+    "crates/rice-ui",
+    "crates/rice-layout",
+    "examples/core-demo",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+repository = "https://github.com/cwittenberg/ricewm"
+
+[workspace.dependencies]
+rice-desktop = { path = "crates/rice-desktop" }
+rice-box = { path = "crates/rice-box" }
+rice-calc = { path = "crates/rice-calc" }
+rice-card = { path = "crates/rice-card" }
+rice-day = { path = "crates/rice-day" }
+rice-files = { path = "crates/rice-files" }
+rice-view = { path = "crates/rice-view" }
+rice-spatial = { path = "crates/rice-spatial" }
+rice-image-contract = { path = "crates/rice-image-contract" }
+rice-tray = { path = "crates/rice-tray" }
+rice-web-render-protocol = { path = "crates/rice-web-render-protocol" }
+rice-ui = { path = "crates/rice-ui" }
+rice-layout = { path = "crates/rice-layout" }
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+
+[workspace.lints.clippy]
+all = "deny"
+pedantic = "warn"

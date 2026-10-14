@@ -1,0 +1,11 @@
+/** Stable chart identities. Authoring availability comes from the engine catalog,
+ * not this registry: a known interchange kind is not necessarily editable. */
+export const CHART_KINDS=Object.freeze(['clustered-column','stacked-column','percent-stacked-column','clustered-bar','stacked-bar','percent-stacked-bar','line','stacked-line','percent-stacked-line','area','stacked-area','percent-stacked-area','pie','doughnut','scatter','bubble','radar','filled-radar','stock','combo','surface','contour','histogram','boxplot','waterfall','funnel','pareto','treemap','sunburst']);
+export const CHART_CATEGORIES=Object.freeze([
+ ['column','Column',241],['bar','Bar',245],['line','Line',242],['area','Area',246],['pie','Pie',247],['scatter','XY / Bubble',249],['radar','Radar',251],['stock','Stock',252],['combo','Combination',253],['surface','Surface',254],['statistical','Statistical',255],['waterfall','Waterfall',256],['funnel','Funnel',512],['hierarchy','Hierarchy',513],
+].map(([id,label,icon])=>Object.freeze({id,label,icon})));
+export function chartCategory(kind){if(kind.includes('column'))return'column';if(kind.includes('bar')&&!['boxplot'].includes(kind))return'bar';if(kind.includes('line'))return'line';if(kind.includes('area'))return'area';if(['pie','doughnut'].includes(kind))return'pie';if(['scatter','bubble'].includes(kind))return'scatter';if(kind.includes('radar'))return'radar';if(['surface','contour'].includes(kind))return'surface';if(['histogram','boxplot','pareto'].includes(kind))return'statistical';if(['treemap','sunburst'].includes(kind))return'hierarchy';return kind;}
+export function checkedChartCatalog(value){
+ const rows=Array.isArray(value)?value:value?.types;if(!Array.isArray(rows)||rows.length>CHART_KINDS.length)throw new TypeError('Invalid chart catalog');const seen=new Set();
+ return Object.freeze(rows.map(row=>{if(!row||Object.keys(row).some(key=>!['kind','label','category','authoring','interop'].includes(key))||!CHART_KINDS.includes(row.kind)||seen.has(row.kind)||typeof row.label!=='string'||!row.label.length||row.label.length>96||typeof row.category!=='string'||row.category.length>32||typeof row.authoring!=='boolean'||!['read-write','read-only','none'].includes(row.interop))throw new TypeError('Invalid chart catalog entry');seen.add(row.kind);return Object.freeze({...row,category:chartCategory(row.kind)});}));
+}

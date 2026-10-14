@@ -1,0 +1,16 @@
+name: Core and SDK
+on: [push, pull_request]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.93.1
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: cargo test --workspace --locked
+      - run: cargo run --locked -p ricewm-core-demo -- /tmp/ricewm-demo.txt
+      - run: npm test

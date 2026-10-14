@@ -1,0 +1,20 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.performance-sdk",
+  "name": "System Monitor",
+  "version": "2.0.2",
+  "description": "Live RiceWM performance and process telemetry using the protected SDK system service.",
+  "entry": "app.mjs",
+  "window": { "profile": "system-monitor" },
+  "categories": ["System", "Utility"],
+  "permissions": {
+    "services": [
+      "system.info",
+      "system.performance",
+      "system.processSignal",
+      "system.processNice"
+    ],
+    "bus": {}
+  }
+}

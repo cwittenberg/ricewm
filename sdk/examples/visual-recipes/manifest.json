@@ -1,0 +1,11 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.visual-recipes",
+  "name": "Visual recipes",
+  "version": "1.0.0",
+  "entry": "app.mjs",
+  "permissions": {
+    "services": ["recipes.presentation", "recipes.list", "recipes.preview", "recipes.save", "recipes.apply", "recipes.status"]
+  }
+}

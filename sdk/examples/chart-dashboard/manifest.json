@@ -1,0 +1,24 @@
+{
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.chart-dashboard",
+  "name": "Chart Dashboard",
+  "version": "1.0.0",
+  "description": "Theme-aware Apache ECharts with linked native charts, multiple lines, stacked bars, a gauge and waterfall.",
+  "entry": "app.mjs",
+  "iconName": "chart-column",
+  "window": {
+    "width": 1100,
+    "height": 880
+  },
+  "categories": [
+    "Office",
+    "Development"
+  ],
+  "permissions": {
+    "services": [],
+    "bus": {}
+  },
+  "sdk": {
+    "version": "1.0.0"
+  }
+}

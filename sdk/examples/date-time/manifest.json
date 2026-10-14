@@ -1,0 +1,11 @@
+{
+  "sdk": { "version": "1.0.0" },
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.date-time-example",
+  "name": "Date & time",
+  "version": "1.0.0",
+  "description": "Friendly native calendar and clock inputs using the standard RiceApp SDK.",
+  "entry": "app.mjs",
+  "categories": ["Development"],
+  "permissions": { "services": [], "bus": {} }
+}

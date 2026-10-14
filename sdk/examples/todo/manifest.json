@@ -1,0 +1,26 @@
+{
+  "schema": "ricewm.app/v1",
+  "id": "dev.ricewm.todo",
+  "name": "To Do",
+  "version": "1.0.0",
+  "description": "A three-pane task workspace inspired by Microsoft To Do. Local lists, task details, steps and durable storage.",
+  "entry": "app.mjs",
+  "iconName": "selection-check",
+  "categories": [
+    "Office"
+  ],
+  "window": {
+    "width": 1080,
+    "height": 720
+  },
+  "permissions": {
+    "services": [
+      "settings.get",
+      "settings.set"
+    ],
+    "bus": {}
+  },
+  "sdk": {
+    "version": "1.0.0"
+  }
+}
