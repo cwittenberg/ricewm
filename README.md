@@ -1,11 +1,21 @@
 # RiceWM
 
-RiceWM's window manager, browser compositor, native desktop applications and
-JavaScript application SDK. First-party source is MIT licensed.
+RiceWM is a desktop written in Rust that runs in your browser. Inspired by
+[IceWM](https://ice-wm.org/), it brings windows, files and applications together
+in a familiar desktop workspace. The desktop is compiled to WebAssembly, with a
+JavaScript SDK for building apps.
+
+This repository contains the desktop core and SDK, along with a standalone
+browser build you can run locally. It includes the window manager, X11 server,
+renderer, and Desktop, Files and Calc applications.
+
+See [ricewm.org](https://ricewm.org/) for an introduction to RiceWM and the
+full browser workspace.
 
 ## Run the web desktop
 
-Install Rust 1.93 or newer and Node.js 18 or newer. From this repository:
+You'll need Rust 1.93 or newer and Node.js 18 or newer. Clone this repository,
+then run:
 
 ```sh
 rustup target add wasm32-unknown-unknown
@@ -13,54 +23,49 @@ npm run build
 npm start
 ```
 
-Open **http://127.0.0.1:8080**. The build compiles the Rust source into
-`rice_display.wasm` and `rice_apps.wasm` and prepares `dist/`. No npm install is
-needed to build or serve. The first Cargo build downloads public dependencies.
-You can also serve the contents of `dist/` from any static HTTP host that serves
-`.wasm` as `application/wasm`. Opening `index.html` directly as a local file is
-not supported.
+Open **http://127.0.0.1:8080**. The first build downloads the Rust dependencies
+and compiles the desktop into `dist/`. You don't need `npm install` to build or
+serve it.
 
-The web edition uses the existing RiceWM canvas compositor, shell menus,
-window decorations, fonts, icons, and original Rust **Desktop**, **Files** and
-**Calc** applications. Files and desktop items are stored in the browser's
-IndexedDB; SDK application settings are stored locally. Clear browser site data
-to reset them. A separate browser profile has separate files.
+Open Files or Calc from the Applications menu, or try one of the five SDK apps:
+Calc SDK, To Do, Date & time, Charts and Table report. Files, desktop items and
+app settings are saved in your browser. They survive a reload; clearing the
+browser's site data removes them.
 
-The Applications menu also launches five SDK examples: **Calc SDK**, **To Do**,
-**Date & time**, **Charts**, and **Table report**. To Do persists tasks across
-reloads. The SDK and all twelve included example projects are in [sdk/](sdk/).
+To host it elsewhere, serve `dist/` over HTTP with `.wasm` files served as
+`application/wasm`.
 
-This edition runs the included applications and local file operations. The
-browser host currently uses the RiceWM default theme. It does not include a
-guest operating system, terminal execution, browser engine, package manager,
-remote storage, the complete Settings app, or the separate office engines.
-Those host services are not supplied by this build. Other example projects may
-require such services; their source being included does not make them runnable
-in this host.
+The standalone build uses the default theme and local browser storage. The
+full workspace shown on ricewm.org also has services this build doesn't provide,
+including terminal execution, package installation, remote storage and office
+engines. Some SDK examples need those services.
+
+## Build an app
+
+The [SDK guide](sdk/README.md) covers writing and packaging JavaScript apps.
+Start with one of the twelve [example projects](sdk/examples/), such as
+[To Do](sdk/examples/todo/) or [the calculator](sdk/examples/calc-sdk/).
+The supported SDK version is 1.0.0.
 
 ## Source layout
 
-| Source | Responsibility |
+| Directory | What's there |
 | --- | --- |
-| [rice-x11-core](crates/rice-x11-core/src/lib.rs) | X11 server, window management, stacking, focus, workspaces, tiling, shell menus, retained surfaces and composition |
-| [rice-display](crates/rice-display/src/lib.rs) | Native/Wasm display ABI and native control layout, rendering, input and hit testing |
-| [rice-ui](crates/rice-ui/src/lib.rs) | Retained widget model, controls, themes, geometry, editor state and grids |
-| [rice-apps](crates/rice-apps/src/lib.rs) | Original Desktop, Files and Calc actors with the registry restricted to those applications |
-| [web/](web/) | RiceWM canvas compositor, window rendering, input, artwork and a static browser host with local storage adapters |
-| [sdk/](sdk/) | SDK 1.0.0, version selection and example projects |
+| [rice-x11-core](crates/rice-x11-core/src/lib.rs) | X11 server, window management, workspaces and shell menus |
+| [rice-display](crates/rice-display/src/lib.rs) | Display rendering and input |
+| [rice-ui](crates/rice-ui/src/lib.rs) | Widgets, layout and themes |
+| [rice-apps](crates/rice-apps/src/lib.rs) | Desktop, Files and Calc |
+| [web/](web/) | Canvas compositor and browser host |
+| [sdk/](sdk/) | JavaScript SDK and examples |
 
-Additional crates contain reusable desktop, file manager, viewer, calculator,
-calendar, contacts, mailbox, tray and spatial scene models. The source includes
-[theme presets](assets/themes/); the initial browser host selects the default.
-
-## Develop and verify
+## Tests
 
 ```sh
 cargo test --workspace --locked
 npm test
 ```
 
-For the browser acceptance test, install Playwright and Chromium once:
+To run the browser tests, install Playwright and Chromium first:
 
 ```sh
 npm install
@@ -69,32 +74,14 @@ npm run build
 npm run test:web
 ```
 
-The browser test operates the actual canvas UI: shell menus, native Calc,
-window dragging, resizing, maximizing, minimizing and closing, desktop file
-creation and reload, opening Files from a desktop icon, and SDK application
-persistence. It rejects missing assets, browser errors and runtime requests to
-other origins. Test files stay outside `dist/`.
+These exercise the desktop in Chromium, including window controls, Files,
+Calc and saving app state across reloads.
 
-A lower-level example exercises X11 clients and writes the real display
-renderer's pixels to a new PNG:
+## License
 
-```sh
-node examples/display-smoke.mjs target/wasm32-unknown-unknown/debug/rice_display.wasm /tmp/ricewm-display.png
-cargo run --locked -p ricewm-core-demo -- /tmp/ricewm-demo.txt
-```
-
-See [the SDK guide](sdk/README.md) for application packaging. The sole supported
-SDK is [1.0.0](sdk/versions/1.0.0/runtime/sdk/js/); compatible fixes update it in
-place.
-
-## Artwork and licenses
-
-The browser's RiceWM SVG artwork, icon font and required text fonts are
-included. Preserve [font notices](licenses/fonts/) and
-[icon decoder notices](licenses/icons/). The core uses original MIT fallback
-raster icons. Editor advance data derives from DejaVu Sans; preserve its
-[license](licenses/DEJAVU-LICENSE.txt). Apache ECharts and its dependency notices
-are included with the SDK's vendor source.
-
-[Source repository](https://github.com/cwittenberg/ricewm).
-`public-files.json` records hashes for the reviewed source and media assets.
+RiceWM's own source is [MIT licensed](LICENSE). Fonts, the icon decoder and
+other dependencies have their own notices under [licenses/](licenses/).
+The editor's font advance data comes from DejaVu Sans; its
+[license](licenses/DEJAVU-LICENSE.txt) is included. Apache ECharts and its
+dependency notices are included with the SDK vendor source. Keep these notices
+when redistributing the project.
