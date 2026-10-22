@@ -671,7 +671,12 @@ const apps = [
   ["date-time", "Date & time", "Calendar and time controls", "calendar"],
   ["chart-dashboard", "Charts", "Interactive chart dashboard", "chart"],
   ["table-report", "Table report", "Tables and data controls", "table"],
+  ["report-bug", "Report bug", "Prepare a report for GitHub", "dialog-information"],
+  ["request-feature", "Request feature", "Suggest an improvement", "dialog-information"],
 ];
+const appSource = name => name === "report-bug"
+  ? ["feedback", "manifest.json"]
+  : name === "request-feature" ? ["feedback", "feature.json"] : [name, "manifest.json"];
 async function launch(name, args = []) {
   if (
     ![
@@ -688,13 +693,14 @@ async function launch(name, args = []) {
     return launchNative(name, args);
   try {
     status.textContent = "Opening application…";
+    const [directory, manifestFile] = appSource(name);
     const manifest = await (
       await fetch(
-        new URL(`../sdk/examples/${name}/manifest.json`, import.meta.url),
+        new URL(`../sdk/examples/${directory}/${manifestFile}`, import.meta.url),
       )
     ).json();
     const { default: definition } = await import(
-      `../sdk/examples/${name}/${manifest.entry}`
+      `../sdk/examples/${directory}/${manifest.entry}`
     );
     const core = new RiceJavaScriptAppCore(definition, { manifest });
     const id = nextApp++;
@@ -783,9 +789,10 @@ const catalog = [
   },
   ...(await Promise.all(
     apps.map(async ([id, title], index) => {
+      const [directory, manifestFile] = appSource(id);
       const manifest = await (
         await fetch(
-          new URL(`../sdk/examples/${id}/manifest.json`, import.meta.url),
+          new URL(`../sdk/examples/${directory}/${manifestFile}`, import.meta.url),
         )
       ).json();
       return {
@@ -796,6 +803,7 @@ const catalog = [
         iconName: manifest.iconName || "program",
         icon: 0,
         category: 8,
+        ...(id === "report-bug" || id === "request-feature" ? { menuPath: ["Help"] } : {}),
       };
     }),
   )),

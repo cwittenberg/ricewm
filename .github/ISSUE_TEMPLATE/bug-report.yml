@@ -1,0 +1,38 @@
+name: Report bug
+description: Tell us what went wrong and how to reproduce it.
+title: '[Bug] '
+body:
+- type: markdown
+  attributes:
+    value: Please search the existing issues first. Reports are public, so leave out
+      passwords and personal information. You can attach screenshots and logs below.
+- type: textarea
+  id: happened
+  attributes:
+    label: What happened?
+  validations:
+    required: true
+- type: textarea
+  id: steps
+  attributes:
+    label: Steps to reproduce
+  validations:
+    required: true
+- type: textarea
+  id: expected
+  attributes:
+    label: What did you expect?
+  validations:
+    required: true
+- type: textarea
+  id: environment
+  attributes:
+    label: RiceWM version, browser and operating system
+  validations:
+    required: true
+- type: textarea
+  id: extra
+  attributes:
+    label: Anything else? (optional)
+  validations:
+    required: false

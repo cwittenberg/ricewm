@@ -12,6 +12,10 @@ renderer, and Desktop, Files and Calc applications.
 See [ricewm.org](https://ricewm.org/) for an introduction to RiceWM and the
 full browser workspace.
 
+Found a problem? [Report a bug](https://github.com/cwittenberg/ricewm/issues/new?template=bug-report.yml).
+Have an idea? [Request a feature](https://github.com/cwittenberg/ricewm/issues/new?template=feature-request.yml).
+You can also find both forms in the desktop's Help menu.
+
 ## Run the web desktop
 
 You'll need Rust 1.93 or newer and Node.js 18 or newer. Clone this repository,
@@ -27,7 +31,7 @@ Open **http://127.0.0.1:8080**. The first build downloads the Rust dependencies
 and compiles the desktop into `dist/`. You don't need `npm install` to build or
 serve it.
 
-Open Files or Calc from the Applications menu, or try one of the five SDK apps:
+Open Files or Calc from the Applications menu, or try one of the SDK apps:
 Calc SDK, To Do, Date & time, Charts and Table report. Files, desktop items and
 app settings are saved in your browser. They survive a reload; clearing the
 browser's site data removes them.
@@ -43,7 +47,7 @@ engines. Some SDK examples need those services.
 ## Build an app
 
 The [SDK guide](sdk/README.md) covers writing and packaging JavaScript apps.
-Start with one of the twelve [example projects](sdk/examples/), such as
+Start with one of the [example projects](sdk/examples/), such as
 [To Do](sdk/examples/todo/) or [the calculator](sdk/examples/calc-sdk/).
 The supported SDK version is 1.0.0.
 

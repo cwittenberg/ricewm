@@ -1,0 +1,13 @@
+{
+  "schema": "ricewm.app/v1",
+  "id": "org.ricewm.request-feature",
+  "name": "Request feature",
+  "version": "1.0.0",
+  "sdk": { "version": "1.0.0" },
+  "description": "Prepare a feature request and review it on GitHub.",
+  "entry": "app.mjs",
+  "iconName": "dialog-information",
+  "window": { "width": 580, "height": 620 },
+  "categories": ["Documentation", "Utility"],
+  "permissions": { "services": ["host.openExternal"], "bus": {} }
+}

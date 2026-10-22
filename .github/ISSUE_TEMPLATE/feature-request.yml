@@ -1,0 +1,32 @@
+name: Request feature
+description: Suggest something that would make RiceWM more useful to you.
+title: '[Feature] '
+body:
+- type: markdown
+  attributes:
+    value: Please search the existing issues first. Reports are public, so leave out
+      passwords and personal information. You can attach screenshots and logs below.
+- type: textarea
+  id: problem
+  attributes:
+    label: What would this help you do?
+  validations:
+    required: true
+- type: textarea
+  id: proposal
+  attributes:
+    label: How should it work?
+  validations:
+    required: true
+- type: textarea
+  id: alternatives
+  attributes:
+    label: What have you tried instead? (optional)
+  validations:
+    required: false
+- type: textarea
+  id: extra
+  attributes:
+    label: Examples or other details (optional)
+  validations:
+    required: false
