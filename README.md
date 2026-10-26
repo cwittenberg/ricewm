@@ -1,7 +1,10 @@
 # RiceWM
 
-RiceWM is a desktop written in Rust that runs in your browser. Inspired by
-[IceWM](https://ice-wm.org/), it brings windows, files and applications together
+RiceWM is a complete desktop environment written in Rust - that runs entirely in your browser. 
+
+https://github.com/user-attachments/assets/a436e9c5-eb29-4466-b100-ed33a549135c
+
+Inspired by [IceWM](https://ice-wm.org/), it brings windows, files and applications together
 in a familiar desktop workspace. The desktop is compiled to WebAssembly, with a
 JavaScript SDK for building apps.
 
