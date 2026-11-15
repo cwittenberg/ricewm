@@ -10,7 +10,8 @@ const geometry = frame => JSON.stringify([frame.sheet, frame.row_count, frame.co
     ...(frame.filter_header_row !== undefined ? [frame.filter_header_row] : []),
     ...(frame.zoom_percent !== undefined ? [frame.zoom_percent] : []),
     ...(frame.canvas !== undefined ? [frame.canvas] : []),
-    ...(frame.merges?.length ? [frame.merges.map(gridMergeValues)] : [])]);
+    ...(frame.merges?.length ? [frame.merges.map(gridMergeValues)] : []),
+    ...(frame.selection_areas?.length ? [frame.selection_areas.map(a=>[a.first_row,a.last_row,a.first_column,a.last_column])] : [])]);
 export function gridGeometryKey(frame) {
     let hash = 2166136261;
     for (const byte of new TextEncoder().encode(geometry(frame))) hash = Math.imul(hash ^ byte, 16777619) >>> 0;

@@ -70,13 +70,13 @@ let nextTable = 1;
 /** A data table using the native retained grid, with bounded visible frames. */
 export class Table extends Column {
     static family = 'collection';
-    static constructorOptions = immutable(['data','columns','rowKey','dashboard','id','filterField','height','headerStyle','cellStyle','conditionalFormats','selectionMode','rowHeight','rowHeaders','resizable','emptyText']);
+    static constructorOptions = immutable(['data','columns','rowKey','dashboard','id','filterField','height','headerStyle','cellStyle','conditionalFormats','selectionMode','sortMode','sortTrigger','rowHeight','rowHeaders','resizable','emptyText']);
     static authoring = immutable({
         constructor:'new Table({name:"orders",data:rows,columns:[{key:"customer",title:"Customer",width:220},{key:"amount",title:"Amount",align:"right",format:v=>v.toFixed(2)}],rowKey:"id",height:300}) renders a real native table. DataTable is an alias. Empty data shows emptyText. Legacy Table(properties,children) remains available for hand-authored native rows.',
         formatting:'headerStyle/cellStyle and column.style support bold, italic, underline, fontFamily, fontSize (points), align:left|center|right, foreground/background:#RRGGBB, wrap, strike and borders. Headers are bold and frozen; native defaults follow the active desktop theme. conditionalFormats:[{field:"amount",op:"lt",value:0,style:{foreground:"#b42318",bold:true},scope:"cell"}] supports eq/ne/gt/gte/lt/lte/between/contains and row scope; later rules win.',
-        selection:'Click or drag cells; Shift extends the rectangular range. Click a row number or column heading to select rows/columns. selectionMode:cell|row|column|none controls body clicks. Arrow/Home/End/Page keys navigate; Shift extends; Ctrl+A selects all, Ctrl+Space a column, Shift+Space a row, Escape clears. selectCell/Row/Column/Range use zero-based displayed data indices. Message.SELECT gives {selection,rows,rowIds,columnKeys}; Message.ACTIVATE gives {row,rowId,columnKey,value} on Enter or double-click for app-owned drill-down.',
+        selection:'Click or drag cells; Shift extends the rectangular range. Click a row number or column heading to select rows/columns. selectionMode:cell|row|column|single-row|none controls body clicks. single-row suppresses range/all-column selection and keeps one row across Shift/drag navigation. Arrow/Home/End/Page keys navigate; Shift extends; Ctrl+A selects all, Ctrl+Space a column, Shift+Space a row, Escape clears. selectCell/Row/Column/Range use zero-based displayed data indices. Message.SELECT gives {selection,rows,rowIds,columnKeys}; Message.ACTIVATE gives {row,rowId,columnKey,value} on Enter or double-click for app-owned drill-down.',
         linked:'Share new ChartDashboard(rows) with Chart and Table using unique stable ids. new Table({dashboard,id:"records",rowKey:"id",filterField:"region",columns:[...]}) follows chart filters; selecting table rows filters peer charts by region while retaining its own context. filterField defaults to rowKey. clearSelection() clears this table filter; dashboard.clear() clears all report filters. setData() updates shared data. Sorting retains contiguous selections by rowKey; clears a selection that becomes disjoint. Provide a primary-key field for stable navigation.',
-        methods:'Double-click a heading to sort ascending/descending. setData(rows), setColumns(columns), sort(key,asc|desc|null), setConditionalFormats(rules), selectCell(row,column), selectRow(row), selectColumn(column), selectRange({firstRow,lastRow,firstColumn,lastColumn}), clearSelection(), getSelectedRows(), getSelection(), inspect(). table.grid is the native viewport for named sdk.interact coordinates. table.grid.hitTest(x,y) returns native logical rows (header=0, data=index+1), and columns include a frozen row-selector column when rowHeaders is true. Wheel and native scrollbars scroll without creating one control per cell.',
+        methods:'Double-click a heading to sort ascending/descending (sortTrigger:single opts into one-click headers). sortMode:external emits Message.SORT_REQUEST {key,direction:asc|desc|null} without reordering data or changing its accepted indicator. Owners fetch a complete globally ordered page, then setData(rows) and setSortState(key,direction) to accept it. The default sortMode:local retains in-memory sorting. setData(rows), setColumns(columns), sort(key,asc|desc|null), setConditionalFormats(rules), selectCell(row,column), selectRow(row), selectColumn(column), selectRange({firstRow,lastRow,firstColumn,lastColumn}), clearSelection(), getSelectedRows(), getSelection(), inspect(). table.grid is the native viewport for named sdk.interact coordinates. table.grid.hitTest(x,y) returns native logical rows (header=0, data=index+1), and columns include a frozen row-selector column when rowHeaders is true. Wheel and native scrollbars scroll without creating one control per cell.',
     });
     static properties = immutable({
         data:{default:immutable([]), validate:rows, reflect:false},
@@ -84,7 +84,9 @@ export class Table extends Column {
         conditionalFormats:{default:immutable([]), validate:rules, reflect:false},
         headerStyle:{default:immutable({bold:true}), validate:v => {style(v); return immutable({...v});}, reflect:false},
         cellStyle:{default:immutable({}), validate:v => {style(v); return immutable({...v});}, reflect:false},
-        selectionMode:{default:'cell', validate:oneOf(['cell','row','column','none'],'selectionMode'), reflect:false},
+        selectionMode:{default:'cell', validate:oneOf(['cell','row','column','single-row','none'],'selectionMode'), reflect:false},
+        sortMode:{default:'local',validate:oneOf(['local','external'],'sortMode'),reflect:false},
+        sortTrigger:{default:'double',validate:oneOf(['double','single'],'sortTrigger'),reflect:false},
         rowHeight:{default:30, validate:numberInRange(24,120,'rowHeight'), reflect:false},
         rowHeaders:{default:true, validate:Boolean, reflect:false},
         resizable:{default:true, validate:Boolean, reflect:false},
@@ -121,6 +123,9 @@ export class Table extends Column {
     }
     setProperty(name,value,options) {
         const changed=super.setProperty(name,value,options);
+        if(changed&&this.grid&&name==='enabled'&&!value){this.drag=null;this.resize=null;this.lastClick=null;}
+        if(changed&&this.grid&&name==='selectionMode')this.clearSelection();
+        if(changed&&this.grid&&name==='sortMode')this.refresh();
         if(changed&&this.grid&&['data','columns','conditionalFormats','headerStyle','cellStyle','rowHeight','rowHeaders','emptyText'].includes(name)) {
             if(name==='data'||name==='columns')this.refresh();else this.render();
         }
@@ -136,7 +141,7 @@ export class Table extends Column {
         const source=this.dashboard ? this.dashboard.rows({except:this.tableId}) : this.values.data;
         if(this.rowKey){const keys=new Set();for(const row of source){const k=row[this.rowKey];if(!['string','number','boolean'].includes(typeof k)||typeof k==='number'&&!Number.isFinite(k)||keys.has(k))throw TypeError('Table rowKey requires unique scalar values');keys.add(k);}}
         this.view=[...source];
-        if(this.sortState){const {key,direction}=this.sortState;this.view.sort((a,b)=>{const x=a[key],y=b[key];if(x==null||y==null)return x==null?(y==null?0:1):-1;return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true}))*(direction==='desc'?-1:1);});}
+        if(this.sortState&&this.values.sortMode==='local'){const {key,direction}=this.sortState;this.view.sort((a,b)=>{const x=a[key],y=b[key];if(x==null||y==null)return x==null?(y==null?0:1):-1;return (typeof x==='number'&&typeof y==='number'?x-y:String(x).localeCompare(String(y),undefined,{numeric:true}))*(direction==='desc'?-1:1);});}
         this.selection=null;
         if(old?.kind==='column'||old?.kind==='all')this.selection=this.view.length?{...old,lastRow:this.view.length-1}:null;
         else if(ids.size){const found=this.view.map((r,i)=>ids.has(this.identity(r))?i:-1).filter(i=>i>=0);if(found.length && found.at(-1)-found[0]+1===found.length)this.selection={...old,firstRow:found[0],lastRow:found.at(-1)};}
@@ -146,9 +151,17 @@ export class Table extends Column {
         this.top=Math.min(this.top,this.maxTop());this.left=Math.min(this.left,this.maxLeft());this.render();
         if(old&&!this.selection)this.publishSelection();
     }
+    checkedSort(key,direction){
+        if(!['asc','desc',null].includes(direction)||!(direction===null&&key===null)&&!this.values.columns.some(c=>c.key===key))throw TypeError('Table sort requires an existing column and asc, desc or null');
+        return direction?{key,direction}:null;
+    }
+    setSortState(key,direction='asc'){
+        this.sortState=this.checkedSort(key,direction);this.refresh();return this;
+    }
     sort(key,direction='asc') {
-        if(!this.values.columns.some(c=>c.key===key)||!['asc','desc',null].includes(direction))throw TypeError('Table sort requires an existing column and asc, desc or null');
-        this.sortState=direction?{key,direction}:null;this.refresh();return this;
+        const state=this.checkedSort(key,direction);
+        if(this.values.sortMode==='external'){this.emit(Message.SORT_REQUEST,{key:state?.key??null,direction:state?.direction??null});return this;}
+        return this.setSortState(key,direction);
     }
     maxTop(){return Math.max(0,(this.view?.length||0)*this.values.rowHeight-Math.max(0,this.height-this.values.rowHeight));}
     maxLeft(){return Math.max(0,this.values.columns.reduce((s,c)=>s+c.width,0)-this.width+(this.values.rowHeaders?40:0));}
@@ -187,7 +200,11 @@ export class Table extends Column {
     getSelectedRows(){return this.selection&&this.view?this.view.slice(this.selection.firstRow,this.selection.lastRow+1):[];}
     selectRange({firstRow,lastRow=firstRow,firstColumn,lastColumn=firstColumn},kind='cell') {
         if(this.values.selectionMode==='none')return this;
-        const range=expandCellRange({firstRow,lastRow,firstColumn,lastColumn},{rows:this.view.length,columns:this.values.columns.length});
+        let range=expandCellRange({firstRow,lastRow,firstColumn,lastColumn},{rows:this.view.length,columns:this.values.columns.length});
+        if(this.values.selectionMode==='single-row'){
+            if(range.firstRow!==range.lastRow)throw RangeError('Single-row table selection cannot span rows');
+            range={...range,firstColumn:0,lastColumn:this.values.columns.length-1};kind='row';
+        }
         this.selection={kind,...range};
         this.cursor={row:lastRow,column:lastColumn};
         this.anchor??={row:firstRow,column:firstColumn};
@@ -212,11 +229,16 @@ export class Table extends Column {
         if(!['down','move'].includes(d?.kind)||d.kind==='down'&&d.button!==1||d.kind==='move'&&!this.drag)return;
         const hit=this.grid.hitTest(Math.round(d.x),Math.round(d.y));if(!hit||!this.view.length||!this.values.columns.length)return;
         if(d.kind==='down'&&hit.row===0&&this.values.resizable){const frame=this.grid.values.frame,boundary=frame.columns.find(t=>(!this.values.rowHeaders||t.index>0)&&Math.abs(d.x-frame.row_header-t.clip_end)<=5&&t.clip_end===t.start+t.extent);if(boundary){const index=boundary.index-(this.values.rowHeaders?1:0);this.resize={index,width:this.values.columns[index].width,x:d.x};event.preventDefault();return;}}
-        const selector=this.values.rowHeaders&&hit.column===0;const row=Math.max(0,(hit.row??1)-1),column=Math.max(0,(hit.column??0)-(this.values.rowHeaders?1:0)),kind=hit.row===0?'column':selector||hit.column===null?'row':this.values.selectionMode;
+        const selector=this.values.rowHeaders&&hit.column===0;const row=Math.max(0,(hit.row??1)-1),column=Math.max(0,(hit.column??0)-(this.values.rowHeaders?1:0)),kind=hit.row===0?'column':selector||hit.column===null?'row':this.values.selectionMode==='single-row'?'row':this.values.selectionMode;
         this.grid.setProperty('focused',true);
-        if(d.kind==='down'){this.drag=kind;if(!(d.modifiers&1)||!this.anchor)this.anchor={row,column};}
+        if(d.kind==='down'&&hit.row===0&&!selector&&(this.values.sortTrigger==='single'||this.values.selectionMode==='single-row')){
+            const now=Date.now(),double=this.lastClick&&now-this.lastClick.time<400&&this.lastClick.column===column&&this.lastClick.header;
+            if(this.values.sortTrigger==='single'||double){const key=this.values.columns[column].key;this.sort(key,this.sortState?.key===key&&this.sortState.direction==='asc'?'desc':'asc');}
+            this.lastClick={time:now,row,column,header:true};event.preventDefault();return;
+        }
+        if(d.kind==='down'){this.drag=kind;if(this.values.selectionMode==='single-row'||!(d.modifiers&1)||!this.anchor)this.anchor={row,column};}
         const a=this.anchor||{row,column},mode=this.drag;
-        const firstRow=mode==='column'?0:Math.min(a.row,row),lastRow=mode==='column'?this.view.length-1:Math.max(a.row,row),firstColumn=mode==='row'?0:Math.min(a.column,column),lastColumn=mode==='row'?this.values.columns.length-1:Math.max(a.column,column);
+        const firstRow=this.values.selectionMode==='single-row'?row:mode==='column'?0:Math.min(a.row,row),lastRow=this.values.selectionMode==='single-row'?row:mode==='column'?this.view.length-1:Math.max(a.row,row),firstColumn=mode==='row'?0:Math.min(a.column,column),lastColumn=mode==='row'?this.values.columns.length-1:Math.max(a.column,column);
         this.selectRange({firstRow,lastRow,firstColumn,lastColumn},mode);
         if(d.kind==='down'){const now=Date.now(),double=this.lastClick&&now-this.lastClick.time<400&&this.lastClick.row===row&&this.lastClick.column===column&&this.lastClick.header===(hit.row===0);if(double&&hit.row===0&&!selector){const key=this.values.columns[column].key;this.sort(key,this.sortState?.key===key&&this.sortState.direction==='asc'?'desc':'asc');}else if(double&&hit.row>0&&!selector&&hit.column!==null)this.activate(row,column);this.lastClick={time:now,row,column,header:hit.row===0};}
         event.preventDefault();
@@ -227,8 +249,8 @@ export class Table extends Column {
         if(key==='Escape'){this.clearSelection();event.preventDefault();return;}
         if(!this.view.length||!this.values.columns.length)return;
         const s=this.selection,row=s?.firstRow??0,column=s?.firstColumn??0;
-        if((key==='a'||key==='A')&&(d.modifiers&4)){this.selectRange({firstRow:0,lastRow:this.view.length-1,firstColumn:0,lastColumn:this.values.columns.length-1},'all');event.preventDefault();return;}
-        if(key===' '||d.keyCode===65){if(d.modifiers&4)this.selectColumn(column);else if(d.modifiers&1)this.selectRow(row);else return;event.preventDefault();return;}
+        if((key==='a'||key==='A')&&(d.modifiers&4)){if(this.values.selectionMode==='single-row'){event.preventDefault();return;}this.selectRange({firstRow:0,lastRow:this.view.length-1,firstColumn:0,lastColumn:this.values.columns.length-1},'all');event.preventDefault();return;}
+        if(key===' '||d.keyCode===65){if(d.modifiers&4){if(this.values.selectionMode!=='single-row')this.selectColumn(column);}else if(d.modifiers&1)this.selectRow(row);else return;event.preventDefault();return;}
         if(key==='Enter'){this.activate(row,column);event.preventDefault();return;}
         if(!['ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','PageUp','PageDown'].includes(key))return;
         let r=this.cursor?.row??row,c=this.cursor?.column??column;
@@ -236,11 +258,11 @@ export class Table extends Column {
         if(key==='Home'){c=0;if(d.modifiers&4)r=0;}if(key==='End'){c=this.values.columns.length-1;if(d.modifiers&4)r=this.view.length-1;}
         if(key==='PageUp')r-=Math.max(1,Math.floor(this.height/this.values.rowHeight)-1);if(key==='PageDown')r+=Math.max(1,Math.floor(this.height/this.values.rowHeight)-1);
         r=Math.max(0,Math.min(this.view.length-1,r));c=Math.max(0,Math.min(this.values.columns.length-1,c));this.cursor={row:r,column:c};
-        if(!(d.modifiers&1)||!this.anchor)this.anchor={row:r,column:c};const a=this.anchor;
+        if(this.values.selectionMode==='single-row'||!(d.modifiers&1)||!this.anchor)this.anchor={row:r,column:c};const a=this.anchor;
         this.top=Math.max(0,Math.min(this.maxTop(),r*this.values.rowHeight<this.top?r*this.values.rowHeight:(r+1)*this.values.rowHeight>this.top+this.height-this.values.rowHeight?(r+2)*this.values.rowHeight-this.height:this.top));
         const before=this.values.columns.slice(0,c).reduce((sum,col)=>sum+col.width,0),end=before+this.values.columns[c].width,available=this.width-(this.values.rowHeaders?40:0);
         this.left=Math.max(0,Math.min(this.maxLeft(),before<this.left?before:end>this.left+available?end-available:this.left));
-        const mode=this.values.selectionMode;this.selectRange({firstRow:mode==='column'?0:Math.min(a.row,r),lastRow:mode==='column'?this.view.length-1:Math.max(a.row,r),firstColumn:mode==='row'?0:Math.min(a.column,c),lastColumn:mode==='row'?this.values.columns.length-1:Math.max(a.column,c)},mode);this.cursor={row:r,column:c};event.preventDefault();
+        const mode=this.values.selectionMode==='single-row'?'row':this.values.selectionMode;this.selectRange({firstRow:mode==='column'?0:Math.min(a.row,r),lastRow:mode==='column'?this.view.length-1:Math.max(a.row,r),firstColumn:mode==='row'?0:Math.min(a.column,c),lastColumn:mode==='row'?this.values.columns.length-1:Math.max(a.column,c)},mode);this.cursor={row:r,column:c};event.preventDefault();
     }
     inspect(){return {rowCount:this.view.length,columns:this.values.columns.map(({format,...c})=>c),sort:this.sortState,selection:this.getSelection(),selectedRowIds:this.getSelectedRows().map(r=>this.rowKey?r[this.rowKey]:null),filters:this.dashboard?.filters??{},visibleRows:this.grid.values.frame.rows.map(t=>t.index-1).filter(i=>i>=0)};}
     destroy(){this.stopDashboard?.();return super.destroy();}

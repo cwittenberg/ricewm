@@ -85,7 +85,7 @@ export class WindowSizeController {
     setContentSize(width, height, {anchor='right'}={}) {
         if (!['right','left','top','bottom'].includes(anchor)) return Promise.reject(TypeError('Invalid content resize anchor'));
         if (this.closed) return Promise.reject(Error('Window is closed'));
-        if (![width, height].every(value => Number.isInteger(value) && value >= 96 && value <= 4096)) return Promise.reject(RangeError('Content dimensions must be whole pixels from 96 to 4096'));
+        if (!Number.isInteger(width) || width < 96 || width > 4096 || !Number.isInteger(height) || height < 14 || height > 4096) return Promise.reject(RangeError('Content dimensions must be whole pixels: width 96..4096, height 14..4096'));
         if (this.pending.length >= 16) return Promise.reject(RangeError('Too many pending window size requests'));
         return new Promise((resolve, reject) => {
             this.pending.push({operation:'content-size', token:this.nextToken++, width, height, anchor, resolve, reject});

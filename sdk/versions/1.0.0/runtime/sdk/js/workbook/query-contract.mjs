@@ -1,6 +1,9 @@
 import { checkedDataToolOptions } from "./data-tools-contract.mjs";
 import { CHART_KINDS } from "./chart-types.mjs";
 import { checkedViewport } from "./viewport-contract.mjs";
+import {checkedSheetFindOptions,checkedSheetFindTarget,checkedSheetReplaceRequest,checkedSheetFindResultSort} from './find-contract.mjs';
+import {checkedSheetSpecialCellsRequest} from './special-cells-contract.mjs';
+import {checkedSheetCommand} from './command-contract.mjs';
 /** Transport bounds only. Query planning, comparison and indexes belong to Wasm. */
 const encoder = new TextEncoder();
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
@@ -8,7 +11,20 @@ const fail = (message) => {
   throw Object.assign(new TypeError(message), { code: "INVALID_QUERY" });
 };
 const schemas = {
+  tables:['sheetId','offset','limit','literal'],
+  'validation-table-rename':['table','name','columns'],
+  'table-columns':['table','offset','limit'],
+  'special-cells':['sheetId','ranges','kind','types'],
+  'preview-replace':['options','replacement','target'],
+  'find-matches':['options','after','limit'],
+  'find-results':['options','sort','after','limit'],
+  'navigation-destinations':['sheetId','offset','limit','literal'],
+  'clipboard-text':['generation','offset','limit'],
+  'data-validations':['sheetId','range','offset','limit'],
+  'conditional-formats':['sheetId','range','offset','limit'],
   "validation-cell": ["sheetId", "row", "column", "input"],
+  'validation-fill':['sheetId','ranges','origin','input'],
+  'preview-selection':['sheetId','range','anchor','unit','operation'],
   "validation-list": [
     "sheetId",
     "row",
@@ -69,6 +85,28 @@ const schemas = {
   "filter-state": ["sheetId"],
   cancel: ["handle", "dataRevision"],
 };
+
+/** Reflected from the actual validator, rather than a separate automation API. */
+export const SHEET_QUERY_ACTIONS = Object.freeze(Object.keys(schemas));
+export function sheetQueryEffect(action) {
+  if (!Object.hasOwn(schemas, action)) fail("Unsupported Sheet query");
+  return ["activate-filter", "clear-filter"].includes(action) ? "mutation" : "query";
+}
+export function sheetQueryAvailable(action, capabilities) {
+  if(!Object.hasOwn(schemas,action))return false;
+  if(action==='validation-table-rename')return capabilities.includes('rename-table')&&capabilities.includes('data-validation');
+  if(action==='tables'||action==='table-columns')return capabilities.includes('table-metadata');
+  if(action==='validation-fill')return capabilities.includes('fill-selection');
+  if(action==='preview-selection')return capabilities.includes('modify-selection');
+  if(action==='special-cells')return capabilities.includes('special-cells');
+  if(action==='clipboard-text')return capabilities.includes('paste-text');
+  if(action==='find-results')return capabilities.includes('find-results')&&capabilities.includes('find-next');
+  if(action==='find-matches')return capabilities.includes('find-next');
+  if(action==='preview-replace')return capabilities.includes('replace-text');
+  if(action==='navigation-destinations')return capabilities.includes('navigate-reference');
+  if(action==='data-validations')return capabilities.includes('set-data-validation');
+  return action!=='conditional-formats'||capabilities.includes('add-conditional-format');
+}
 function plain(value) {
   return (
     value !== null &&
@@ -143,6 +181,53 @@ export function checkedQueryRequest(value) {
     fields.some((field) => !Object.hasOwn(query, field))
   )
     fail("Invalid query action or fields");
+  if(query.action==='validation-table-rename'){
+    const {action,...data}=query;
+    try{const {type,...checked}=checkedSheetCommand({type:'rename-table',...data});return {action,...checked};}catch(error){fail(error.message||'Invalid table heading validation');}
+  }
+  if(query.action==='tables'||query.action==='table-columns'){
+    if(!integer(query.offset)||query.offset>(query.action==='tables'?256:16384)||!integer(query.limit)||query.limit<1||query.limit>64)fail('Invalid table metadata page');
+    if(query.action==='tables'){
+      if(query.sheetId!==null&&(typeof query.sheetId!=='string'||!query.sheetId.length||query.sheetId.length>128)||typeof query.literal!=='string'||encoder.encode(query.literal).length>512||/[\p{Cc}]/u.test(query.literal))fail('Invalid table search');
+    }else if(typeof query.table!=='string'||!query.table.length||[...query.table].length>255||/[\p{Cc}]/u.test(query.table))fail('Invalid table identity');
+    return query;
+  }
+  if(query.action==='preview-selection'){
+    const {action,...data}=query;
+    try{const {type,...checked}=checkedSheetCommand({type:'modify-selection',...data});return {action,...checked};}catch(error){fail(error.message||'Invalid selection preview');}
+  }
+  if(query.action==='validation-fill'){
+    const {action,...data}=query;
+    try{const {type,...checked}=checkedSheetCommand({type:'fill-selection',...data});return {action,...checked};}
+    catch(error){fail(error.message||'Invalid fill validation');}
+  }
+  if(query.action==='special-cells'){
+    const {action,...fields}=query;checkedSheetSpecialCellsRequest(fields);
+  }
+  if(query.action==='navigation-destinations'){
+    if(typeof query.sheetId!=='string'||!query.sheetId.length||query.sheetId.length>128||!integer(query.offset)||query.offset>5120||!integer(query.limit)||query.limit<1||query.limit>32||typeof query.literal!=='string'||encoder.encode(query.literal).length>512||/[\p{Cc}]/u.test(query.literal))fail('Invalid navigation destination page');
+  }
+  if(query.action==='find-results'){
+    if(!integer(query.limit)||query.limit<1||query.limit>16)fail('Invalid Find result page limit');
+    return {action:query.action,options:checkedSheetFindOptions(query.options),sort:checkedSheetFindResultSort(query.sort),after:checkedSheetFindTarget(query.after),limit:query.limit};
+  }
+  if(query.action==='find-matches'){
+    if(!integer(query.limit)||query.limit<1||query.limit>32)fail('Invalid Find page limit');
+    return {action:query.action,options:checkedSheetFindOptions(query.options),after:checkedSheetFindTarget(query.after),limit:query.limit};
+  }
+  if(query.action==='preview-replace'){
+    const {action,...request}=query;return {action,...checkedSheetReplaceRequest(request)};
+  }
+  if(query.action==='conditional-formats'||query.action==='data-validations'){
+    if(typeof query.sheetId!=='string'||!query.sheetId.length||query.sheetId.length>128||!integer(query.offset)||query.offset>(query.action==='data-validations'?1024:4096)||!Number.isSafeInteger(query.limit)||query.limit<1||query.limit>32)fail('Invalid workbook rule page');
+    if(query.range!==null){
+      const r=query.range,keys=['firstRow','lastRow','firstColumn','lastColumn'];
+      if(!plain(r)||Object.keys(r).length!==4||keys.some(key=>!Object.hasOwn(r,key)||!integer(r[key]))
+        ||r.firstRow>r.lastRow||r.lastRow>=1048576||r.firstColumn>r.lastColumn||r.lastColumn>=16384)fail('Invalid workbook rule selection');
+    }
+  }
+  if(query.action==='clipboard-text'&&(!integer(query.generation)||query.generation<1||!integer(query.offset)||query.offset>1024*1024
+    ||!integer(query.limit)||query.limit<4||query.limit>8192))fail('Invalid clipboard text page');
   if (
     query.action === "validation-cell" &&
     (!integer(query.row) ||
@@ -312,7 +397,7 @@ export function checkedQueryRequest(value) {
     fail("Query step budget must be 64–4096");
   if (
     fields.includes("offset") &&
-    !["charts-list", "chart-projection"].includes(query.action) &&
+    !["charts-list", "chart-projection", "clipboard-text"].includes(query.action) &&
     (!integer(query.offset) ||
       query.offset > 0xffffffff ||
       !integer(query.limit) ||

@@ -5,9 +5,11 @@ import { checkedViewport } from "./viewport-contract.mjs";
  */
 import {
   checkedCapabilities,
+  checkedSheetClipboard,
   checkedSheetCommand,
 } from "./command-contract.mjs";
-import { checkedQueryRequest, checkedQueryResult } from "./query-contract.mjs";
+import { checkedQueryRequest, checkedQueryResult, sheetQueryAvailable } from "./query-contract.mjs";
+import {checkedSheetSpecialCellsPlan,sheetSpecialCellKinds} from './special-cells-contract.mjs';
 import { checkedImportFonts, checkedFontMetrics } from "./font-metrics.mjs";
 
 const BUFFER_BYTES = 65536;
@@ -25,6 +27,14 @@ const error = (code, message) => Object.assign(new Error(message), { code });
 const object = (value) =>
   value !== null && typeof value === "object" && !Array.isArray(value);
 const integer = (value) => Number.isSafeInteger(value) && value >= 0;
+/** A native-confirmed completed change whose presentation failed. Callers must
+ * retain the document and refresh/save/undo; never replay the failed command.
+ * A revision on an arbitrary error does not establish this outcome. */
+export function isCommittedWorkbookChange(cause, previousRevision) {
+  return integer(previousRevision) && cause?.code === "COMMITTED_CHANGE" &&
+    cause.rejectedBeforeMutation === false && integer(cause.revision) &&
+    cause.revision > previousRevision;
+}
 function exact(value, allowed, required = allowed) {
   return (
     object(value) &&
@@ -250,8 +260,8 @@ export async function openWasmSheetBackend({
       const failure = error(response.code, response.message);
       if (response.revision !== undefined)
         failure.revision = revision(response.revision);
-      if (response.rejectedBeforeMutation === true)
-        failure.rejectedBeforeMutation = true;
+      if (response.rejectedBeforeMutation !== undefined)
+        failure.rejectedBeforeMutation = response.rejectedBeforeMutation;
       throw failure;
     }
     return response;
@@ -288,19 +298,50 @@ export async function openWasmSheetBackend({
         "Workbook engine does not expose bounded file transfer",
       );
   }
-  async function performOperation(work, cancelFile = false) {
+  async function performOperation(work, cancelFile = false, allowCommitted = false) {
     pending = (async () => {
       try {
         return await work();
       } catch (cause) {
+        let recoveredFile = false;
+        // Older engines can reject malformed archives before attaching their
+        // revision. Do not discard unsaved work on that path: cancel staging
+        // and independently confirm the unchanged native revision first.
+        if (!closed && cancelFile && cause?.rejectedBeforeMutation === true &&
+            cause.code !== "COMMITTED_CHANGE" && cause.revision === undefined) {
+          try {
+            const cancelled = await raw({ operation: "file-cancel" });
+            alive();
+            if (!exact(cancelled, ["ok"])) throw error("INVALID_RESPONSE", "Invalid file cancellation response");
+            const response = await raw({ operation: "data", expectedRevision: currentRevision,
+              data: { action: "defined-names", offset: 0, limit: 1, literal: "" } });
+            alive();
+            if (!exact(response, ["ok", "revision", "dataRevision", "result"]))
+              throw error("INVALID_RESPONSE", "Invalid recovery query response");
+            const confirmed = checkedQueryResult({ revision: response.revision,
+              dataRevision: response.dataRevision, result: response.result });
+            if (confirmed.revision !== currentRevision || confirmed.dataRevision < currentDataRevision)
+              throw error("INVALID_RESPONSE", "File rejection did not preserve the native revision");
+            currentDataRevision = confirmed.dataRevision;
+            cause.revision = currentRevision;
+            recoveredFile = true;
+          } catch {
+            // Uncertain cleanup or revision still retires the instance below.
+          }
+        }
+        if (!closed && allowCommitted && !cancelFile && isCommittedWorkbookChange(cause, currentRevision)) {
+          currentRevision = cause.revision;
+          throw cause;
+        }
         if (
+          cause?.code !== "COMMITTED_CHANGE" &&
           !closed &&
           cause.rejectedBeforeMutation === true &&
           integer(cause.revision) &&
           cause.revision >= currentRevision
         ) {
-          let cleaned = !cancelFile;
-          if (cancelFile)
+          let cleaned = !cancelFile || recoveredFile;
+          if (cancelFile && !recoveredFile)
             try {
               const cancelled = await raw({ operation: "file-cancel" });
               alive();
@@ -640,6 +681,9 @@ export async function openWasmSheetBackend({
         expectedRevision: currentRevision,
         data: checkedQueryRequest(data),
       };
+      if(['find-results','special-cells'].includes(request.data.action)&&!sheetQueryAvailable(request.data.action,capabilities))
+        throw Object.assign(error('UNSUPPORTED_QUERY','The native workbook does not advertise this query'),{rejectedBeforeMutation:true,revision:currentRevision});
+      if(request.data.action==='special-cells'&&!sheetSpecialCellKinds(capabilities).includes(request.data.kind))throw Object.assign(error('UNSUPPORTED_QUERY','The native workbook does not advertise this Special predicate'),{rejectedBeforeMutation:true,revision:currentRevision});
       encode(request);
       return performOperation(async () => {
         const response = await raw(request);
@@ -651,6 +695,7 @@ export async function openWasmSheetBackend({
           dataRevision: response.dataRevision,
           result: response.result,
         });
+        if(request.data.action==='special-cells')checkedSheetSpecialCellsPlan(result,request.data,request.expectedRevision);
         if (
           result.revision < currentRevision ||
           result.dataRevision < currentDataRevision
@@ -666,6 +711,7 @@ export async function openWasmSheetBackend({
       if (pending)
         throw error("BUSY", "Workbook already has an exchange in progress");
       const request = exchangeRequest(value);
+      if(request.commands?.some(command=>command.type==='select-special-cells'&&!sheetSpecialCellKinds(capabilities).includes(command.kind)))throw Object.assign(error('UNSUPPORTED_COMMAND','The native workbook does not advertise this Special predicate'),{rejectedBeforeMutation:true,revision:currentRevision});
       // Reject oversize input before entering the engine or poisoning it.
       encode(request);
       return performOperation(async () => {
@@ -693,7 +739,7 @@ export async function openWasmSheetBackend({
             "INVALID_RESPONSE",
             "Conflicting workbook presentation encodings",
           );
-        const projection = { ...result };
+        const projection = { ...result,clipboard:checkedSheetClipboard(result.clipboard) };
         for (const field of ["frame", "viewUpdate"]) {
           if (result[field] !== undefined) {
             if (!object(result[field]))
@@ -710,7 +756,7 @@ export async function openWasmSheetBackend({
         currentRevision = result.revision;
         capabilities = nextCapabilities;
         return projection;
-      });
+      }, false, request.operation === "commands" && request.expectedRevision === currentRevision);
     },
     close,
   });

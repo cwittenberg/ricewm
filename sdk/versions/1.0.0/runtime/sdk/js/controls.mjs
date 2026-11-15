@@ -16,8 +16,9 @@ import {
 } from "./control.mjs";
 import { Message, Notification } from "./messages.mjs";
 import { TextEditorController, textEditorValue } from "./text-editor.mjs";
-import { copyGridFrame, gridFrameHit, validateGridReferences, DOCUMENT_ALIGNMENT_CAPABILITY, GRID_MERGES_CAPABILITY, GRID_FRACTIONAL_FONT_CAPABILITY, GRID_DOCUMENT_CANVAS_CAPABILITY, GRID_ZOOM_CAPABILITY, GRID_PAINT_CAPABILITY, GRID_REFERENCES_CAPABILITY, GRID_FILL_ENDPOINT_CAPABILITY, GRID_TEXT_STYLE_CAPABILITY, GRID_LARGE_FRAME_CAPABILITY, GRID_FILTER_HEADER_CAPABILITY, GRID_FRAME_LEGACY_MAX_BYTES, GRID_FRAME_MAX_BYTES } from "./grid-frame.mjs";
+import { copyGridFrame, gridFrameHit, validateGridReferences, DOCUMENT_ALIGNMENT_CAPABILITY, GRID_MULTI_SELECTION_CAPABILITY, GRID_MERGES_CAPABILITY, GRID_FRACTIONAL_FONT_CAPABILITY, GRID_DOCUMENT_CANVAS_CAPABILITY, GRID_ZOOM_CAPABILITY, GRID_PAINT_CAPABILITY, GRID_REFERENCES_CAPABILITY, GRID_FILL_ENDPOINT_CAPABILITY, GRID_TEXT_STYLE_CAPABILITY, GRID_LARGE_FRAME_CAPABILITY, GRID_FILTER_HEADER_CAPABILITY, GRID_FRAME_LEGACY_MAX_BYTES, GRID_FRAME_MAX_BYTES } from "./grid-frame.mjs";
 import { encodeGridDamage, GRID_DAMAGE_CAPABILITY } from "./grid-damage.mjs";
+import {GRID_DECORATIONS_CAPABILITY} from './grid-decorations.mjs';
 import { SceneSurface } from "./scene-surface.mjs";
 export { SceneSurface } from "./scene-surface.mjs";
 
@@ -531,7 +532,10 @@ export class VirtualGrid extends SurfaceControl {
         if (!frame) return frame;
         const capabilities = BigInt(this.application?.hostCapabilities || 0);
         let native = frame;
+        if(frame.selection_areas?.length&&!(capabilities&GRID_MULTI_SELECTION_CAPABILITY))throw new RangeError('Host does not support multi-area spreadsheet selection');
+        if(Object.hasOwn(native,'selection_areas')&&!(capabilities&GRID_MULTI_SELECTION_CAPABILITY)){const {selection_areas,...legacy}=native;native=legacy;}
         if(frame.merges?.length && !(capabilities & GRID_MERGES_CAPABILITY)) throw new RangeError("Host does not support merged spreadsheet cells");
+        if(frame.styles.some(style=>style.paint?.decorations)&&(capabilities&(GRID_DECORATIONS_CAPABILITY|GRID_PAINT_CAPABILITY))!==(GRID_DECORATIONS_CAPABILITY|GRID_PAINT_CAPABILITY))throw new RangeError('Host does not support conditional grid decorations');
         const canvas = this.values.canvas ?? frame.canvas;
         if (canvas && capabilities & GRID_DOCUMENT_CANVAS_CAPABILITY) native = { ...native, canvas };
         else if (Object.hasOwn(native,"canvas")) { const {canvas, ...legacy} = native; native = legacy; }

@@ -1,3 +1,5 @@
+import {validateGridDecorations} from './grid-decorations.mjs';
+export {GRID_DECORATIONS_CAPABILITY,GRID_DECORATION_SCALE,GRID_DECORATION_SYMBOLS,validateGridDecorations} from './grid-decorations.mjs';
 // Presentation-only contract shared with rice-ui::grid_frame. Workbook state,
 // formulas and geometry generation stay in the app's authoritative engine.
 export const GRID_FRAME_LEGACY_MAX_BYTES = 64 * 1024;
@@ -9,6 +11,7 @@ export const GRID_PAINT_CAPABILITY = 1n << 19n;
 export const GRID_DOCUMENT_CANVAS_CAPABILITY = 1n << 21n;
 export const GRID_FRACTIONAL_FONT_CAPABILITY = 1n << 22n;
 export const GRID_MERGES_CAPABILITY = 1n << 24n;
+export const GRID_MULTI_SELECTION_CAPABILITY = 1n << 31n;
 export const DOCUMENT_ALIGNMENT_CAPABILITY = 1n << 25n;
 export const GRID_ZOOM_CAPABILITY = 1n << 20n;
 export const GRID_FRAME_MAX_STYLES = 4096;
@@ -47,11 +50,12 @@ export function validateGridStyle(style) {
             || typeof font.italic !== "boolean" || typeof font.underline !== "boolean") fail();
     }
     if (Object.hasOwn(style,"paint")) {
-        const p=style.paint, allowed=["foreground","background","borders","vertical","wrap","strike"], color=v=>typeof v==="string"&&/^#[0-9a-f]{6}$/iu.test(v);
+        const p=style.paint, allowed=["foreground","background","borders","vertical","wrap","strike","decorations"], color=v=>typeof v==="string"&&/^#[0-9a-f]{6}$/iu.test(v);
         if(!p||typeof p!=="object"||Array.isArray(p)||Object.keys(p).some(k=>!allowed.includes(k)))fail();
         for(const k of ["foreground","background"])if(Object.hasOwn(p,k)&&!color(p[k]))fail();
         if(Object.hasOwn(p,"vertical")&&!["top","center","bottom"].includes(p.vertical))fail();
         for(const k of ["wrap","strike"])if(Object.hasOwn(p,k)&&typeof p[k]!=="boolean")fail();
+        if(Object.hasOwn(p,'decorations'))validateGridDecorations(p.decorations);
         if(Object.hasOwn(p,"borders")) {
             const b=p.borders,edges=["top","right","bottom","left"];
             if(!b||typeof b!=="object"||Array.isArray(b)||Object.keys(b).some(k=>!edges.includes(k)))fail();
@@ -93,7 +97,7 @@ function validateMerges(frame) {
     }
 }
 export function validateGridFrame(frame) {
-    if (!fields(frame, [...frameFields, ...["filter_columns", "fill_endpoint", "filter_header_row", "references", "zoom_percent", "canvas", "merges"].filter(name => Object.hasOwn(frame ?? {}, name))]) || frame.version !== 1
+    if (!fields(frame, [...frameFields, ...["selection_areas", "filter_columns", "fill_endpoint", "filter_header_row", "references", "zoom_percent", "canvas", "merges"].filter(name => Object.hasOwn(frame ?? {}, name))]) || frame.version !== 1
         || !integer(frame.revision, 0, Number.MAX_SAFE_INTEGER) || !integer(frame.sheet, 0, 0xffffffff)
         || !integer(frame.row_count, 1, 0xffffffff) || !integer(frame.column_count, 1, 0xffffffff)
         || !integer(frame.width, 1, 65536) || !integer(frame.height, 1, 65536)
@@ -155,6 +159,18 @@ export function validateGridFrame(frame) {
     const active = frame.active;
     if (active !== null && (!Array.isArray(active) || active.length !== 2
         || !integer(active[0], 0, frame.row_count - 1) || !integer(active[1], 0, frame.column_count - 1))) fail();
+    if(Object.hasOwn(frame,'selection_areas')){
+        const areas=frame.selection_areas;
+        if(!Array.isArray(areas)||areas.length>512||areas.length>1&&frame.fill_endpoint!==undefined)fail();
+        for(let i=0;i<areas.length;i++){
+            const a=areas[i];
+            if(!fields(a,['first_row','last_row','first_column','last_column'])
+                ||!integer(a.first_row,0,frame.row_count-1)||!integer(a.last_row,a.first_row,frame.row_count-1)
+                ||!integer(a.first_column,0,frame.column_count-1)||!integer(a.last_column,a.first_column,frame.column_count-1)
+                ||areas.slice(0,i).some(b=>a.first_row<=b.last_row&&b.first_row<=a.last_row&&a.first_column<=b.last_column&&b.first_column<=a.last_column))fail();
+        }
+        if(areas.length&&active&&!areas.some(a=>a.first_row<=active[0]&&active[0]<=a.last_row&&a.first_column<=active[1]&&active[1]<=a.last_column))fail();
+    }
     if (byteLength(JSON.stringify(frame)) > GRID_FRAME_MAX_BYTES) fail();
     return frame;
 }
@@ -168,6 +184,15 @@ function freeze(value) {
 export function copyGridFrame(frame) {
     validateGridFrame(frame);
     return freeze(JSON.parse(JSON.stringify(frame)));
+}
+/** Presentation membership only; areas use logical identities, not track slots. */
+export function gridCellSelected(frame,rowSlot,columnSlot){
+    if(!integer(rowSlot,0,frame.rows.length-1)||!integer(columnSlot,0,frame.columns.length-1))return false;
+    if(frame.selection_areas?.length){
+        const row=frame.rows[rowSlot].index,column=frame.columns[columnSlot].index;
+        return frame.selection_areas.some(a=>a.first_row<=row&&row<=a.last_row&&a.first_column<=column&&column<=a.last_column);
+    }
+    const s=frame.selection;return Boolean(s&&s.first_row<=rowSlot&&rowSlot<=s.last_row&&s.first_column<=columnSlot&&columnSlot<=s.last_column);
 }
 export function gridFrameHit(frame, x, y) {
     if (!integer(x, 0, frame.width - 1) || !integer(y, 0, frame.height - 1)) return null;
@@ -190,7 +215,7 @@ export function gridFrameHit(frame, x, y) {
         }
     }
     const selection = frame.selection;
-    if (selection && !frame.merges?.some(m=>m.first_row<=frame.rows[selection.last_row].index&&m.last_row>=frame.rows[selection.first_row].index&&m.first_column<=frame.columns[selection.last_column].index&&m.last_column>=frame.columns[selection.first_column].index)) {
+    if (selection && !(frame.selection_areas?.length>1) && !frame.merges?.some(m=>m.first_row<=frame.rows[selection.last_row].index&&m.last_row>=frame.rows[selection.first_row].index&&m.first_column<=frame.columns[selection.last_column].index&&m.last_column>=frame.columns[selection.first_column].index)) {
         const r = frame.rows[selection.last_row], c = frame.columns[selection.last_column];
         const left = frame.row_header + c.clip_end - 7, top = frame.column_header + r.clip_end - 7;
         if ((!frame.fill_endpoint || (frame.fill_endpoint[0] === r.index && frame.fill_endpoint[1] === c.index))

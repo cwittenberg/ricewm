@@ -295,7 +295,7 @@ export class Ribbon extends Column {
                 const record = { control: column, tools, caption, overflow, commands: [...group.controls], submenuEntries: new Map(), collapsed: false, title: group.title, toolHeight: controlHeight ?? 32, compactEntry: new MenuItem({ text: group.title }),
                     minWidth: group.minWidth, destinations, primary, columnWidths: alignColumns ? columnWidths : null,
                     rows: presentation === 'office' ? rows : null, visible: group.visible !== false, enabled: group.enabled !== false };
-                if (presentation === 'office') record.toolHeight = 34;
+                if (presentation === 'office') record.toolHeight = (group.rowCount ?? 2) === 2 ? (compact ? 30 : 34) : Math.floor(toolsHeight / (group.rowCount ?? 2));
                 for (const command of group.controls) {
                     walk(command, item => item.on(Message.BLUR, () => this.layoutOverflow()));
                     command.on(Message.CHANGE, event => {

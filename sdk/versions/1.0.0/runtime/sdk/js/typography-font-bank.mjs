@@ -54,7 +54,7 @@ export async function openTypographyFontBank({services,path='typography.wasm',fo
         const data=await services.assets.read({path:fontManifest,offset:0,length:info.size});alive();
         if(!(data instanceof Uint8Array)||data.length!==info.size)throw TypeError('Incomplete font manifest');
         const manifest=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(data));
-        if(manifest?.version!==1||!Array.isArray(manifest.fonts)||!manifest.fonts.length||manifest.fonts.length>64)throw TypeError('Invalid font manifest');
+        if(manifest?.version!==1||!Array.isArray(manifest.fonts)||!manifest.fonts.length&&!sharedFonts.length||manifest.fonts.length>64)throw TypeError('Invalid font manifest');
         // A selected SDK family owns its complete face set; do not mix font
         // generations with same-named package faces and different metrics.
         const catalog=new Map();
@@ -67,19 +67,22 @@ export async function openTypographyFontBank({services,path='typography.wasm',fo
             return available.find(face=>face.weight===weight&&!face.variableWeight)||available.find(face=>face.variableWeight&&(!face.weightRange||weight>=face.weightRange[0]&&weight<=face.weightRange[1]))||available.reduce((best,face)=>Math.abs(face.weight-weight)<Math.abs(best.weight-weight)?face:best);
         };
         const selectedFonts=query=>{
-            const required=new Map(),requested=new Set(),add=face=>{if(face)required.set(identity(face),face);};
-            for(const name of ['Liberation Sans','Noto Sans JP','Noto Sans Arabic'])add(choose(name));
+            const required=new Map(),add=face=>{if(face)required.set(identity(face),face);};
+            // Script fallbacks are requested by actual text, not by opening an
+            // Office document or selecting a theme. Explicit family selections
+            // below still load their face even for Latin-only text.
+            add(choose('Liberation Sans'));
+            if(/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.test(query.text||''))add(choose('Noto Sans JP'));
+            if(/\p{Script=Arabic}/u.test(query.text||''))add(choose('Noto Sans Arabic'));
             // Use the existing OS symbol face only for text that needs these
             // ranges. Ordinary paragraphs retain the same sixteen-face budget.
             if(/[\u2190-\u2bff]/u.test(query.text||''))add(choose('DejaVu Sans'));
             if(!required.size)add(catalog.values().next().value?.[0]);
             if(query.spans!==undefined&&(!Array.isArray(query.spans)||query.spans.length>256))throw TypeError('Invalid typography spans');
-            for(const style of [query,...(query.spans||[])])for(const name of families(style.families??query.families??'Liberation Sans')){requested.add(name);add(choose(name,style.bold??query.bold,style.italic??query.italic));}
+            for(const style of [query,...(query.spans||[])])for(const name of families(style.families??query.families??'Liberation Sans'))add(choose(name,style.bold??query.bold,style.italic??query.italic));
             if(required.size>16)throw error('FONT_SET_LIMIT','this text requires more than sixteen native font faces');
-            for(const name of new Set([...preferred,...requested]))for(const face of catalog.get(familyKey(name))||[]){
-                if(required.size>=16)break;
-                if(face.variableWeight||[400,700].includes(face.weight))add(face);
-            }
+            // Preferred theme families describe document choices. They are not
+            // a request to download every face or unused heading/body family.
             if(!required.size)throw error('FONT_UNAVAILABLE','no matching or fallback face is available');
             return [...required.values()];
         };

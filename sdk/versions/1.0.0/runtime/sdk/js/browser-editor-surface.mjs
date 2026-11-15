@@ -14,7 +14,7 @@ export class BrowserEditorSurface extends SurfaceControl {
         methods: 'Attach to a window, then openBrowserEditor({services,surface}). Only catalogued host adapters are accepted. No application DOM, script, navigation or renderer URL is exposed.',
     });
     constructor({ adapter = 'drawio', ...options } = {}) {
-        if (adapter !== 'drawio') throw TypeError('Unknown managed browser editor');
+        if (!['drawio', 'webamp', 'markets', 'bowl'].includes(adapter)) throw TypeError('Unknown managed browser editor');
         super({ state: State.EXPANSIVE | State.ENABLED, ...options });
         this.adapter = adapter;
     }

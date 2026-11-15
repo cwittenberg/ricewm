@@ -72,6 +72,29 @@ export function checkedCellValidation(response, cell, revision) {
   });
 }
 
+/** Bind table-heading feedback to its native identity and workbook revision.
+ * The native overlay sees all proposed headings simultaneously. Only bounded
+ * alert labels/coordinates cross this boundary, never candidate cell arrays. */
+export function checkedTableRenameValidation(response, table, revision) {
+  if (!Number.isSafeInteger(revision) || revision < 0 || response?.revision !== revision)
+    throw Error('Workbook changed. Reopen Table Properties.');
+  const value=response.result;
+  if (!value || value.table!==table || Object.keys(value).some(key=>!['table','alerts'].includes(key))
+    || !Array.isArray(value.alerts) || value.alerts.length>16)
+    throw Error('Table headings could not be checked.');
+  const alerts=value.alerts.map(alert=>{
+    if (!alert || !['stop','warning','information','unsupported'].includes(alert.style)
+      || !boundedText(alert.title,1024) || !boundedText(alert.message,8192)
+      || !boundedText(alert.sheetId,128) || !alert.sheetId.length
+      || !Number.isSafeInteger(alert.row) || alert.row<0 || alert.row>=1048576
+      || !Number.isSafeInteger(alert.column) || alert.column<0 || alert.column>=16384
+      || Object.keys(alert).some(key=>!['style','title','message','sheetId','row','column'].includes(key)))
+      throw Error('Table headings could not be checked.');
+    return Object.freeze({...alert});
+  });
+  return Object.freeze({table,alerts:Object.freeze(alerts)});
+}
+
 export function checkedValidationList(response, cell, revision, offset) {
   const value = response?.result;
   if (response?.revision !== revision)

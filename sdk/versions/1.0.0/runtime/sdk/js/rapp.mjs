@@ -225,7 +225,7 @@ export function encodeSetWindowTitle({ app, window, title }) {
 export function encodeWindowAction({ app, window, operation, enabled, token, width, height, anchor='right' }) {
     if (operation === 'content-size') {
         if (BigInt(app) <= 0n || BigInt(window) <= 0n || BigInt(token) <= 0n || BigInt(token) > 0xffffffffffffffffn ||
-            ![width, height].every(value => Number.isInteger(value) && value >= 96 && value <= 4096)) throw new TypeError('Invalid native window content size');
+            !Number.isInteger(width) || width < 96 || width > 4096 || !Number.isInteger(height) || height < 14 || height > 4096) throw new TypeError('Invalid native window content size');
         const anchors = ['right','left','top','bottom'];
         if (!anchors.includes(anchor)) throw new TypeError('Invalid content resize anchor');
         const writer = new Writer();

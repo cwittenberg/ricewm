@@ -29,6 +29,7 @@ export const Message = Object.freeze({
     SELECT: "rice.select",
     SCROLL: "rice.scroll",
     REORDER: "rice.reorder",
+    SORT_REQUEST: "rice.sort-request",
     TIMER: "rice.timer",
     APP_OPEN: "rice.app-open",
     APP_CLOSE_REQUEST: "rice.app-close-request",

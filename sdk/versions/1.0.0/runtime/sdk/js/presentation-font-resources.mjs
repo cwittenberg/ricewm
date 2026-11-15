@@ -1,6 +1,24 @@
 // Generated from the authoritative OS font inventory; no font payloads.
 const fonts=Object.freeze([
   {
+    "id": 13,
+    "sourceGroup": "office-fallback",
+    "family": "Noto Sans Arabic",
+    "weight": 400,
+    "italic": false,
+    "variableWeight": true,
+    "weightRange": null,
+    "path": "assets/fonts/locales/arabic.ttf",
+    "bytes": 844676,
+    "parts": [
+      {
+        "resource": "presentation-font-13",
+        "bytes": 844676,
+        "sha256": "63111b5b2e074dd48cc67692e0a2726d86ee94c1c37fe8598257b7b4e87e869e"
+      }
+    ]
+  },
+  {
     "id": 20,
     "sourceGroup": "presentation",
     "family": "Inter",
@@ -675,6 +693,60 @@ const fonts=Object.freeze([
         "resource": "presentation-font-55",
         "bytes": 759720,
         "sha256": "ae7b7855e115a5966d8b1b3f80f254ccc117ec86f9965e202ee2940453837280"
+      }
+    ]
+  },
+  {
+    "id": 56,
+    "sourceGroup": "office-fallback",
+    "family": "Noto Sans JP",
+    "weight": 400,
+    "italic": false,
+    "variableWeight": true,
+    "weightRange": null,
+    "path": "assets/fonts/locales/jp.ttf",
+    "bytes": 9589900,
+    "parts": [
+      {
+        "resource": "presentation-font-56",
+        "bytes": 9589900,
+        "sha256": "c2f3b4d463500a2ddcd3849cded1fceeb9fd6d1c32e6cbecd568453ba50fc68f"
+      }
+    ]
+  },
+  {
+    "id": 57,
+    "sourceGroup": "office-fallback",
+    "family": "Manrope",
+    "weight": 400,
+    "italic": false,
+    "variableWeight": false,
+    "weightRange": null,
+    "path": "assets/fonts/Manrope/static/Manrope-Regular.ttf",
+    "bytes": 96832,
+    "parts": [
+      {
+        "resource": "presentation-font-57",
+        "bytes": 96832,
+        "sha256": "6383bd9f81e56d61139884d8e42cb7b2146a11dde4efde55c8bff1e4c2c0bbe8"
+      }
+    ]
+  },
+  {
+    "id": 58,
+    "sourceGroup": "office-fallback",
+    "family": "Manrope",
+    "weight": 700,
+    "italic": false,
+    "variableWeight": false,
+    "weightRange": null,
+    "path": "assets/fonts/Manrope/static/Manrope-Bold.ttf",
+    "bytes": 96800,
+    "parts": [
+      {
+        "resource": "presentation-font-58",
+        "bytes": 96800,
+        "sha256": "4aed5d180a4f41ed21f07e678486f889bb40eb0ddf5f473769b6302f507d1e36"
       }
     ]
   }

@@ -233,7 +233,7 @@ export class ChipGroup extends Workspace {
             x += width + this.gap;
         }
         this.contentHeight = y + 32;
-        this.setProperty('text', `panel:fixed-height:${this.contentHeight}:flush`);
+        this.setProperty('text',this.contentHeight<=64?`panel:fixed:flush:accessory-height=${this.contentHeight}`:`panel:fixed-height:${this.contentHeight}:flush`);
     }
 }
 export class TokenInput extends Column {

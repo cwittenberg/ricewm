@@ -50,7 +50,7 @@ export function createServices(bridge, permissions = []) {
         drops: group(bridge, grants, 'drops', ['register', 'unregister', 'respond'], true),
         plugins: group(bridge, grants, 'plugins', ['register', 'unregister', 'list', 'context', 'apply'], true),
         files: group(bridge, grants, "files", [
-            "read", "write", "stat", "list", "mkdir", "remove", "rename",
+            "read", "write", "stat", "list", "mkdir", "remove", "rename", "acquireLease", "releaseLease",
             "watch", "unwatch", "child", "release", "requestWrite", "version", "releaseVersion", "beginWrite", "writeChunk", "commitWrite", "abortWrite", "openDialog", "saveDialog", "chooseFolder",
         ], true),
         settings: group(bridge, grants, "settings", ["get", "set", "list"], true),
@@ -59,7 +59,7 @@ export function createServices(bridge, permissions = []) {
         media: group(bridge, grants, "media", ["open", "metadata", "export", "context", "control", "state", "close", "watch", "unwatch", "playSound"], operation => !["metadata", "export"].includes(operation)),
         jobs: group(bridge, grants, "jobs", ["context", "start", "list", "status", "cancel", "remove", "watch", "unwatch"], true),
         display: group(bridge, grants, 'display', ['context', 'get', 'set', 'reset'], true),
-        network: group(bridge, grants, "network", ["fetch"], true),
+        network: group(bridge, grants, "network", ["fetch", "authorizeOrigins", "listOriginGrants", "revokeOriginGrant", "cancel"], operation => ['fetch','cancel'].includes(operation)),
         applications: group(bridge, grants, "applications", [
             "list", "launch", "assist", "formatSource", "openWith", "handlers", "open", "status", "editSource", "develop",
             "openDevelopmentWorkspace", "stopDevelopment", "installPackage",

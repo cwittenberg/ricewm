@@ -5,6 +5,8 @@ export * from "./composites.mjs";
 export * from "./control.mjs";
 export * from "./controls.mjs";
 export { BrowserEditorSurface, openBrowserEditor } from './browser-editor-surface.mjs';
+export {NETWORK_ORIGIN_LIMITS, checkedPublicHttpsUrl, checkedOriginReview, checkedNetworkRequestId} from './network-origin-policy.mjs';
+export {READER_SURFACE_OPERATIONS, checkedReaderOperation} from './reader-surface-contract.mjs';
 export * from "./icons.mjs";
 export {createIconSurface} from "./image-icon.mjs";
 export {IconButton} from "./icon-button.mjs";
@@ -182,3 +184,4 @@ export {inspectPptxTableDesign,editPptxTableDesign,editPptxTableOptions} from '.
 export {PARAGRAPH_LIST_STYLES,PARAGRAPH_BULLET_GLYPHS,PARAGRAPH_MARKER_COLORS,validBulletGlyph,validParagraphMarker,textParagraphsInRange,paragraphListLabels} from './presentation/paragraph-format.mjs';
 export {createParagraphListControls} from './paragraph-list-controls.mjs';
 export {createParagraphFormatDialog} from './paragraph-format-dialog.mjs';
+export {AUDIO_EQ_BANDS,audioEffects} from './audio-effects.mjs';
