@@ -11,7 +11,6 @@ pub const RESULT_ERROR: u32 = u32::MAX;
 static RUNTIME: OnceLock<Mutex<Runtime>> = OnceLock::new();
 static STAGING: OnceLock<Mutex<Vec<u8>>> = OnceLock::new();
 static LAST_ERROR: OnceLock<Mutex<String>> = OnceLock::new();
-
 pub(crate) fn runtime() -> &'static Mutex<Runtime> {
     RUNTIME.get_or_init(|| Mutex::new(Runtime::default()))
 }

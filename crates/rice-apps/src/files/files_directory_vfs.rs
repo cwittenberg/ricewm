@@ -112,6 +112,7 @@ impl RiceFiles {
                 };
                 let runtime = self.runtime_at_mut(tab, slot)?;
                 location.clone_into(&mut runtime.location_text);
+                runtime.location_edited = false;
                 runtime.completion = rice_files::DirectoryCompletion::default();
                 runtime.completion_index = None;
                 runtime.content_notice.clear();
@@ -165,7 +166,7 @@ impl RiceFiles {
                 .pane_mut(slot)
                 .commit_navigation(plan, pending.target.clone())?;
         }
-        if self.redmond98 && !self.redmond_view_explicit {
+        if self.redmond98 && !self.redmond_view_explicit && self.default_file_view().is_none() {
             self.tab_mut()?
                 .pane_mut(slot)
                 .set_view(rice_files::ViewMode::Icons);
@@ -176,6 +177,7 @@ impl RiceFiles {
             .target
             .as_str()
             .clone_into(&mut runtime.location_text);
+        runtime.location_edited = false;
         runtime.completion = rice_files::DirectoryCompletion::default();
         runtime.completion_index = None;
         runtime.directory_entries = converted;

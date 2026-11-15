@@ -1,4 +1,5 @@
 export function overviewTheme(chrome = {}) {
+    chrome ||= {};
     const color=(value,fallback)=>Array.isArray(value)?value.slice(0,3):fallback;
     const css=(value,alpha=1)=>`rgba(${value.join(',')},${alpha})`;
     const body=color(chrome.body,[24,26,29]),text=color(chrome.text,[235,237,239]);

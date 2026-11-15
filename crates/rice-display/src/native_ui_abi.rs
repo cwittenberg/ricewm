@@ -17,7 +17,7 @@ use crate::{
     RESULT_ERROR, io_buffer,
     native_ui::{DrawCommand, NativeUiHost},
     native_ui_snapshot::{MAX_SNAPSHOT_BYTES, encode_snapshot},
-    native_ui_theme::{EXTENDED_THEME_RECORD_BYTES, decode_theme},
+    native_ui_theme::{CHOICE_THEME_RECORD_BYTES, decode_theme},
 };
 
 mod editor;
@@ -465,6 +465,8 @@ pub extern "C" fn rice_native_ui_grid_fill_endpoint_version() -> u32 { 1 }
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_native_ui_grid_text_style_version() -> u32 { 1 }
+#[unsafe(no_mangle)]
+pub extern "C" fn rice_native_ui_grid_decorations_version()->u32{1}
 
 /// Resolved widget-size observation patch and render feedback support.
 #[unsafe(no_mangle)]
@@ -506,6 +508,9 @@ pub extern "C" fn rice_native_ui_zoom_icons_version() -> u32 { 1 }
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_native_ui_grid_merges_version() -> u32 { 1 }
 
+#[unsafe(no_mangle)]
+pub extern "C" fn rice_native_ui_grid_multi_selection_version() -> u32 { 1 }
+
 /// Optional native document editor alignment; legacy fields stay centered.
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_native_ui_document_alignment_version() -> u32 { 1 }
@@ -542,14 +547,14 @@ pub extern "C" fn rice_native_ui_apply(input_len: u32) -> u32 {
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_native_ui_icon_selector_version()->u32 {1}
 
-/// Version two adds bounded typography and native control geometry overrides.
+/// Version five adds choice parts, combined states and indicator geometry.
 #[unsafe(no_mangle)]
-pub extern "C" fn rice_native_ui_theme_version() -> u32 { 2 }
+pub extern "C" fn rice_native_ui_theme_version() -> u32 { 5 }
 
 /// Apply one staged, data-only `RiceWM` catalog theme to every native app.
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_native_ui_set_theme(input_len: u32) -> u32 {
-    let Ok(frame) = staging_input(input_len, EXTENDED_THEME_RECORD_BYTES) else {
+    let Ok(frame) = staging_input(input_len, CHOICE_THEME_RECORD_BYTES) else {
         return RESULT_ERROR;
     };
     transport()

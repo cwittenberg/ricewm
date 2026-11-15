@@ -7,7 +7,14 @@ const VECTOR_OPS = new Set([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 1
 
 /** Copies the bounded vector envelope. RiceUI also validates every command's
  * payload and resources at its authoritative native ingress. */
-export function copySceneFrame({ width, height, displayList } = {}) {
+export function copySceneFrame(frame) { return checkedSceneFrame(frame, true); }
+
+// Internal builder boundary: finish() just allocated this buffer and has not
+// exposed it. Validate it without making a second full copy. SceneSurface's
+// public submit boundary still takes its own snapshot before validation.
+export function validateOwnedSceneFrame(frame) { return checkedSceneFrame(frame, false); }
+
+function checkedSceneFrame({ width, height, displayList } = {}, copy) {
     for (const value of [width, height]) {
         if (!Number.isInteger(value) || value < 1 || value > 16384) throw new RangeError('Invalid scene viewport');
     }
@@ -15,7 +22,7 @@ export function copySceneFrame({ width, height, displayList } = {}) {
     if (displayList.length > MAX_SCENE_BYTES) throw new RangeError('Scene exceeds its byte budget');
     // Native snapshots reserve a zero-byte payload for a retained reference.
     // Clear with an explicit transparent no-op rectangle, not that sentinel.
-    const bytes = displayList.length ? displayList.slice() : new Uint8Array(28);
+    const bytes = displayList.length ? (copy ? displayList.slice() : displayList) : new Uint8Array(28);
     if (!displayList.length) { bytes[0] = 5; bytes[4] = 28; }
     const view = new DataView(bytes.buffer);
     let stacking = 0, clips = 0, shadows = 0, shadowCount = 0, count = 0;
@@ -76,6 +83,7 @@ export function copySceneFrame({ width, height, displayList } = {}) {
 /** A retained vector surface owned and painted by RiceUI. No DOM or browser
  * navigation capability is exposed. Pointer events use viewport coordinates. */
 export class SceneSurface extends SurfaceControl {
+    static acceptsChildren = false;
     static kind = 65;
     static properties = Object.freeze({ cursor: {
         default: 'default', validate(value) {

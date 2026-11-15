@@ -27,7 +27,7 @@ import {checkedScroll} from './viewport-contract.mjs';
  * port is a development seam, not permission to expose host objects to apps.
  */
 import { copyGridFrame, GRID_FRAME_MAX_BYTES, validateGridStyle } from "@ricewm/app";
-import { checkedCapabilities, checkedSheetRange, checkedSelectionValidation } from "./command-contract.mjs";
+import { checkedCapabilities, checkedSheetRange, checkedSheetSelectionAreas, checkedSheetClipboard, checkedSelectionValidation } from "./command-contract.mjs";
 
 export function checkedEnginePort(port) {
     if (port === null) return null;
@@ -100,11 +100,16 @@ export function checkedProjection(value, viewportCache = null) {
         !Number.isFinite(layout.rowHeightPt) || layout.rowHeightPt < 0 || layout.rowHeightPt > 750000 ||
         !Number.isFinite(layout.columnWidthPx) || layout.columnWidthPx < 0 || layout.columnWidthPx > 1000000)) throw new TypeError('Invalid engine selection layout');
     const selectedMerge=checkedSelectedMerge(value.selection?.merge);
+    const panes=value.selection?.panes;
+    if(panes!==undefined&&(!panes||typeof panes!=='object'||Array.isArray(panes)||Object.keys(panes).length!==2||!Number.isInteger(panes.rows)||panes.rows<0||panes.rows>=1048576||!Number.isInteger(panes.columns)||panes.columns<0||panes.columns>=16384))throw new TypeError('Invalid frozen pane metadata');
     const selectedFont = value.selection?.font;
     if (selectedFont !== undefined) validateGridStyle({ alignment: 0, role: 0, font: selectedFont });
     const selectedFormat = checkedFormat(value.selection?.format);
+    const areas=value.selection?.ranges===undefined?null:checkedSheetSelectionAreas(value.selection.ranges,value.selection.active);
+    if(areas&&(!value.selection.range||!areas.ranges.some(r=>JSON.stringify(r)===JSON.stringify(checkedSheetRange(value.selection.range))&&r.firstRow<=areas.active.row&&areas.active.row<=r.lastRow&&r.firstColumn<=areas.active.column&&areas.active.column<=r.lastColumn)))throw new TypeError('Invalid primary selection area');
     const metadata = {
         revision: value.revision,
+        clipboard:checkedSheetClipboard(value.clipboard),
         capabilities: checkedCapabilities(value.capabilities),
         documentTitle: text(value.documentTitle, 512, "document title"),
         activeSheetId: value.activeSheetId,
@@ -116,8 +121,10 @@ export function checkedProjection(value, viewportCache = null) {
             formula: text(value.selection?.formula, 32768, "selection formula"),
             ...(value.selection?.numberFormat === undefined ? {} : { numberFormat: text(value.selection.numberFormat, 2048, "number format") }),
             ...(value.selection?.range === undefined ? {} : { range: checkedSheetRange(value.selection.range) }),
+            ...(areas?areas:{}),
             ...(layout === undefined ? {} : { layout: Object.freeze({ ...layout }) }),
             ...(selectedMerge === undefined ? {} : {merge:selectedMerge}),
+            ...(panes===undefined?{}:{panes:Object.freeze({...panes})}),
             ...(selectedFont === undefined ? {} : { font: Object.freeze({ ...selectedFont }) }),
             ...(selectedFormat === undefined ? {} : {format:selectedFormat}),
             ...(value.selection?.validation === undefined ? {} : {validation:checkedSelectionValidation(value.selection.validation)}),
@@ -177,7 +184,13 @@ export function checkedProjection(value, viewportCache = null) {
     } else {
         viewportCache?.clear();
     }
-    if (frame && metadata.selection.range) {
+    if(frame&&areas){
+        const expected=areas.ranges.map(r=>({first_row:r.firstRow,last_row:r.lastRow,first_column:r.firstColumn,last_column:r.lastColumn}));
+        const values=a=>[a.first_row,a.last_row,a.first_column,a.last_column];
+        if(!frame.selection_areas||JSON.stringify(frame.selection_areas.map(values))!==JSON.stringify(expected.map(values))||JSON.stringify(frame.active)!==JSON.stringify([areas.active.row,areas.active.column]))throw new TypeError('Grid selection areas disagree with workbook metadata');
+    }
+    if(frame&&!areas&&frame.selection_areas?.length)throw new TypeError('Grid selection areas require authoritative workbook metadata');
+    if (frame && metadata.selection.range && !(areas?.ranges.length>1)) {
         // The engine's selection rectangle uses clipped visible slots. Keep
         // its highlight, but identify the true logical fill endpoint separately.
         // This decorates presentation only; the engine viewport cache is raw.

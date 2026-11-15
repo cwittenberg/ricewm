@@ -1,5 +1,6 @@
 import {documentFontMetricsFromBytes} from './rice-document-font-metrics.mjs';
 import {resolveDocumentFont, documentFontResource} from '../sdk/versions/1.0.0/runtime/sdk/js/document-fonts.mjs';
+import {loadOfficeFontBytes} from './rice-document-font-hydration.mjs';
 // Shared by document text painting and measured native single-line input.
 export function documentFontFamily(name) {
     const face=resolveDocumentFont(name);
@@ -64,16 +65,17 @@ export function ensureDocumentTextFonts(command, environment=globalThis.document
     const Font = environment?.defaultView?.FontFace || globalThis.FontFace;
     if(!environment?.fonts || !Font) return null;
     const face=documentFontResource(command.font.family,command.font.weight,command.font.italic);
-    const key=`${face.css}:${face.weight}:${face.style}`;
+    const key=`${face.css}:${face.weightRange?.join('-')||face.weight}:${face.style}`;
     let loads=environments.get(environment); if(!loads){loads=new Map();environments.set(environment,loads);}
     let load=loads.get(key);
     if(!load){
         load={ready:false};
-        load.promise=fetch(new URL(`./${face.path}`,import.meta.url)).then(response=>{
+        const bytes=face.officeFontId===undefined?fetch(face.url || new URL(`./${face.path}`,import.meta.url)).then(response=>{
             if(!response.ok)throw new Error('Document font resource failed');return response.arrayBuffer();
-        }).then(async bytes=>{
+        }):loadOfficeFontBytes(face.officeFontId).then(bytes=>Uint8Array.from(bytes).buffer);
+        load.promise=bytes.then(async bytes=>{
             const metrics=documentFontMetricsFromBytes(bytes);
-            const font=new Font(face.css,bytes,{weight:String(face.weight),style:face.style});
+            const font=new Font(face.css,bytes,{weight:face.weightRange?face.weightRange.join(' '):String(face.weight),style:face.style});
             await font.load();environment.fonts.add(font);fontMetrics.set(face.path,metrics);load.ready=true;
         });loads.set(key,load);
     }

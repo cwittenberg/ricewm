@@ -233,6 +233,11 @@ pub enum HostOperation {
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TerminalAction {
+    /// Open the Rust Claude agent in the existing native terminal grid.
+    OpenClaude {
+        columns: u16,
+        rows: u16,
+    },
     /// Open the bundled native-Wasm xCodex engine in the existing terminal grid.
     OpenXCodex {
         columns: u16,

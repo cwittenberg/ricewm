@@ -30,30 +30,10 @@ pub(super) fn render(
     // Orchard's window radius must not turn a slider into a thick capsule.
     // A fine blue track remains visible through the larger clear thumb.
     let orchard = theme.chrome_profile == ChromeProfile::Orchard;
-    let track_height = if orchard {
-        6
-    } else {
-        u32::from(theme.metrics.corner_radius)
-            .saturating_mul(2)
-            .max(6)
-    };
     if rect.size.width <= margin.saturating_mul(2) || rect.size.height < 8 {
         return Ok(());
     }
-    let track = Rect {
-        origin: Point {
-            x: rect.origin.x.saturating_add_unsigned(margin),
-            y: rect
-                .origin
-                .y
-                .saturating_add_unsigned(rect.size.height / 2)
-                .saturating_sub_unsigned(track_height / 2),
-        },
-        size: Size {
-            width: rect.size.width.saturating_sub(margin.saturating_mul(2)),
-            height: track_height,
-        },
-    };
+    let track = super::super::control_chrome::slider(rect, position, total, theme).track;
     if theme.signal_controls {
         let center_y = rect.origin.y.saturating_add_unsigned(rect.size.height / 2);
         let fill_width = (u64::from(track.size.width) * u64::from(fraction) / 1000) as u32;

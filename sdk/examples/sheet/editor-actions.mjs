@@ -16,6 +16,29 @@ export function selectionRange(projection) {
     const active = projection?.frame?.active;
     return active ? { firstRow: active[0], lastRow: active[0], firstColumn: active[1], lastColumn: active[1] } : null;
 }
+/** Native traversal owns hidden/filter/merge and offscreen lookup. */
+export function selectionTraversalCommand(projection,key,modifiers=0){
+    if(!['Tab','Enter'].includes(key)||modifiers&~1||!projection?.capabilities?.includes('traverse-selection'))return null;
+    const range=selectionRange(projection),ranges=projection.selection?.ranges;
+    if(!range||!(ranges?.length>1||range.firstRow!==range.lastRow||range.firstColumn!==range.lastColumn))return null;
+    return {type:'traverse-selection',sheetId:projection.activeSheetId,order:key==='Tab'?'rows':'columns',direction:modifiers&1?'backward':'forward'};
+}
+export function clearSelectionCommand(projection){
+    const ranges=projection?.selection.ranges,capabilities=projection?.capabilities||[];
+    if(ranges?.length>1)return capabilities.includes('clear-ranges')?{type:'clear-ranges',sheetId:projection.activeSheetId,ranges}:null;
+    const range=selectionRange(projection);
+    if(range&&capabilities.includes('clear-ranges'))return {type:'clear-ranges',sheetId:projection.activeSheetId,ranges:[range]};
+    return range&&capabilities.includes('clear-range')?{type:'clear-range',sheetId:projection.activeSheetId,range}:null;
+}
+/** UI intent only. Explicit automation commands keep their own target scope. */
+export function formatSelectionCommand(command,projection){
+    if(!projection||command?.sheetId!==projection.activeSheetId||!['format-range','format-cells'].includes(command?.type))return null;
+    const ranges=projection.selection?.ranges?.length>1?projection.selection.ranges:[selectionRange(projection)];
+    if(!ranges[0])return null;
+    if(!(projection.capabilities||[]).includes('format-ranges'))return ranges.length>1?null:command;
+    const changes=command.type==='format-range'?[{path:command.path,value:command.value}]:command.changes;
+    return {type:'format-ranges',sheetId:projection.activeSheetId,ranges,...(changes?{changes}:{}),...(command.borders?{borders:command.borders}:{})};
+}
 export function betweenCells(first, last) {
     return checkedSheetRange({ firstRow: Math.min(first.row, last.row), lastRow: Math.max(first.row, last.row),
         firstColumn: Math.min(first.column, last.column), lastColumn: Math.max(first.column, last.column) });
@@ -28,6 +51,7 @@ export function fillSelection(projection, direction) {
     return { type: 'fill-range', sheetId: projection.activeSheetId, source, target };
 }
 export function autoSumCommand(projection) {
+    if(projection?.selection.ranges?.length>1)return null;
     const range = selectionRange(projection), active = projection?.frame?.active;
     if (!range || !active) return null;
     let target, source;

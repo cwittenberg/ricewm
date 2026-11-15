@@ -42,6 +42,9 @@ const MAGIC: &[u8; 4] = b"RUID";
 /// viewport with a centered aspect-preserving scale. Flag 0 retains the browser
 /// `WebSurface` width-based scale. All other scene header flag bits are reserved.
 /// Fractional document fonts use tags 31 (styled text) and 32 (styled edit).
+/// Resolved grid decorations use tag 35: rect, zoom:u16, background:RGBA,
+/// JSON bytes:u16 and <=2048 bytes of closed GridDecorations data. Their host
+/// capability is negotiated independently from ordinary grid paint.
 /// They have the same layout as tags 27/28 except for an eight-byte LE f64
 /// point size at offset 24 in place of the legacy u16; subsequent fields move
 /// forward six bytes. Integer fonts keep the original tags and exact bytes.
@@ -256,6 +259,12 @@ fn encode_command(bytes: &mut Vec<u8>, command: &DrawCommand) -> Result<u32, Sna
                 push_u32(bytes, *offset);
             }
             bytes.extend_from_slice(text.as_bytes());
+        }
+        DrawCommand::GridDecorations{rect,decorations,zoom_percent,background}=>{
+            if !decorations.is_valid()||!(25..=400).contains(zoom_percent){return Err(SnapshotError::RecordLimit);}
+            let json=serde_json::to_vec(decorations).map_err(|_|SnapshotError::RecordLimit)?;
+            if json.len()>2048{return Err(SnapshotError::RecordLimit);}
+            record_header(bytes,35,(28+json.len()) as u16)?;push_rect(bytes,*rect);push_u16(bytes,*zoom_percent);bytes.extend_from_slice(&background.channels());push_u16(bytes,json.len() as u16);bytes.extend_from_slice(&json);
         }
         DrawCommand::GridText {zoom_percent,rect,text,color,align,font,size_px,vertical,wrap,strike} => {
             if *size_px==0||*vertical>2||!(25..=400).contains(zoom_percent)||font.as_ref().is_some_and(|f|!f.is_valid()){return Err(SnapshotError::RecordLimit);}
@@ -546,6 +555,19 @@ mod tests {
 
     use super::*;
     use crate::native_ui::TextAlign;
+
+    #[test]
+    fn conditional_decoration_record_is_bounded_and_keeps_closed_metadata_and_zoom(){
+        use rice_ui::grid_frame::{GridDecorations,GridConditionalIcon};
+        let decorations=GridDecorations{icon:Some(GridConditionalIcon{kind:"ArrowUp".into(),color:"#379754".into(),show_value:false}),..Default::default()};
+        let mut output=RenderOutput{size:Size{width:200,height:80},commands:vec![DrawCommand::GridDecorations{rect:Rect{origin:Point{x:10,y:20},size:Size{width:100,height:40}},decorations:decorations.clone(),zoom_percent:150,background:Color::opaque(255,255,255)}],hit_targets:vec![],focused:None,cursor:crate::native_ui::PointerCursor::Default,dialog:None,popup:None};
+        let bytes=encode_snapshot(1,1,&output).unwrap();let record=&bytes[usize::from(SNAPSHOT_HEADER_BYTES)..];
+        assert_eq!(record[0],35);assert_eq!(record[1],0);assert_eq!(u16::from_le_bytes(record[20..22].try_into().unwrap()),150);assert_eq!(&record[22..26],&[255,255,255,255]);
+        let length=u16::from_le_bytes(record[26..28].try_into().unwrap())as usize;assert!(length<=2048);assert_eq!(record.len(),28+length);
+        let restored:GridDecorations=serde_json::from_slice(&record[28..]).unwrap();assert_eq!(restored,decorations);
+        if let DrawCommand::GridDecorations{decorations,..}=&mut output.commands[0]{decorations.icon.as_mut().unwrap().kind="Unknown".into();}
+        assert!(matches!(encode_snapshot(1,1,&output),Err(SnapshotError::RecordLimit)));
+    }
 
     #[test]
     fn snapshot_v14_direction_header_follows_scoped_locale() {

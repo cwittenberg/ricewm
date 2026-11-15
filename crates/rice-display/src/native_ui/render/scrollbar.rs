@@ -9,6 +9,7 @@ pub(super) fn render(
     widget: &Widget,
     rect: Rect,
     theme: &Theme,
+    hovered: bool,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
     if let Some(text) = widget.text.as_deref()
@@ -24,7 +25,7 @@ pub(super) fn render(
     {
         return render_color_picker(rect, selected, theme, commands);
     }
-    let rect = if widget.state.contains(WidgetState::FLAT) {
+    let rect = if widget.state.contains(WidgetState::FLAT) && theme.chrome_profile != ChromeProfile::YellowJacket {
         scroll::compact_track(rect)
     } else {
         rect
@@ -36,7 +37,7 @@ pub(super) fn render(
         position,
         total,
         extent,
-        widget.state.contains(WidgetState::HOVERED) || widget.state.contains(WidgetState::PRESSED),
+        hovered || widget.state.contains(WidgetState::HOVERED) || widget.state.contains(WidgetState::PRESSED),
         theme,
         commands,
     )
@@ -84,6 +85,7 @@ fn render_fraction(
     theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
+    if theme.control_chrome.scrollbar() {return super::control_parts::scrollbar(rect,position,total,extent,if active {1}else{0},theme,commands);}
     if theme.chrome_profile == ChromeProfile::Redmond98 {
         return render_redmond_fraction(rect, position, total, extent, theme, commands);
     }
@@ -317,193 +319,218 @@ fn render_yellow_jacket_fraction(
     theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
-    let vertical = rect.size.height > rect.size.width;
-    let major = if vertical {
-        rect.size.height
-    } else {
-        rect.size.width
-    };
-    let minor = if vertical {
-        rect.size.width
-    } else {
-        rect.size.height
-    };
-    let arrow_extent = minor.min(major / 2).max(1);
-    let track_major = major.saturating_sub(arrow_extent.saturating_mul(2));
-    let track = Rect {
-        origin: Point {
-            x: if vertical {
-                rect.origin.x
-            } else {
-                rect.origin.x.saturating_add_unsigned(arrow_extent)
+    let parts = super::super::control_chrome::scrollbar(rect, position, total, extent, theme);
+    let gray = Color::opaque(216, 216, 216);
+    let light = Color::opaque(255, 255, 255);
+    let dark = Color::opaque(152, 152, 152);
+    let bevel = |rect: Rect, commands: &mut Vec<DrawCommand>| -> Result<(), NativeUiError> {
+        if rect.size.width == 0 || rect.size.height == 0 {
+            return Ok(());
+        }
+        push_command(
+            commands,
+            DrawCommand::Fill {
+                rect,
+                color: gray,
+                radius: 0,
             },
-            y: if vertical {
-                rect.origin.y.saturating_add_unsigned(arrow_extent)
-            } else {
-                rect.origin.y
-            },
-        },
-        size: Size {
-            width: if vertical { minor } else { track_major },
-            height: if vertical { track_major } else { minor },
-        },
+        )?;
+        for (edge, color) in [
+            (
+                Rect {
+                    size: Size {
+                        height: 1,
+                        ..rect.size
+                    },
+                    ..rect
+                },
+                light,
+            ),
+            (
+                Rect {
+                    size: Size {
+                        width: 1,
+                        ..rect.size
+                    },
+                    ..rect
+                },
+                light,
+            ),
+            (
+                Rect {
+                    origin: Point {
+                        x: rect.origin.x,
+                        y: rect.origin.y.saturating_add_unsigned(rect.size.height - 1),
+                    },
+                    size: Size {
+                        width: rect.size.width,
+                        height: 1,
+                    },
+                },
+                dark,
+            ),
+            (
+                Rect {
+                    origin: Point {
+                        x: rect.origin.x.saturating_add_unsigned(rect.size.width - 1),
+                        y: rect.origin.y,
+                    },
+                    size: Size {
+                        width: 1,
+                        height: rect.size.height,
+                    },
+                },
+                dark,
+            ),
+        ] {
+            push_command(
+                commands,
+                DrawCommand::Fill {
+                    rect: edge,
+                    color,
+                    radius: 0,
+                },
+            )?;
+        }
+        Ok(())
     };
     push_command(
         commands,
         DrawCommand::Fill {
             rect,
-            color: theme.palette.surface,
+            color: Color::opaque(192, 192, 192),
             radius: 0,
         },
     )?;
     push_command(
         commands,
         DrawCommand::Border {
-            rect,
-            color: theme.palette.border,
+            rect: parts.track,
+            color: dark,
             width: 1,
             radius: 0,
         },
     )?;
-    let leading = Rect {
-        origin: rect.origin,
-        size: Size {
-            width: if vertical { minor } else { arrow_extent },
-            height: if vertical { arrow_extent } else { minor },
-        },
-    };
-    let trailing = Rect {
-        origin: Point {
-            x: if vertical {
-                rect.origin.x
-            } else {
-                rect.origin.x.saturating_add_unsigned(major - arrow_extent)
-            },
-            y: if vertical {
-                rect.origin.y.saturating_add_unsigned(major - arrow_extent)
-            } else {
-                rect.origin.y
-            },
-        },
-        size: leading.size,
-    };
-    for button in [leading, trailing] {
-        push_command(
-            commands,
-            DrawCommand::Fill {
-                rect: button,
-                color: theme.palette.surface_raised,
-                radius: 0,
-            },
-        )?;
-        push_command(
-            commands,
-            DrawCommand::Border {
-                rect: button,
-                color: theme.palette.border,
-                width: 1,
-                radius: 0,
-            },
-        )?;
+    for (button, leading) in [
+        (Some(parts.decrement), true),
+        (parts.secondary_increment, false),
+        (parts.secondary_decrement, true),
+        (Some(parts.increment), false),
+    ] {
+        let Some(button) = button else { continue };
+        bevel(button, commands)?;
+        // Outline triangles, with a white lower edge, rather than solid black arrows.
+        if button.size.width >= 7 && button.size.height >= 7 {
+            let cx = button.origin.x + (button.size.width / 2) as i32;
+            let cy = button.origin.y + (button.size.height / 2) as i32;
+            for row in 0..5_i32 {
+                let breadth = if leading { row } else { 4 - row };
+                for offset in -breadth..=breadth {
+                    if offset.abs() != breadth && row != if leading { 4 } else { 0 } {
+                        continue;
+                    }
+                    let (x, y) = if parts.vertical {
+                        (cx + offset, cy - 2 + row)
+                    } else {
+                        (cx - 2 + row, cy + offset)
+                    };
+                    push_command(
+                        commands,
+                        DrawCommand::Fill {
+                            rect: Rect {
+                                origin: Point { x, y },
+                                size: Size {
+                                    width: 1,
+                                    height: 1,
+                                },
+                            },
+                            color: dark,
+                            radius: 0,
+                        },
+                    )?;
+                    push_command(
+                        commands,
+                        DrawCommand::Fill {
+                            rect: Rect {
+                                origin: Point { x: x + 1, y: y + 1 },
+                                size: Size {
+                                    width: 1,
+                                    height: 1,
+                                },
+                            },
+                            color: light,
+                            radius: 0,
+                        },
+                    )?;
+                }
+            }
+        }
     }
-    render_pixel_arrow(leading, vertical, true, theme.palette.text, commands)?;
-    render_pixel_arrow(trailing, vertical, false, theme.palette.text, commands)?;
-
-    if track_major == 0 {
+    if parts.thumb.size.width == 0 || parts.thumb.size.height == 0 {
         return Ok(());
     }
-    let thumb_extent = u32::try_from(
-        u64::from(extent).saturating_mul(u64::from(track_major)) / u64::from(major.max(1)),
-    )
-    .unwrap_or(track_major)
-    .max(minor.min(track_major))
-    .min(track_major);
-    let travel = track_major.saturating_sub(thumb_extent);
-    let offset = u32::try_from(
-        u64::from(travel).saturating_mul(u64::from(position)) / u64::from(total.max(1)),
-    )
-    .unwrap_or(travel);
-    let thumb = Rect {
-        origin: Point {
-            x: if vertical {
-                track.origin.x
+    bevel(parts.thumb, commands)?;
+    let _ = active; // BeOS keeps the scrollbar gray on hover.
+    let cx = parts.thumb.origin.x + (parts.thumb.size.width / 2) as i32;
+    let cy = parts.thumb.origin.y + (parts.thumb.size.height / 2) as i32;
+    if (if parts.vertical {
+        parts.thumb.size.height
+    } else {
+        parts.thumb.size.width
+    }) >= 14
+    {
+        for offset in [-4, 0, 4] {
+            let rect = if parts.vertical {
+                Rect {
+                    origin: Point {
+                        x: cx - 2,
+                        y: cy + offset,
+                    },
+                    size: Size {
+                        width: 4,
+                        height: 1,
+                    },
+                }
             } else {
-                track.origin.x.saturating_add_unsigned(offset)
-            },
-            y: if vertical {
-                track.origin.y.saturating_add_unsigned(offset)
-            } else {
-                track.origin.y
-            },
-        },
-        size: Size {
-            width: if vertical { minor } else { thumb_extent },
-            height: if vertical { thumb_extent } else { minor },
-        },
-    };
-    push_command(
-        commands,
-        DrawCommand::Fill {
-            rect: thumb,
-            color: if active {
-                theme.palette.surface_raised
-            } else {
-                theme.palette.surface
-            },
-            radius: 0,
-        },
-    )?;
-    push_command(
-        commands,
-        DrawCommand::Border {
-            rect: thumb,
-            color: theme.palette.border,
-            width: 1,
-            radius: 0,
-        },
-    )?;
-    let thumb_center_x = thumb.origin.x.saturating_add_unsigned(thumb.size.width / 2);
-    let thumb_center_y = thumb
-        .origin
-        .y
-        .saturating_add_unsigned(thumb.size.height / 2);
-    for offset in [-4_i32, 0, 4] {
-        let grip = if vertical {
-            Rect {
-                origin: Point {
-                    x: thumb_center_x.saturating_sub_unsigned(1),
-                    y: thumb_center_y.saturating_add(offset),
+                Rect {
+                    origin: Point {
+                        x: cx + offset,
+                        y: cy - 2,
+                    },
+                    size: Size {
+                        width: 1,
+                        height: 4,
+                    },
+                }
+            };
+            push_command(
+                commands,
+                DrawCommand::Fill {
+                    rect,
+                    color: dark,
+                    radius: 0,
                 },
-                size: Size {
-                    width: 3,
-                    height: 1,
+            )?;
+            push_command(
+                commands,
+                DrawCommand::Fill {
+                    rect: Rect {
+                        origin: Point {
+                            x: rect.origin.x + 1,
+                            y: rect.origin.y + 1,
+                        },
+                        ..rect
+                    },
+                    color: light,
+                    radius: 0,
                 },
-            }
-        } else {
-            Rect {
-                origin: Point {
-                    x: thumb_center_x.saturating_add(offset),
-                    y: thumb_center_y.saturating_sub_unsigned(1),
-                },
-                size: Size {
-                    width: 1,
-                    height: 3,
-                },
-            }
-        };
-        push_command(
-            commands,
-            DrawCommand::Fill {
-                rect: grip,
-                color: theme.palette.border,
-                radius: 0,
-            },
-        )?;
+            )?;
+        }
     }
     Ok(())
 }
 
-fn render_pixel_arrow(
+pub(super) fn render_pixel_arrow(
     rect: Rect,
     vertical: bool,
     leading: bool,
@@ -518,7 +545,9 @@ fn render_pixel_arrow(
         } else {
             (4 - row) * 2 + 1
         };
-        let shift = if leading { row } else { 4 - row };
+        // Reverse the breadth only. Reversing both breadth and position
+        // produces the same triangle for the two directions.
+        let shift = row;
         let pixel = if vertical {
             Rect {
                 origin: Point {
@@ -686,5 +715,26 @@ fn contrasting([red, green, blue]: [u8; 3]) -> Color {
         Color::opaque(0, 0, 0)
     } else {
         Color::opaque(255, 255, 255)
+    }
+}
+
+#[cfg(test)]
+mod arrow_tests {
+    use super::*;
+    #[test]
+    fn opposite_arrows_mirror_on_both_axes() {
+        let rect=Rect{origin:Point{x:10,y:20},size:Size{width:18,height:18}};
+        for vertical in [false,true] {
+            let mut leading=Vec::new();let mut trailing=Vec::new();
+            render_pixel_arrow(rect,vertical,true,Color::opaque(0,0,0),&mut leading).unwrap();
+            render_pixel_arrow(rect,vertical,false,Color::opaque(0,0,0),&mut trailing).unwrap();
+            let rectangles=|commands:Vec<DrawCommand>|commands.into_iter().filter_map(|c|if let DrawCommand::Fill{rect,..}=c{Some(rect)}else{None}).collect::<Vec<_>>();
+            let leading=rectangles(leading);let trailing=rectangles(trailing);
+            assert_ne!(leading,trailing);
+            let breadth=|rect:Rect|if vertical {rect.size.width}else{rect.size.height};
+            assert_eq!(leading.iter().copied().map(breadth).collect::<Vec<_>>(),vec![1,3,5,7,9]);
+            assert_eq!(trailing.iter().copied().map(breadth).collect::<Vec<_>>(),vec![9,7,5,3,1]);
+            for (a,b) in leading.iter().zip(trailing.iter()) {assert_eq!(if vertical {a.origin.y}else{a.origin.x},if vertical {b.origin.y}else{b.origin.x});}
+        }
     }
 }

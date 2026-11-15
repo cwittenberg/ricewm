@@ -15,7 +15,7 @@ impl DisplayServer {
                     .get(column)
                     .copied()
                     .unwrap_or_default()
-                    .saturating_add(wm_menu_rows_height_with(rows, row_height))
+                    .saturating_add(self.wm_theme_menu_panel_height(column,rows))
             })
             .max()
             .unwrap_or(row_height);
@@ -57,11 +57,12 @@ impl DisplayServer {
                 .unwrap_or(1),
         )
         .unwrap_or(u16::MAX);
-        let redmond98 = self
+        let attached_menu = self
             .wm_themes
             .get(usize::from(self.wm_theme))
-            .is_some_and(|theme| theme.chrome_profile == WmChromeProfile::Redmond98);
-        let taskbar_gap = if redmond98 || self.wm_embedded_shell { 0 } else { 4 };
+            .is_some_and(|theme| matches!(theme.chrome_profile,
+                WmChromeProfile::Redmond98 | WmChromeProfile::SplitControls));
+        let taskbar_gap = if attached_menu || self.wm_embedded_shell { 0 } else { 4 };
         let mut y = self.wm_menu_window_anchor.map_or_else(
             || match self.wm_taskbar_edge {
                 WmTaskbarEdge::Top => self
@@ -98,14 +99,18 @@ impl DisplayServer {
         });
         let mut menu_x = side_menu_x;
         if self.wm_menu_window_anchor.is_none() && self.wm_menu_is_start_cascade() {
-            let (dock_x, dock_y, _dock_width, dock_height) = self.wm_taskbar_rect();
+            let (_dock_x, dock_y, _dock_width, dock_height) = self.wm_taskbar_rect();
             if self.wm_dock_style && !self.wm_taskbar_edge.vertical() {
-                menu_x = Some(clamp_i16(i32::from(dock_x) + 8 - self.wm_menu_column_x_offsets().first().copied().unwrap_or(0) as i32,
+                menu_x = Some(clamp_i16(self.wm_dock_menu_anchor_x(self.wm_menu_column_widths().first().copied().unwrap_or(0)) - self.wm_menu_column_x_offsets().first().copied().unwrap_or(0) as i32,
                 ));
                 y = match self.wm_taskbar_edge {
                     WmTaskbarEdge::Top => dock_y.cast_unsigned().saturating_add(dock_height).saturating_add(taskbar_gap),
                     _ => dock_y.cast_unsigned().saturating_sub(height.saturating_add(taskbar_gap)),
                 };
+            }
+            if self.wm_icons_taskbar && self.wm_taskbar_edge.vertical() {
+                y = dock_y.cast_unsigned().saturating_add(self.wm_dock_axis_padding() as u16)
+                    .min(self.config.height_px.saturating_sub(height));
             }
             if self.wm_embedded_shell && !self.wm_dock_style {
                 y = match self.wm_taskbar_edge {

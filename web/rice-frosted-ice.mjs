@@ -1,6 +1,7 @@
 import { HYPRGLASS_GLSL } from "./rice-hyprglass-shaders.mjs";
 import { RiceWebGpuGlass } from "./rice-frosted-ice-webgpu.mjs";
 import { resizeCanvasBackingStore } from "./rice-native-canvas-primitives.mjs";
+import {paintGlassImage} from './rice-glass-visible-regions.mjs';
 // Reusable compositor material: live backdrop capture, optical refraction,
 // spectral rim lighting and a deterministic Canvas2D fallback.
 
@@ -374,9 +375,11 @@ export class FrostedIceMaterial {
             sampleRect.width < 1 || sampleRect.height < 1
         ) return false;
         let optics = frostedIceOptics(profile);
+        if (Array.isArray(profile.paintRects)) optics = {...optics, paintRects:profile.paintRects};
         // Probe hardware once. Emulating the optical shader on the CPU costs
         // more than the bounded Canvas fallback, so auto uses that fallback.
-        if (optics.hyprglass && !this.webgpu?.pipeline) this.#ensureGpu(rect.width, rect.height, true);
+        if (!this.webgpu?.pipeline && (optics.hyprglass || profile.sheet !== true))
+            this.#ensureGpu(rect.width, rect.height, optics.hyprglass);
         // A tiled desktop can explicitly identify an unchanged underlay. Keep
         // its finished optical pixels across cursor/content updates, without
         // retaining text or skipping backdrop invalidation for floating panes.
@@ -412,7 +415,11 @@ export class FrostedIceMaterial {
                 width: sampleRect.width * sx, height: sampleRect.height * sy };
             optics = { ...optics, downsampled: true, blurPixels: optics.blurPixels * .25 };
         }
-        let capture = this.#capture(source, captureRegion);
+        // The GPU texture upload already snapshots this backdrop. Avoid an
+        // intermediate desktop-sized Canvas2D copy for optical GPU passes.
+        const direct = !optics.hyprglass && profile.sheet !== true &&
+            Boolean(this.webgpu?.pipeline || !this.gpuUnavailable && this.gpu);
+        let capture = this.#capture(source, captureRegion, direct);
         if (!capture) return false;
         if (optics.hyprglass) {
             now = 0;
@@ -429,6 +436,7 @@ export class FrostedIceMaterial {
             this.#canvasDraw(context, capture, rect, radius, optics, sampleRect);
         } else if (!this.webgpu?.draw(context, capture, rect, radius, optics, now, sampleRect, `${this.captureRevision}:${optics.hyprglass ? optics.blurPixels : ''}`) &&
             !this.#gpuDraw(context, capture, rect, radius, optics, now, sampleRect)) {
+            if (direct) capture = this.#capture(source);
             this.#canvasDraw(context, capture, rect, radius, optics, sampleRect);
         }
         if (profile.rim === true && optics.rimWidth > 0) {
@@ -473,7 +481,21 @@ export class FrostedIceMaterial {
         this.retainedLensEpoch = null;
     }
 
-    #capture(source, region = null) {
+    #capture(source, region = null, direct = false) {
+        if (direct && !region) {
+            const retained = this.backdropEpoch !== NO_BACKDROP_EPOCH;
+            const regionKey = `direct:${source.width}:${source.height}`;
+            if (retained && this.captureValid && this.captureSource === source && this.captureRegionKey === regionKey) {
+                this.performance.captureReuses++;
+            } else {
+                this.captureSource = source;
+                this.captureRegionKey = regionKey;
+                this.captureValid = retained;
+                this.captureRevision++;
+                this.performance.captures++;
+            }
+            return source;
+        }
         const width = region ? Math.ceil(region.width * (region.scale || 1)) : source.width;
         const height = region ? Math.ceil(region.height * (region.scale || 1)) : source.height;
         const regionKey = region ? `${region.x}:${region.y}:${width}:${height}` : "full";
@@ -526,8 +548,8 @@ export class FrostedIceMaterial {
         if (this.effect) {
             // Share one capacity-sized buffer across differently sized windows.
             // Reallocating it for every title/body/window pass churns GPU memory.
-            const nextWidth=Math.max(width,Math.min(this.effect.width,this.capture?.width||width));
-            const nextHeight=Math.max(height,Math.min(this.effect.height,this.capture?.height||height));
+            const nextWidth=Math.max(width,Math.min(this.effect.width,this.capture?.width||this.captureSource?.width||width));
+            const nextHeight=Math.max(height,Math.min(this.effect.height,this.capture?.height||this.captureSource?.height||height));
             if(this.effect.width!==nextWidth||this.effect.height!==nextHeight){
                 if(this.gpu)this.gpu.drawKey=null;
                 this.effect.width=nextWidth;this.effect.height=nextHeight;
@@ -623,10 +645,11 @@ export class FrostedIceMaterial {
                 sampleRect.x,sampleRect.y,sampleRect.width,sampleRect.height,optics,now]);
             if(gpu.drawKey===drawKey){
                 this.performance.gpuDrawReuses++;
-                context.drawImage(this.effect,0,this.effect.height-rect.height,rect.width,rect.height,rect.x,rect.y,rect.width,rect.height);
+                paintGlassImage(context, this.effect, rect, optics.paintRects, this.effect.height-rect.height);
                 return true;
             }
             gl.viewport(0, 0, rect.width, rect.height);
+            if (optics.paintRects) gl.disable(gl.SCISSOR_TEST);
             gl.clearColor(0, 0, 0, 0);
             gl.clear(gl.COLOR_BUFFER_BIT);
             gl.useProgram(program);
@@ -675,10 +698,17 @@ export class FrostedIceMaterial {
             uniform("u_light", optics.lightX, optics.lightY);
             uniform("u_pointer_light", optics.pointerLight ? 1 : 0);
             uniform("u_hyprglass", optics.hyprglass ? 1 : 0);
-            gl.drawArrays(gl.TRIANGLES, 0, 6);
+            if (optics.paintRects) {
+                gl.enable(gl.SCISSOR_TEST);
+                for (const region of optics.paintRects) {
+                    gl.scissor(region.x, rect.height-region.y-region.height, region.width, region.height);
+                    gl.drawArrays(gl.TRIANGLES, 0, 6);
+                }
+                gl.disable(gl.SCISSOR_TEST);
+            } else gl.drawArrays(gl.TRIANGLES, 0, 6);
             gpu.drawKey=drawKey;
             this.performance.gpuDraws++;
-            context.drawImage(this.effect,0,this.effect.height-rect.height,rect.width,rect.height,rect.x,rect.y,rect.width,rect.height);
+            paintGlassImage(context, this.effect, rect, optics.paintRects, this.effect.height-rect.height);
             return true;
         } catch (error) {
             this.#fallback(error?.message || "webgl-render-failed", this.gpu);

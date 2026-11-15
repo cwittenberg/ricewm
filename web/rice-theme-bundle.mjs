@@ -1,4 +1,6 @@
-import {validateWindowDecorations, validateThemeTokens, TYPOGRAPHY_SCHEMA, CONTROL_METRICS_SCHEMA, validateControlColors, validateSurfaceSkins,validateThemeIcons} from './rice-theme-customization.mjs';
+import {validateWindowEffects} from './rice-window-effects.mjs';
+import {validateShellAppearance} from './rice-theme-shell.mjs';
+import {validateWindowDecorations, validateThemeTokens, TYPOGRAPHY_SCHEMA, CONTROL_METRICS_SCHEMA, validateControlColors, validateSurfaceSkins,validateTreeView,validateThemeIcons} from './rice-theme-customization.mjs';
 import {validateCustomTerminals} from './rice-recipe-terminal-install.mjs';
 import {validateThemePalettes} from './rice-theme-palettes.mjs';
 import { paintCyberpunkCurtain } from './rice-cyberpunk-style.mjs';
@@ -35,10 +37,13 @@ export function validateThemeBundle(input = {}) {
     if(input.tiling !== undefined && (!input.tiling || typeof input.tiling.enabled!=='boolean'))throw new TypeError('Theme tiling needs an enabled flag');
     if(input.tiling?.arrangement!==undefined&&!['Split','Master stack','Scrolling'].includes(input.tiling.arrangement))throw new TypeError('Invalid theme tiling arrangement');
     if(input.tiling?.preserveCurrent !== undefined && typeof input.tiling.preserveCurrent !== 'boolean')throw new TypeError('Theme tiling preserveCurrent must be boolean');
+    if(input.shellAppearance!==undefined)bundle.shellAppearance=validateShellAppearance(input.shellAppearance);
+    if(input.windowEffects!==undefined)bundle.windowEffects=validateWindowEffects(input.windowEffects);
     if(input.windowDecorations!==undefined)bundle.windowDecorations=validateWindowDecorations(input.windowDecorations);
     if(input.typography!==undefined)bundle.typography=validateThemeTokens(input.typography,TYPOGRAPHY_SCHEMA,'typography');
     if(input.metrics!==undefined)bundle.metrics=validateThemeTokens(input.metrics,CONTROL_METRICS_SCHEMA,'metrics');
     if(input.controlColors!==undefined)bundle.controlColors=validateControlColors(input.controlColors);
+    if(input.treeView!==undefined)bundle.treeView=validateTreeView(input.treeView);
     if(input.surfaceSkins!==undefined)bundle.surfaceSkins=validateSurfaceSkins(input.surfaceSkins);
     if(input.icons!==undefined)bundle.icons=validateThemeIcons(input.icons);
     if (input.surface !== undefined) {

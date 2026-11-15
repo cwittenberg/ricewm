@@ -162,6 +162,7 @@ impl DisplayServer {
 
     pub(super) fn wm_start_button_width(&self) -> i16 {
         if !self.wm_launcher_visible {return 0;}
+        if self.wm_theme_shell_layout[0]>0 {return self.wm_theme_shell_layout[0] as i16;}
         if self
             .wm_themes
             .get(usize::from(self.wm_theme))
@@ -284,7 +285,7 @@ impl DisplayServer {
             .saturating_add(12);
         let (dock_x, dock_y, dock_width, dock_height) = self.wm_taskbar_rect();
         let center = if self.wm_dock_style {
-            i32::from(dock_x) + if self.wm_taskbar_edge.vertical() { i32::from(dock_width) / 2 } else { (WM_COMPACT_DOCK_AXIS_PADDING + (index + 1) * self.wm_dock_step() + self.wm_dock_step() / 2) as i32 }
+            i32::from(dock_x) + if self.wm_taskbar_edge.vertical() { i32::from(dock_width) / 2 } else { (self.wm_dock_axis_padding() + (index + usize::from(self.wm_launcher_visible) + 1) * self.wm_dock_step() + self.wm_dock_step() / 2) as i32 }
         } else { center };
         let center = if let Some(WmChromeTarget::NotificationIcon(slot)) = self.wm_chrome_hover {
             self.notification_icon_layout().into_iter().find(|(id,_,_)| *id == slot)
@@ -464,6 +465,7 @@ impl DisplayServer {
             WmTaskTarget::Native(id) => {
                 let prefix = match row {
                     WmMenuRow::WindowClose => WM_ACTION_TASK_CLOSE_PREFIX,
+                    WmMenuRow::WindowLogoutQuit => WM_ACTION_TASK_LOGOUT_QUIT_PREFIX,
                     WmMenuRow::WindowMaximize => WM_ACTION_TASK_MAXIMIZE_PREFIX,
                     WmMenuRow::WindowMinimize => WM_ACTION_TASK_MINIMIZE_PREFIX,
                     WmMenuRow::WindowRestore => WM_ACTION_TASK_RESTORE_PREFIX,

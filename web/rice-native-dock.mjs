@@ -45,7 +45,8 @@ export function riceNativeDockWorkArea(shell, root) {
 
     // The compact dock floats above maximized content. Its transparent
     // compositor allocation must not turn into an invisible 88px work-area.
-    const reservedThickness = shell.dockStyle === "Compact dock" ? 0 : THICKNESS;
+    const reservedThickness = shell.dockStyle === "Compact dock" ? 0
+        : shell.dockStyle === "Icons-only taskbar" ? ({Minimal:32, Small:44, Comfortable:64}[shell.dockHeight] ?? 44) : THICKNESS;
     switch (shell.dockPosition) {
         case "Top": {
             const reserved = Math.min(reservedThickness, workArea.height);
@@ -154,7 +155,25 @@ export function renderRiceNativeDock(
     context.save();
     const frosted = shell.frostedIce?.enabled && shell.frostedIce?.panels &&
         !shell.highContrast && context.canvas;
-    if (frosted) {
+    if (shell.dockTranslucent && !shell.highContrast) {
+        const opacity = Math.max(0, Math.min(100, shell.dockOpacity ?? 72)) / 100;
+        const blur = Math.max(0, Math.min(100, shell.dockBlur ?? 0)) * .24;
+        if (blur && context.canvas) {
+            const padding = Math.ceil(blur * 3);
+            const x = Math.max(0, rect.x - padding), y = Math.max(0, rect.y - padding);
+            const width = Math.min(context.canvas.width, rect.x + rect.width + padding) - x;
+            const height = Math.min(context.canvas.height, rect.y + rect.height + padding) - y;
+            context.save();
+            context.beginPath();
+            context.rect(rect.x, rect.y, rect.width, rect.height);
+            context.clip();
+            context.filter = `blur(${blur}px)`;
+            context.drawImage(context.canvas, x, y, width, height, x, y, width, height);
+            context.restore();
+        }
+        context.fillStyle = `rgba(25,35,48,${opacity})`;
+        context.fillRect(rect.x, rect.y, rect.width, rect.height);
+    } else if (frosted) {
         (glassMaterial || materialFor(context)).draw(
             context,
             context.canvas,
@@ -182,6 +201,7 @@ export function renderRiceNativeDock(
             if (iconRenderer) {
                 iconRenderer.render({
                     icon: dockIcon(window),
+                    applicationId: window.riceAppId || window.applicationId,
                     color: [255, 255, 255, 255],
                     rect: {
                         x: x + 4,

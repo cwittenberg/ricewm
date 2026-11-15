@@ -1,11 +1,20 @@
+import {documentEditorMetadata} from './rice-document-editor-layout.mjs';
+import {NativeShapedEditorLayouts} from './rice-native-shaped-editor.mjs';
+import {RiceApplicationMenus} from './rice-application-menu.mjs';
+import {validateTreeView,themeColor,NATIVE_CHROME_PART_ROLES,CHROME_METRICS_SCHEMA,validateThemeTokens,CONTROL_METRICS_SCHEMA,CONTROL_STATES,themeStateStyle,themePartOwnsFace} from './rice-theme-customization.mjs';
 import {encodeUiPatch} from '../sdk/versions/1.0.0/runtime/sdk/js/rapp.mjs';
 import {NativeGridFocus} from './rice-native-grid-focus.mjs';
+import {validateGridDecorations} from '../sdk/versions/1.0.0/runtime/sdk/js/grid-decorations.mjs';
+import {NativeReorderPointer} from './rice-native-reorder-pointer.mjs';
+import {NativeTerminalPointer} from './rice-native-terminal-pointer.mjs';
+import {NativeContainmentPointer} from './rice-native-containment-pointer.mjs';
 import {DocumentEditorPointRequests} from './rice-document-editor-points.mjs';
 import { RiceNativeEditorPointer } from "./rice-native-editor-pointer.mjs";
 import { t } from "./rice-i18n.mjs";
 import { embedBowlMedia } from './rice-bowl-media.mjs';
 import {
     RICE_NATIVE_APP_MAX_MESSAGE_BYTES,
+    RiceNativeAppWireCodec,
     validateRiceNativeAppFrame,
 } from "./rice-native-app-wire.mjs";
 
@@ -181,7 +190,6 @@ export function decodeRiceNativeUiSnapshot(input) {
             (
                 tag === 3
                     ? (flags & 0x03) > 2 ||
-                        ((flags >> 2) & 0x03) > 2 ||
                         ((flags & 0x20) !== 0 && (flags & 0x10) === 0)
                     : tag === 4
                         ? (flags & ~0x0f) !== 0
@@ -214,9 +222,14 @@ export function decodeRiceNativeUiSnapshot(input) {
         }
         const geometry = recordBytes >= 20 ? rect(view, offset + 4) : null;
         let command;
-        if(tag===34 && recordBytes>=22){const length=view.getUint16(offset+20,true),selector=decoder.decode(bytes.subarray(offset+22,end));if(!length||length>320||recordBytes!==22+length||!/^[a-zA-Z0-9_.:+/@*-]+$/.test(selector))throw RangeError('Invalid icon override selector');command={type:'icon-override',rect:geometry,selector};
+        if(tag===35&&recordBytes>=28){
+            const zoom=view.getUint16(offset+20,true),length=view.getUint16(offset+26,true);
+            if(zoom<25||zoom>400||length>2048||recordBytes!==28+length)throw RangeError('Invalid grid decorations record');
+            const decorations=validateGridDecorations(JSON.parse(decoder.decode(bytes.subarray(offset+28,end))));
+            command={type:'grid-decorations',rect:geometry,decorations,zoomPercent:zoom,background:color(bytes,offset+22)};
+        }else if(tag===34 && recordBytes>=22){const length=view.getUint16(offset+20,true),selector=decoder.decode(bytes.subarray(offset+22,end));if(!length||length>320||recordBytes!==22+length||!/^[a-zA-Z0-9_.:+/@*-]+$/.test(selector))throw RangeError('Invalid icon override selector');command={type:'icon-override',rect:geometry,selector};
         } else if(tag===33 && recordBytes===22) {
-            const role=['button','tab','menu','menuItem','dock','notification','separator','runningIndicator','input','checkbox','switch','slider','scrollbar','window'][bytes[offset+20]],state=['normal','hover','pressed','focused','disabled','selected'][bytes[offset+21]];
+            const role=['button','tab','menu','menuItem','dock','notification','separator','runningIndicator','input','checkbox','switch','slider','scrollbar','window','listItem','gridItem','navigationItem','treeItem','toolbarButton','flatButton','tableHeader',...NATIVE_CHROME_PART_ROLES][bytes[offset+20]],state=CONTROL_STATES[bytes[offset+21]];
             if(!role||!state)throw RangeError('Invalid native themed surface');
             command={type:'theme-surface',rect:geometry,surfaceRole:role,surfaceState:state};
         } else if (tag === 1 && recordBytes === 26) {
@@ -265,7 +278,7 @@ export function decodeRiceNativeUiSnapshot(input) {
                 color: color(bytes, offset + 20),
                 sizePx: view.getUint16(offset + 24, true),
                 align: ["start", "center", "end"][flags & 0x03],
-                role: ["label", "editor", "markdown"][(flags >> 2) & 0x03],
+                role: ["label", "editor", "markdown", "emphasized"][(flags >> 2) & 0x03],
                 caret: (flags & 0x10) !== 0,
                 caretOffset: hasCaretOffset
                     ? view.getUint32(offset + 30, true)
@@ -276,7 +289,7 @@ export function decodeRiceNativeUiSnapshot(input) {
             };
             // Static labels can use locale direction without changing the existing
             // editing model. Carets, editors and brand text stay explicitly LTR.
-            command.direction = command.role === "label" && !command.caret &&
+            command.direction = (command.role === "label" || command.role === "emphasized") && !command.caret &&
                 command.caretOffset === null && !command.brand ? direction : "ltr";
         } else if (tag === 30 && recordBytes===26) {
             const width=view.getUint16(offset+24,true);if(width<1||width>12)throw new RangeError("Invalid stroke width");
@@ -488,6 +501,7 @@ export function decodeRiceNativeUiSnapshot(input) {
                 type: "host-portal",
                 rect: geometry,
                 identity,
+                ownerApp: view.getBigUint64(24,true),
             };
         } else if (
             tag === 13 &&
@@ -610,11 +624,13 @@ export class RiceNativeUiBridge {
         this.supportsGridFilterRow = typeof exports_.rice_native_ui_grid_filter_row_version === "function"
             && exports_.rice_native_ui_grid_filter_row_version() === 1;
         this.supportsGridPaint = typeof exports_.rice_native_ui_grid_paint_version === "function" && exports_.rice_native_ui_grid_paint_version() === 1;
+        this.supportsGridDecorations=typeof exports_.rice_native_ui_grid_decorations_version==='function'&&exports_.rice_native_ui_grid_decorations_version()===1;
         this.supportsGridFractionalFont = typeof exports_.rice_native_ui_grid_fractional_font_version === "function" && exports_.rice_native_ui_grid_fractional_font_version() === 1;
         this.supportsSheetDataIcons = typeof exports_.rice_native_ui_sheet_data_icons_version === "function" && exports_.rice_native_ui_sheet_data_icons_version() === 1;
         this.supportsContentShadows = typeof exports_.rice_native_ui_content_shadows_version === "function" && exports_.rice_native_ui_content_shadows_version() === 1;
         this.supportsDocumentAlignment = typeof exports_.rice_native_ui_document_alignment_version === "function" && exports_.rice_native_ui_document_alignment_version() === 1;
         this.supportsGridMerges = typeof exports_.rice_native_ui_grid_merges_version === "function" && exports_.rice_native_ui_grid_merges_version() === 1;
+        this.supportsGridMultiSelection = typeof exports_.rice_native_ui_grid_multi_selection_version === "function" && exports_.rice_native_ui_grid_multi_selection_version() === 1;
         this.supportsZoomIcons = typeof exports_.rice_native_ui_zoom_icons_version === "function" && exports_.rice_native_ui_zoom_icons_version() === 1;
         this.supportsGridDocumentCanvas = typeof exports_.rice_native_ui_grid_document_canvas_version === "function" && exports_.rice_native_ui_grid_document_canvas_version() === 1;
         this.supportsGridZoom = typeof exports_.rice_native_ui_grid_zoom_version === "function" && exports_.rice_native_ui_grid_zoom_version() === 1;
@@ -624,8 +640,15 @@ export class RiceNativeUiBridge {
         this.supportsGridReferences = typeof exports_.rice_native_ui_grid_references_version === "function"
             && exports_.rice_native_ui_grid_references_version() === 1;
         this.onRenderEvents = null;
+        this.focusedWidgets = new Map();
+        this.renderSizes = new Map();
         this.documentEditorPoints = new DocumentEditorPointRequests(this);
+        this.shapedEditorLayouts = new NativeShapedEditorLayouts();
         this.gridFocus = new NativeGridFocus();
+        this.applicationMenus = new RiceApplicationMenus();
+        this.reorderPointer = new NativeReorderPointer();
+        this.containmentPointer = new NativeContainmentPointer(this.reorderPointer);
+        this.terminalPointer = new NativeTerminalPointer(this.reorderPointer);
         this.supportsMeasuredEditor = typeof exports_.rice_native_ui_pointer_measured === 'function'
             && typeof exports_.rice_native_ui_editor_epoch === 'function';
         this.editorPointer = this.supportsMeasuredEditor ? new RiceNativeEditorPointer(options.document) : null;
@@ -675,6 +698,9 @@ export class RiceNativeUiBridge {
         return {
             schema: "rice.native-ui-bridge.checkpoint/v1",
             gridFocus: this.gridFocus.capture(),
+            applicationMenus: [...this.applicationMenus.windows].map(([key, nodes]) => [key, [...nodes]]),
+            reorderPointer: this.reorderPointer.capture(),
+            shapedEditorLayouts: this.shapedEditorLayouts.capture(),
             webSceneDisplayLists: [...this.webSceneDisplayLists].map(
                 ([key, record]) => ({
                     key,
@@ -694,6 +720,10 @@ export class RiceNativeUiBridge {
         ) throw new TypeError("native UI bridge checkpoint is invalid");
         const restoredGridFocus = new NativeGridFocus();
         restoredGridFocus.restore(snapshot.gridFocus);
+        const restoredReorderPointer = new NativeReorderPointer();
+        restoredReorderPointer.restore(snapshot.reorderPointer);
+        const restoredShapedEditors=new NativeShapedEditorLayouts();
+        if(snapshot.shapedEditorLayouts!==undefined)restoredShapedEditors.restore(snapshot.shapedEditorLayouts);
         let sceneBytes = 0;
         for (const record of snapshot.webSceneDisplayLists) {
             if (!(record?.displayList instanceof Uint8Array) || record.displayList.length > 8 * 1024 * 1024 ||
@@ -713,6 +743,11 @@ export class RiceNativeUiBridge {
             }),
         );
         this.gridFocus = restoredGridFocus;
+        this.applicationMenus.windows = new Map((snapshot.applicationMenus || []).slice(0,128).map(([key,nodes]) => [key,new Map(nodes.slice(0,8192))]));
+        this.reorderPointer = restoredReorderPointer;
+        this.containmentPointer = new NativeContainmentPointer(this.reorderPointer);
+        this.terminalPointer = new NativeTerminalPointer(this.reorderPointer);
+        this.shapedEditorLayouts=restoredShapedEditors;
         return true;
     }
 
@@ -748,6 +783,10 @@ export class RiceNativeUiBridge {
             throw new Error("native UI host rejected the RAPP patch");
         }
         this.gridFocus.observe(frame);
+        this.applicationMenus.observe(frame);
+        this.reorderPointer.observe(frame);
+        this.containmentPointer.observe(`${header.getBigUint64(12, true)}:${header.getBigUint64(20, true)}`);
+        this.terminalPointer.observe(`${header.getBigUint64(12, true)}:${header.getBigUint64(20, true)}`);
         return this.supportsGridDamage ? this.drainEvents() : [];
     }
 
@@ -767,8 +806,15 @@ export class RiceNativeUiBridge {
         this.invalidateRender(id);
         for (const key of this.dialogWorkAreas?.keys() || []) if (key.startsWith(`${id}:`)) this.dialogWorkAreas.delete(key);
         this.documentEditorPoints.removeApp(id);
+        this.shapedEditorLayouts.removeApp(id);
         this.editorPointer?.removeApp(id);
         this.gridFocus.removeApp(id);
+        this.applicationMenus.removeApp(id);
+        this.reorderPointer.removeApp(id);
+        this.containmentPointer.removeApp(id);
+        this.terminalPointer.removeApp(id);
+        for (const key of this.focusedWidgets.keys()) if (key.startsWith(`${id}:`)) this.focusedWidgets.delete(key);
+        for (const key of this.renderSizes.keys()) if (key.startsWith(`${id}:`)) this.renderSizes.delete(key);
         for (const key of this.webSceneDisplayLists.keys()) {
             if (!key.startsWith(`${id}:`))continue;
             // Live references require retransmission if an ordinary caller
@@ -832,12 +878,20 @@ export class RiceNativeUiBridge {
             throw new RangeError("invalid RiceWM native theme corner radius");
         }
         const custom=theme?.bundle||{};
-        const extended=Object.keys(custom.typography||{}).length||Object.keys(custom.metrics||{}).length;
-        if(extended && this.exports.rice_native_ui_theme_version?.()!==2)throw Error('Desktop typography and metrics require the updated native display engine');
-        const record = new Uint8Array(extended?126:THEME_RECORD_BYTES);
+        const treeView=custom.treeView;
+        if(custom.metrics)validateThemeTokens(custom.metrics,CONTROL_METRICS_SCHEMA,'metrics');
+        const partMask=NATIVE_CHROME_PART_ROLES.reduce((mask,role,i)=>mask|((Object.keys(custom.surfaceSkins?.[role]||{}).length||Object.keys(custom.controlColors?.[role]||{}).length)?1<<i:0),0);
+        const chromeMetrics=Object.keys(CHROME_METRICS_SCHEMA);
+        const choiceParts=['checkbox','switch'].some(role=>[custom.surfaceSkins?.[role],custom.controlColors?.[role]].some(map=>Object.keys(map||{}).some(state=>CONTROL_STATES.indexOf(state)>=6)))||(partMask>>>15)!==0||chromeMetrics.slice(16).some(key=>custom.metrics?.[key]!==undefined);
+        const parts=choiceParts||partMask||chromeMetrics.some(key=>custom.metrics?.[key]!==undefined);
+        if(choiceParts&&(this.exports.rice_native_ui_theme_version?.()||0)<5)throw Error('Choice control styling requires the updated native display engine');
+        if(parts&&(this.exports.rice_native_ui_theme_version?.()||0)<4)throw Error('Control part styling requires the updated native display engine');
+        const extended=treeView!==undefined||Object.keys(custom.typography||{}).length||Object.keys(custom.metrics||{}).length;
+        if(extended && (this.exports.rice_native_ui_theme_version?.()||0)<(treeView!==undefined?3:2))throw Error('Desktop tree styling, typography and metrics require the updated native display engine');
+        const record = new Uint8Array(choiceParts?280:parts?200:treeView!==undefined?148:extended?126:THEME_RECORD_BYTES);
         record.set([0x52, 0x54, 0x55, 0x49]);
         const view = new DataView(record.buffer);
-        view.setUint16(4, extended?2:1, true);
+        view.setUint16(4, choiceParts?5:parts?4:treeView!==undefined?3:extended?2:1, true);
         view.setUint16(6, record.length, true);
         // Preserve the 96-byte ABI: the bounded radius field has an unused
         // high bit which Rust strips before validating the metric.
@@ -886,6 +940,25 @@ export class RiceNativeUiBridge {
             const fields=[['typography','bodyPx'],['typography','smallPx'],['typography','titlePx'],['typography','displayPx'],['typography','lineHeightPercent'],['metrics','controlHeight'],['metrics','menuRowHeight'],['metrics','scrollbarWidth'],['metrics','focusWidth'],['metrics','borderWidth'],['metrics','controlPaddingX'],['metrics','controlPaddingY'],['metrics','cornerRadius']];
             let mask=0;fields.forEach(([group,key],i)=>{if(custom[group]?.[key]!==undefined){mask|=1<<i;view.setUint16(100+i*2,custom[group][key],true);}});view.setUint32(96,mask,true);
         }
+        if(treeView!==undefined||parts){
+            const v=validateTreeView(treeView||{});
+            record[126]=['auto','chevron','plus-minus','none'].indexOf(v.expander??'auto');
+            record[127]=['auto','none','dotted','solid'].indexOf(v.lines??'auto');
+            record[128]=v.expanderSize??9;record[129]=Number(v.rootLines??true);view.setUint16(130,v.indent??0,true);
+            ['lineColor','expanderBackground','expanderBorder','expanderForeground'].forEach((key,i)=>record.set(themeColor(v[key],i===1?[255,255,255,255]:i===3?[0,0,0,255]:[128,128,128,255]),132+i*4));
+        }
+        if(parts){
+            view.setUint16(148,partMask&0x7fff,true);let mask=0;
+            chromeMetrics.slice(0,16).forEach((key,i)=>{if(custom.metrics?.[key]!==undefined){mask|=1<<i;view.setUint16(152+i*2,custom.metrics[key],true);}});
+            view.setUint16(150,mask,true);
+            NATIVE_CHROME_PART_ROLES.slice(0,15).forEach((role,i)=>{const maps=[custom.surfaceSkins?.[role],custom.controlColors?.[role]];record[184+i]=['normal','hover','pressed','focused','disabled','selected'].reduce((mask,state,index)=>mask|(maps.some(map=>Object.keys({...map?.normal,...map?.[state]}).length)?1<<index:0),0);});
+        }
+        if(choiceParts){
+            view.setUint32(200,partMask,true);let mask=0;
+            chromeMetrics.forEach((key,i)=>{if(custom.metrics?.[key]!==undefined){mask|=1<<i;if(i>=16)view.setUint16(208+(i-16)*2,custom.metrics[key],true);}});
+            view.setUint32(204,mask,true);
+            NATIVE_CHROME_PART_ROLES.forEach((role,i)=>view.setUint16(232+i*2,CONTROL_STATES.reduce((mask,state,index)=>mask|(themePartOwnsFace({...themeStateStyle(custom.controlColors,role,state),...themeStateStyle(custom.surfaceSkins,role,state)},role)?1<<index:0),0),true));
+        }
         this.#stage(record);
         if ((this.exports.rice_native_ui_set_theme(record.byteLength) >>> 0) !== 1) {
             throw new Error("native UI host rejected the RiceWM theme");
@@ -926,7 +999,13 @@ export class RiceNativeUiBridge {
         return true;
     }
 
-    render(app, window, width, height) {
+    editorLayout(owner,request) {
+        const result=this.shapedEditorLayouts.request(owner,request);
+        if(['commit','release'].includes(request.action))this.invalidateRender(owner.app,owner.window);
+        return result;
+    }
+
+    render(app, window, width, height, inputFeedback = null) {
         const [appLow, appHigh] = idHalves(app, "application ID");
         const [windowLow, windowHigh] = idHalves(window, "window ID");
         const cacheKey = `${app}:${window}`;
@@ -965,12 +1044,24 @@ export class RiceNativeUiBridge {
         let snapshot = decodeRiceNativeUiSnapshot(
             new Uint8Array(this.memory.buffer, pointer, written).slice(),
         );
+        if (!this.renderSizes.has(cacheKey) && this.renderSizes.size >= 256) throw RangeError('Native render window limit exceeded');
+        this.renderSizes.set(cacheKey, { width, height });
         const renderEpoch = this.exports.rice_native_ui_editor_epoch?.(appLow, appHigh, windowLow, windowHigh);
+        // Browser keyboard routing needs authoritative capabilities, rather
+        // than inferring a focused native item's behavior from its artwork.
+        snapshot = Object.freeze({ ...snapshot, applicationMenu: this.applicationMenus.describe(app, window, snapshot, (x,y) => this.hitTest(app, window, x, y)), focusedWidgetActions: snapshot.focusedWidget === 0n
+            ? null : this.widgetActions(snapshot.app, snapshot.window, snapshot.focusedWidget) });
         if(this.gridFocus.has(snapshot.app,snapshot.window,snapshot.focusedWidget))snapshot=Object.freeze({...snapshot,focusedWidgetKind:45});
+        const shaped=this.shapedEditorLayouts.attach(snapshot);
+        snapshot=shaped.snapshot;
         this.editorPointer?.retain(snapshot,
             this.exports.rice_native_ui_editor_epoch?.(appLow, appHigh, windowLow, windowHigh));
         let changed = false;
         const commands = snapshot.commands.map(command => {
+            if(command.documentEditor){
+                const target=documentEditorMetadata(command)?.id;
+                if(target&&this.applicationMenus.contextMenuFor(app,window,target)!==null){changed=true;return Object.freeze({...command,applicationContextMenu:true});}
+            }
             if (command.type !== "web-scene" || command.epoch === 0n) {
                 return command;
             }
@@ -1010,9 +1101,18 @@ export class RiceNativeUiBridge {
             sceneBytes -= this.webSceneDisplayLists.get(key).displayList.byteLength;
             this.webSceneDisplayLists.delete(key);
         }
-        if (this.supportsWidgetSize && typeof this.onRenderEvents === "function") {
+        if (typeof this.onRenderEvents === "function") {
             const events = this.drainEvents();
-            if (events.length) this.onRenderEvents(events);
+            // Primary pointer focus is authoritative in the native snapshot,
+            // but older native engines do not enqueue its focus transition.
+            // Deliver the existing protocol event through normal host feedback.
+            if (this.#recordFocused(snapshot.app, snapshot.window, snapshot.focusedWidget, events) && snapshot.focusedWidget !== 0n) {
+                events.push(RiceNativeAppWireCodec.focus(snapshot.app, snapshot.window, snapshot.focusedWidget, true));
+            }
+            if (events.length) {
+                if (inputFeedback) inputFeedback.push(...events);
+                else this.onRenderEvents(events);
+            }
         }
         this.documentEditorPoints.observe(snapshot);
         const resolved = changed
@@ -1020,7 +1120,7 @@ export class RiceNativeUiBridge {
             : snapshot;
         // Unrelated status/clock updates must not lay out every open document.
         // Bound retained snapshots independently of the native web-scene cache.
-        const bytes = written + commands.reduce((size, command) => size + (command.displayList?.byteLength || 0), 0);
+        const bytes = written + shaped.bytes + commands.reduce((size, command) => size + (command.displayList?.byteLength || 0), 0);
         if (bytes <= 16 * 1024 * 1024 && this.renderMutationSerial === renderSerial) {
             while (this.renderedSnapshots.size >= 16 || this.renderedSnapshotBytes + bytes > 16 * 1024 * 1024) {
                 const oldest = this.renderedSnapshots.keys().next().value;
@@ -1060,8 +1160,27 @@ export class RiceNativeUiBridge {
         if (!Number.isInteger(kindValue) || kindValue < 0 || kindValue > 5) {
             throw new RangeError("unknown native UI pointer event");
         }
+        const terminalCapture = this.terminalPointer.sample(app, window, kindValue, x, y, button);
+        if (kindValue === POINTER_KINDS.down) this.terminalPointer.cancel(app, window);
+        if(kindValue===POINTER_KINDS.down){
+            const target=button===1?this.hitTest(app,window,x,y):null;
+            if(target)this.reorderPointer.begin(app,window,target,x,y);else this.reorderPointer.cancel(app,window);
+        }else if(kindValue===POINTER_KINDS.leave)this.reorderPointer.cancel(app,window);
+        if(kindValue===POINTER_KINDS.wheel&&[4,5].includes(button)&&(modifiers&(4|64))){
+            if(![x,y].every(value=>Number.isFinite(value)&&value>=-2147483648&&value<=2147483647))throw TypeError('Invalid application zoom wheel coordinates');
+            // Modified wheel belongs to the application (zoom), including on
+            // passive previews inside native scrollers. Use the authoritative
+            // native hit target and preserve the original actor/window scope.
+            // Do not run native default scrolling before delivering the gesture.
+            const target=this.hitTest(app,window,x,y);
+            if(target){
+                const events=this.drainEvents();events.push(RiceNativeAppWireCodec.modifiedWheel(app,window,target,Math.trunc(x),Math.trunc(y),button,modifiers));
+                Object.defineProperty(events,'visualChanged',{value:false});Object.defineProperty(events,'motionContinuous',{value:false});return events;
+            }
+        }
         this.documentEditorPoints.pointer(app, window, kindValue, x, y, button, modifiers);
-        const sample = this.editorPointer?.sample(this, app, window, kindValue, x, y, button);
+        const sample = terminalCapture ? null : this.editorPointer?.sample(this, app, window, kindValue, x, y, button);
+        if(sample?.blocked){const events=[];Object.defineProperty(events,'visualChanged',{value:false});Object.defineProperty(events,'motionContinuous',{value:false});return events;}
         if (kindValue === POINTER_KINDS.down && button === 6 && sample?.multiline) {
             // DOM double-click is a complete semantic gesture. Native multiline
             // editors select words through a measured primary press carrying
@@ -1075,14 +1194,15 @@ export class RiceNativeUiBridge {
         }
         if (sample) this.#stage(sample.bytes);
         const pointer = sample ? this.exports.rice_native_ui_pointer_measured : this.exports.rice_native_ui_pointer;
+        const dragRelease = kindValue === POINTER_KINDS.up && button === 1 && this.containmentPointer.consumesRelease(app, window);
         const result = pointer(
             appLow,
             appHigh,
             windowLow,
             windowHigh,
             kindValue,
-            x,
-            y,
+            dragRelease || terminalCapture ? -1 : x,
+            dragRelease || terminalCapture ? -1 : y,
             button,
             modifiers,
             ...(sample ? [sample.bytes.byteLength] : []),
@@ -1090,12 +1210,55 @@ export class RiceNativeUiBridge {
         if (result === RESULT_ERROR) {
             throw new Error("native UI pointer event failed");
         }
+        const editorCaptured=sample&&this.editorPointer?.capture.get(`${app}:${window}`)===sample.target;
         this.editorPointer?.accepted(app, window, kindValue, button, sample?.target);
+        if(sample?.shaped&&(kindValue===1&&button===1||editorCaptured&&[0,2].includes(kindValue)))this.shapedEditorLayouts.pointer({app,window},sample.target,sample.shaped.token,sample.shaped.stop,{extend:Boolean(modifiers&1)||kindValue!==1});
         const events = this.drainEvents();
+        const chooserChanged=this.fileChooserActions?.pointer(BigInt(app),BigInt(window),kindValue,x,y) || false;
+        if (terminalCapture) {
+            for (let index = events.length - 1; index >= 0; index--) { const bytes = events[index]; if (bytes.length >= 37 && new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength).getUint16(6,true) === 21 && [0,2].includes(bytes[36])) events.splice(index,1); }
+            events.push(RiceNativeAppWireCodec.pointer(app, window, terminalCapture.target, kindValue, terminalCapture.x, terminalCapture.y, terminalCapture.button, modifiers));
+        }
+        if (this.containmentPointer.pointer(this, app, window, kindValue, x, y, button)) {
+            // A containment drag never activates the source on release.
+            for (let index = events.length - 1; index >= 0; index--) {
+                const bytes = events[index], view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+                if (bytes.length >= 37 && view.getUint16(6, true) === 21 && view.getBigUint64(12, true) === BigInt(app) && view.getBigUint64(20, true) === BigInt(window) && [0, 2].includes(bytes[36])) events.splice(index, 1);
+            }
+        }
+        const reorder=this.reorderPointer.gesture(this,app,window,kindValue===POINTER_KINDS.up&&button!==1?-1:kindValue,x,y);
+        if(reorder){
+            // The primary down must have hit this exact native opt-in Button.
+            // Retain that owner when scrolling clips its hit rectangle: the
+            // native host keeps its node/capture, but omits offscreen hits.
+            // Removal, disable, new overlays and window/app scope invalidate
+            // the metadata before this path can deliver another gesture.
+            let delivered=false;
+            for(let i=0;i<events.length;i++){
+                const bytes=events[i],view=new DataView(bytes.buffer,bytes.byteOffset,bytes.byteLength);
+                if(view.getUint16(6,true)!==21||bytes.length<41||view.getBigUint64(12,true)!==BigInt(app)||view.getBigUint64(20,true)!==BigInt(window)||view.getBigUint64(28,true)!==reorder.target||bytes[36]!==1)continue;
+                const text=new TextDecoder().decode(bytes.subarray(41));
+                if(!text.startsWith(kindValue===POINTER_KINDS.up?'drop:':'preview:'))continue;
+                const {target,...detail}=reorder;events[i]=RiceNativeAppWireCodec.reorderGesture(app,window,target,detail);delivered=true;
+            }
+            if(!delivered){const {target,...detail}=reorder;events.push(RiceNativeAppWireCodec.reorderGesture(app,window,target,detail));}
+        }
+        if (kindValue === POINTER_KINDS.down && button === 1 && typeof this.onRenderEvents === 'function') {
+            const size = this.renderSizes.get(`${app}:${window}`);
+            if (size) {
+                // Deliver authoritative pointer focus in the same ordered input
+                // batch. Deferring it to paint feedback lets an actor's old
+                // FOCUSED patch reclaim the keyboard before the next key.
+                const focus = [];
+                this.render(app, window, size.width, size.height, focus);
+                events.unshift(...focus);
+            }
+        }
+        if (kindValue === POINTER_KINDS.down) this.terminalPointer.begin(this, app, window, x, y, button);
         Object.defineProperty(events, "visualChanged", {
-            value: typeof this.exports.rice_native_ui_pointer_visual_changed === "function"
+            value: chooserChanged || (typeof this.exports.rice_native_ui_pointer_visual_changed === "function"
                 ? (this.exports.rice_native_ui_pointer_visual_changed() >>> 0) === 1
-                : true,
+                : true),
         });
         Object.defineProperty(events, "motionContinuous", {
             value: typeof this.exports.rice_native_ui_pointer_motion_continuous === "function"
@@ -1170,12 +1333,21 @@ export class RiceNativeUiBridge {
         modifiers = 0,
         text = "",
     ) {
+        if (pressed && keyCode === 9) this.containmentPointer.cancel(`${app}:${window}`);
+        let galleryTarget=null;
+        if(pressed&&!modifiers&&!text&&[110,111,112,113,114,115,116,117].includes(keyCode)&&this.applicationMenus.hasMenuGallery(app,window)){
+            const size=this.renderSizes.get(`${app}:${window}`);
+            if(size)galleryTarget=this.applicationMenus.galleryKeyTarget(app,window,this.render(app,window,size.width,size.height));
+        }
         this.invalidateRender(app, window);
         const [appLow, appHigh] = idHalves(app, "application ID");
         const [windowLow, windowHigh] = idHalves(window, "window ID");
         const encoded = new TextEncoder().encode(text);
         if (encoded.byteLength > 16 * 1024) {
             throw new RangeError("native UI key text exceeds the RAPP limit");
+        }
+        if(galleryTarget!==null){
+            const events=this.drainEvents();events.push(RiceNativeAppWireCodec.key(app,window,galleryTarget,Boolean(pressed),keyCode,modifiers,text));return events;
         }
         if (encoded.byteLength > 0) this.#stage(encoded);
         const result = this.exports.rice_native_ui_key(
@@ -1238,10 +1410,30 @@ export class RiceNativeUiBridge {
             if (written !== pending) {
                 throw new Error("native UI event drain failed");
             }
-            output.push(validateRiceNativeAppFrame(
+            const event = validateRiceNativeAppFrame(
                 new Uint8Array(this.memory.buffer, pointer, written).slice(),
-            ));
+            );
+            const view = new DataView(event.buffer, event.byteOffset, event.byteLength);
+            if (view.getUint16(6, true) === 21 && event[36] === 4) {
+                if (event.byteLength !== 38 || event[37] > 1) throw Error('Invalid native focus event');
+                const app = view.getBigUint64(12, true), window = view.getBigUint64(20, true), target = view.getBigUint64(28, true);
+                if (event[37]) this.#recordFocused(app, window, target, output);
+                else if (this.focusedWidgets.get(`${app}:${window}`) === target) this.focusedWidgets.delete(`${app}:${window}`);
+            }
+            output.push(event);
         }
+    }
+
+    #recordFocused(app, window, target, events) {
+        const key = `${app}:${window}`, previous = this.focusedWidgets.get(key) || 0n;
+        if (previous === target) return false;
+        if (target === 0n) this.focusedWidgets.delete(key);
+        else {
+            if (!this.focusedWidgets.has(key) && this.focusedWidgets.size >= 256) throw RangeError('Native focus window limit exceeded');
+            this.focusedWidgets.set(key, target);
+        }
+        if (previous !== 0n) events.push(RiceNativeAppWireCodec.focus(app, window, previous, false));
+        return true;
     }
 
     #stage(bytes) {

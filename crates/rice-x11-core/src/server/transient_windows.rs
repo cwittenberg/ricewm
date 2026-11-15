@@ -46,6 +46,7 @@ impl DisplayServer {
         {
             return None;
         }
+        if self.wm_window_chrome.is_some(){let edges=self.custom_frame_resize_edges(state.width,state.height,local_x,local_y);return (edges!=0).then_some((frame,edges));}
         let mut edges = 0;
         if local_x < WM_RESIZE_HIT_WIDTH {
             edges |= WM_RESIZE_LEFT;

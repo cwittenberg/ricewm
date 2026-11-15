@@ -19,6 +19,8 @@ pub(super) struct PaneRuntime {
     /// Last fully acknowledged directory listing, never a pending navigation target.
     pub loaded_location: Option<GuestPath>,
     pub location_text: String,
+    /// User input must stay literal, even when it matches a friendly place name.
+    pub location_edited: bool,
     pub completion: DirectoryCompletion,
     pub completion_index: Option<usize>,
     pub sort: SortStrategy,
@@ -40,6 +42,7 @@ impl PaneRuntime {
             directory_entries: Vec::new(),
             loaded_location: None,
             location_text: location.as_str().to_owned(),
+            location_edited: false,
             completion: DirectoryCompletion::default(),
             completion_index: None,
             sort: SortStrategy::default(),

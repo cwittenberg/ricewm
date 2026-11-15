@@ -213,7 +213,7 @@ impl DisplayServer {
             return true;
         }
         if source == WM_GNOME_MENU && matches!(button, 1 | 2 | 3) {
-            if pressed && let Some(index) = self.wm_gnome_menu_hit(root_y) {
+            if pressed && let Some(index) = self.wm_gnome_menu_hit(root_x, root_y) {
                 self.wm_actions.push_back(
                     WM_ACTION_GNOME_MENU_ITEM_PREFIX | (u32::from(button) << 8) | u32::from(index),
                 );
@@ -445,7 +445,7 @@ impl DisplayServer {
             || i32::from(root_y) >= i32::from(y) + i32::from(height) { return None; }
         if self.wm_dock_style {
             let axis = if self.wm_taskbar_edge.vertical() { root_y - y } else { root_x - x };
-            let offset = i32::from(axis) - WM_COMPACT_DOCK_AXIS_PADDING as i32 - (1 + i32::from(self.wm_launcher_visible)) * self.wm_dock_step() as i32;
+            let offset = i32::from(axis) - self.wm_dock_axis_padding() as i32 - (1 + i32::from(self.wm_launcher_visible)) * self.wm_dock_step() as i32;
             let step = self.wm_dock_step() as i32;
             if offset < 0 || offset > self.wm_quick_launchers.len() as i32 * step + 4 { return None; }
             return Some(((offset + step / 2) / step).min(self.wm_quick_launchers.len() as i32) as u8,

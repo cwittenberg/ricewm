@@ -8,6 +8,7 @@ import {
 } from "./wallpaper-mode.mjs";
 import {
     resizeNativeWindow,
+    applyNativeTitlebarVisibility,
     calculatorNativeFrame,
     constrainNativeFrame,
     defaultNativeFrame,
@@ -45,14 +46,18 @@ export function createRiceNativeWindow({
         if(value!==undefined&&(!Number.isInteger(value)||value<minimum||value>4096))
             throw new RangeError(`Preferred window ${dimension} is invalid`);
     }
-    const minimumWidth=preferredSize?.width!==undefined?Math.min(320,preferredSize.width):compactClassicCalculator?240:undefined;
-    const minimumHeight=preferredSize?.height!==undefined?Math.min(268,preferredSize.height+ordinaryFrame.titleHeight):compactClassicCalculator?230:undefined;
+    const [,right=0,bottom=0,left=0]=theme?.bundle?.windowDecorations?.frameInsets||[];
+    const titleHeight=theme?.bundle?.metrics?.titlebarHeight??ordinaryFrame.titleHeight;
+    const preferredWidth=preferredSize?.width!==undefined?preferredSize.width+left+right:ordinaryFrame.width;
+    const preferredHeight=preferredSize?.height!==undefined?preferredSize.height+titleHeight+bottom:ordinaryFrame.height;
+    const minimumWidth=preferredSize?.width!==undefined?Math.min(320,preferredWidth):compactClassicCalculator?240:undefined;
+    const minimumHeight=preferredSize?.height!==undefined?Math.min(268,preferredHeight):compactClassicCalculator?230:undefined;
     const preferredFrame=preferredSize && (preferredSize.width!==undefined||preferredSize.height!==undefined) ? {
         ...ordinaryFrame,
-        width:preferredSize.width??ordinaryFrame.width,
-        height:(preferredSize.height??ordinaryFrame.contentHeight)+ordinaryFrame.titleHeight,
-        x:(workArea.x||0)+Math.floor((workArea.width-(preferredSize.width??ordinaryFrame.width))/2),
-        y:(workArea.y||0)+Math.floor((workArea.height-((preferredSize.height??ordinaryFrame.contentHeight)+ordinaryFrame.titleHeight))/2),
+        width:preferredWidth,
+        height:preferredHeight,
+        x:(workArea.x||0)+Math.floor((workArea.width-preferredWidth)/2),
+        y:(workArea.y||0)+Math.floor((workArea.height-preferredHeight)/2),
     } : ordinaryFrame;
     const fittedOrdinaryFrame = constrainNativeFrame(
         entrypoint === "rice-player" && arguments_?.includes?.("--media-kind=audio")
@@ -114,6 +119,10 @@ export function createRiceNativeWindow({
             ? riceWallpaperModeArgument(arguments_)
             : null,
     };
+    if(theme?.bundle?.metrics?.titlebarHeight!==undefined)window.themeTitlebarHeight=theme.bundle.metrics.titlebarHeight;
+    window.themeFrameInsets=theme?.bundle?.windowDecorations?.frameInsets;
+    window.themeResizeGripLength=theme?.bundle?.windowDecorations?.resizeGripLength;
+    applyNativeTitlebarVisibility(window);
     if (riceCompactFormFactor(viewport)) resizeNativeWindow(window, viewport, workArea);
     return window;
 }

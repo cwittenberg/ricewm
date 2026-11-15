@@ -15,10 +15,10 @@ export function createFontColorPicker({ onChoose }) {
         'viewport:360|' + control.scroll.text.replace(/^viewport:\d+\|/u, '')));
     control.palette.cancelButton.on(Message.ACTIVATE, compact);
     const remember = control.palette.onColorCommit;
-    control.palette.onColorCommit = value => {
-        remember(value);
+    control.palette.onColorCommit = (value, detail) => {
+        remember(value, detail);
         compact();
-        onChoose(value);
+        onChoose(value, detail);
     };
     control.refreshSelection = projection => control.setValue(
         projection?.selection.format?.fontColor ?? null,

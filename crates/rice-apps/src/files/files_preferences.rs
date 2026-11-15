@@ -13,6 +13,8 @@ const LABELS_KEY: &str = "ricefiles.places-with-labels";
 const DOWNLOAD_TIP_KEY: &str = "ricefiles.download-tip-shown";
 const SIMPLIFIED_VIEW_KEY_PREFIX: &str = "ricefiles.simplified-view.";
 const FOLDER_TREE_KEY_PREFIX: &str = "ricefiles.folder-tree.";
+const SIDEBAR_VIEW_KEY: &str = "ricefiles.sidebar.view";
+const DEFAULT_VIEW_KEY: &str = "ricefiles.default-view";
 const MAX_SETTING_BYTES: usize = 16 * 1024;
 const MAX_PENDING: usize = 16;
 
@@ -251,7 +253,14 @@ pub(super) fn toggle_folder_tree(
     }
     let previous = actor.folder_tree;
     actor.folder_tree = !previous;
-    let key = folder_tree_key(actor);
+    let key = if actor.sidebar_view_setting == "auto" {
+        folder_tree_key(actor)
+    } else {
+        SIDEBAR_VIEW_KEY.to_owned()
+    };
+    let value = if key == SIDEBAR_VIEW_KEY {
+        if actor.folder_tree {"treeview"} else {"places"}.to_owned()
+    } else {actor.folder_tree.to_string()};
     track(
         actor,
         PendingPreferences {
@@ -269,7 +278,7 @@ pub(super) fn toggle_folder_tree(
             request,
             SettingsOperation::Set {
                 key,
-                value: actor.folder_tree.to_string(),
+                value,
             },
         ),
     ])
@@ -349,6 +358,7 @@ pub(super) fn handle_response(
             }
             let previous_simplified_view = actor.simplified_view;
             let previous_folder_tree = actor.folder_tree;
+            let previous_sidebar_view = actor.sidebar_view_setting.clone();
             if pending_simplified_view_key == simplified_view_key(actor)
                 && let Some(value) = entries
                     .iter()
@@ -373,11 +383,39 @@ pub(super) fn handle_response(
                     _ => actor.folder_tree,
                 };
             }
+            if pending_folder_tree_key == folder_tree_key(actor) {
+                actor.sidebar_view_setting = entries.iter().find(|entry| entry.key == SIDEBAR_VIEW_KEY)
+                    .map(|entry| entry.value.as_str()).filter(|value| matches!(*value,"auto"|"places"|"treeview"))
+                    .unwrap_or("auto").to_owned();
+                match actor.sidebar_view_setting.as_str() {
+                    "treeview" => {actor.folder_tree = true;actor.sidebar_visible = true;},
+                    "places" => actor.folder_tree = false,
+                    _ if previous_sidebar_view != "auto" && !entries.iter().any(|entry| entry.key == pending_folder_tree_key) => actor.folder_tree = actor.redmond98,
+                    _ => {},
+                }
+                let zoom=entries.iter().find(|entry|entry.key=="ricefiles.zoom").map(|entry|entry.value.as_str()).unwrap_or("auto");
+                if actor.zoom_setting.as_deref()!=Some(zoom) {
+                    actor.view_zoom_permille=if zoom=="auto" {super::default_view_zoom_for_theme(&actor.theme_profile)} else {zoom.parse::<u16>().ok().filter(|v|(50..=500).contains(v)).map(|v|(v*10).clamp(super::MIN_VIEW_ZOOM_PERMILLE, super::MAX_VIEW_ZOOM_PERMILLE)).unwrap_or_else(||super::default_view_zoom_for_theme(&actor.theme_profile))};
+                    actor.zoom_setting=Some(zoom.to_owned());
+                }
+                let view = entries.iter().find(|entry| entry.key == DEFAULT_VIEW_KEY)
+                    .map(|entry| entry.value.as_str()).filter(|value| matches!(*value,"auto"|"icons"|"compact"|"thumbnails"|"details"))
+                    .unwrap_or("auto");
+                if actor.default_view_setting.as_deref() != Some(view) {
+                    let reset = actor.default_view_setting.as_deref().is_some_and(|previous| previous != "auto");
+                    actor.default_view_setting = Some(view.to_owned());
+                    if let Some(mode) = actor.default_file_view().or_else(|| reset.then_some(rice_files::ViewMode::Icons)) {
+                        actor.tab_mut()?.primary.set_view(mode);
+                        actor.tab_mut()?.secondary.set_view(mode);
+                    }
+                }
+            }
             actor.download_tip_shown = entries
                 .iter()
                 .any(|entry| entry.key == DOWNLOAD_TIP_KEY && entry.value == "1");
             let mut changed = actor.user_actions != previous_actions || actor.simplified_view != previous_simplified_view
                 || actor.folder_tree != previous_folder_tree;
+            changed |= entries.iter().any(|entry| entry.key == DEFAULT_VIEW_KEY || entry.key=="ricefiles.zoom");
             if actor.preferences_revision == revision
                 && let Some(value) = setting_value(entries)
             {
@@ -435,10 +473,13 @@ pub(super) fn handle_response(
         (PendingKind::SaveFolderTree { key, .. }, SettingsResult::Applied(entry))
             if entry.key == key =>
         {
+            if key == SIDEBAR_VIEW_KEY {
+                actor.sidebar_view_setting.clone_from(&entry.value);
+            }
             Ok(Vec::new())
         }
         (PendingKind::SaveFolderTree { previous, key }, SettingsResult::Error(error)) => {
-            if key == folder_tree_key(actor) {
+            if key == folder_tree_key(actor) || key == SIDEBAR_VIEW_KEY {
                 actor.folder_tree = previous;
             }
             actor.emit_system_notice(

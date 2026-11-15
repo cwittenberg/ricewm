@@ -81,6 +81,10 @@ pub fn geometry_key(frame: &GridFrame) -> u32 {
         data.pop();data.push(b',');
         data.extend_from_slice(&serde_json::to_vec(&frame.merges.iter().map(|m|m.values()).collect::<Vec<_>>()).expect("bounded merge geometry"));data.push(b']');
     }
+    if !frame.selection_areas.is_empty(){
+        data.pop();data.push(b',');
+        data.extend_from_slice(&serde_json::to_vec(&frame.selection_areas.iter().map(|a|(a.first_row,a.last_row,a.first_column,a.last_column)).collect::<Vec<_>>()).expect("bounded selection geometry"));data.push(b']');
+    }
     data.iter().fold(2_166_136_261_u32, |hash, byte| {
         (hash ^ u32::from(*byte)).wrapping_mul(16_777_619)
     })

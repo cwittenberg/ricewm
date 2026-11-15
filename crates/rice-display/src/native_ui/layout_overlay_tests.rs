@@ -24,6 +24,39 @@ fn create(id: u64, parent: Option<u64>, index: u32, kind: WidgetKind, text: &str
 }
 
 #[test]
+fn dialog_can_own_enter_from_fields_and_buttons_without_changing_space_or_other_dialogs() {
+    let app = AppId::new(1).unwrap();
+    let window = WindowId::new(1).unwrap();
+    let mut host = NativeUiHost::default();
+    host.apply_patch(&UiPatchEnvelope { app, window, sequence: 1, patches: vec![
+        create(1, None, 0, WidgetKind::Column, ""),
+        create(2, Some(1), 0, WidgetKind::Dialog, "Connect"),
+        create(3, Some(2), 0, WidgetKind::Column, ""),
+        create(4, Some(3), 0, WidgetKind::TextField, "smb://nas/share"),
+        create(5, Some(3), 1, WidgetKind::PasswordField, "secret"),
+        create(6, Some(3), 2, WidgetKind::Button, "Cancel"),
+    ]}).unwrap();
+    host.render(app, window, Constraints::new(Size { width: 800, height: 600 }, Size { width: 800, height: 600 }).unwrap()).unwrap();
+    host.windows.get_mut(&(app, window)).unwrap().focused = Some(widget(6));
+    assert_eq!(host.key_event(app, window, true, 36, 0, None).unwrap().unwrap().event, UiEvent::Activate);
+    host.apply_patch(&UiPatchEnvelope { app, window, sequence: 2, patches: vec![UiPatch::Update {
+        id: widget(2), state: rice_native_app_protocol::PatchValue::Set((WidgetState::ENABLED | WidgetState::KEY_NAVIGATION).bits()),
+        text: rice_native_app_protocol::PatchValue::Keep, icon: rice_native_app_protocol::PatchValue::Keep,
+    }]}).unwrap();
+    for focused in [None, Some(widget(4)), Some(widget(5)), Some(widget(6))] {
+        host.windows.get_mut(&(app, window)).unwrap().focused = focused;
+        for key_code in [36, 104] {
+            for pressed in [true, false] {
+                let event = host.key_event(app, window, pressed, key_code, 0, None).unwrap().unwrap();
+                assert_eq!(event.target, widget(2));
+                assert_eq!(event.event, UiEvent::Key { pressed, key_code, modifiers: 0, text: None });
+            }
+        }
+    }
+    assert_eq!(host.key_event(app, window, true, 65, 0, None).unwrap().unwrap().event, UiEvent::Activate);
+}
+
+#[test]
 fn breadcrumb_lays_out_ancestor_carets_and_current_location_on_one_line() {
     let app = AppId::new(1).expect("app");
     let window = WindowId::new(1).expect("window");

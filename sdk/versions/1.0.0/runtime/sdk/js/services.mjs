@@ -13,6 +13,7 @@ function capabilityMethod(bridge, grants, service, operation, generated) {
     Object.defineProperties(method, {
         permission: { value: permission },
         generatedAllowed: { value: generated },
+        granted: { value: grants.has(permission) },
     });
     return method;
 }
@@ -29,38 +30,50 @@ export function createServices(bridge, permissions = []) {
     const grants = grantedSet(permissions);
     return Object.freeze({
         assets: group(bridge, grants, 'assets', ['read', 'stat'], true),
+        resources: group(bridge, grants, 'resources', ['read', 'stat'], true),
+        graphics: group(bridge, grants, 'graphics', ['context','open','upload','render','close'], true),
+        editors: group(bridge, grants, 'editors', ['open', 'invoke', 'events', 'respond', 'close'], true),
         compute: group(bridge, grants, "compute", ["open", "invoke", "cancel", "close"], true),
         docker: group(bridge, grants, "docker", ["context", "install", "pull", "run", "start", "inspect", "logs", "stop"], true),
-        clipboard: group(bridge, grants, "clipboard", ["readText", "writeText"], true),
+        clipboard: group(bridge, grants, "clipboard", ["readText", "writeText", "readFormats", "writeFormats"], true),
+        documents: group(bridge, grants, "documents", ["extractText"], true),
         notifications: group(bridge, grants, 'notifications', ['create', 'update', 'delete', 'show', 'list', 'dismiss'], true),
         calendar: group(bridge, grants, 'calendar', ['sources', 'list', 'create', 'update', 'delete', 'watch'], true),
+        accounts: group(bridge, grants, 'accounts', ['list'], true),
+        contacts: group(bridge, grants, 'contacts', ['list', 'upsert', 'delete'], true),
+        mail: group(bridge, grants, 'mail', ['list', 'search', 'read', 'attachment', 'labels', 'send'], true),
         wallpapers: group(bridge, grants, 'wallpapers', ['context', 'list', 'search', 'import', 'generate', 'set', 'assign', 'watch'], true),
         hotkeys: group(bridge, grants, 'hotkeys', ['register', 'unregister', 'list'], true),
         actions: group(bridge, grants, 'actions', ['register', 'unregister', 'list'], true),
+        capabilities: group(bridge, grants, 'capabilities', ['register', 'unregister', 'respond'], true),
+        windows: group(bridge, grants, 'windows', ['register', 'unregister', 'focus', 'state'], true),
+        drops: group(bridge, grants, 'drops', ['register', 'unregister', 'respond'], true),
         plugins: group(bridge, grants, 'plugins', ['register', 'unregister', 'list', 'context', 'apply'], true),
         files: group(bridge, grants, "files", [
             "read", "write", "stat", "list", "mkdir", "remove", "rename",
-            "watch", "openDialog", "saveDialog", "chooseFolder",
+            "watch", "unwatch", "child", "release", "requestWrite", "version", "releaseVersion", "beginWrite", "writeChunk", "commitWrite", "abortWrite", "openDialog", "saveDialog", "chooseFolder",
         ], true),
         settings: group(bridge, grants, "settings", ["get", "set", "list"], true),
-        themes: group(bridge, grants, "themes", ["context", "read", "save", "activate", "visual", "menu"], true),
+        themes: group(bridge, grants, "themes", ["context", "read", "save", "activate", "visual", "menu", "applications", "applicationVisual"], true),
         recipes: group(bridge, grants, "recipes", ["presentation", "list", "preview", "save", "apply", "status", "cancel"]),
-        media: group(bridge, grants, "media", ["open", "metadata", "export"]),
+        media: group(bridge, grants, "media", ["open", "metadata", "export", "context", "control", "state", "close", "watch", "unwatch", "playSound"], operation => !["metadata", "export"].includes(operation)),
+        jobs: group(bridge, grants, "jobs", ["context", "start", "list", "status", "cancel", "remove", "watch", "unwatch"], true),
+        display: group(bridge, grants, 'display', ['context', 'get', 'set', 'reset'], true),
         network: group(bridge, grants, "network", ["fetch"], true),
         applications: group(bridge, grants, "applications", [
-            "list", "launch", "openWith", "editSource", "develop",
+            "list", "launch", "assist", "formatSource", "openWith", "handlers", "open", "status", "editSource", "develop",
             "openDevelopmentWorkspace", "stopDevelopment", "installPackage",
-        ]),
+        ], operation => ['handlers', 'open', 'status'].includes(operation)),
         extensions: group(bridge, grants, "extensions", [
-            "list", "enable", "disable", "restart", "openManager", "call",
+            "list", "enable", "disable", "restart", "openManager", "call", "develop", "logs",
         ]),
-        system: group(bridge, grants, "system", ["info", "performance", "processSignal", "processNice"], operation => operation === 'info'),
-        terminal: group(bridge, grants, "terminal", ["spawn", "write", "resize", "close"]),
+        system: group(bridge, grants, "system", ["info", "capabilities", "performance", "processSignal", "processNice"], operation => operation === 'info' || operation === 'capabilities'),
+        terminal: group(bridge, grants, "terminal", ["spawn", "read", "write", "resize", "scroll", "close"]),
         host: group(bridge, grants, "host", ["notify", "openExternal", "print", "revealPath"], operation => operation === 'notify' || operation === 'print'),
         dialogs: group(bridge, grants, "dialogs", [
             "message", "confirm", "openFile", "saveFile", "chooseFolder",
             "chooseColor", "chooseFont", "print", "pageSetup", "find", "replace",
-        ], operation => operation === 'message' || operation === 'confirm' || operation === 'openFile' || operation === 'saveFile' || operation === 'chooseFolder' || operation === 'chooseColor' || operation === 'chooseFont' || operation === 'find' || operation === 'replace'),
+        ], true),
         debug: group(bridge, grants, "debug", ["log"], true),
     });
 }

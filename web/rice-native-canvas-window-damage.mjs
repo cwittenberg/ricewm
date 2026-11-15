@@ -1,4 +1,10 @@
+import {nativeClientRect} from './rice-native-window-stack.mjs';
+import {windowEffectsOutset} from './rice-window-effects.mjs';
 export function adaptiveStructuralInk(source, rect, tint, fallback) {
+    if (source?.surface) {
+        rect = {...rect, x:rect.x-source.x, y:rect.y-source.y};
+        source = source.surface;
+    }
     const fallbackInk = Array.isArray(fallback)
         ? fallback.slice()
         : [255, 255, 255, 255];
@@ -159,8 +165,12 @@ export function globalCommandRect(native, command, contentDamage = true) {
         };
         if (rect.width <= 0 || rect.height <= 0) return null;
     }
+    // Balloon frames paint an eight pixel pointer outside their body, plus
+    // a blurred, offset shadow. Damage and replay culling must cover those
+    // pixels when a tooltip moves or disappears, not just its logical body.
+    if (command.type === "balloon-frame") rect = expandedRect(rect, 32);
     return {
-        x: native.frame.x + rect.x,
+        x: native.frame.x + nativeClientRect(native.frame).x + rect.x,
         y: native.frame.y + (native.role === "desktop" ? 0 : native.frame.titleHeight) + rect.y,
         width: rect.width,
         height: rect.height,
@@ -187,12 +197,12 @@ function visualFrameRect(native) {
     const rect = frameRect(native);
     if (!rect || native?.role === "desktop") return rect;
     const dialog = native.dialog?.title?.startsWith('panel:drawer-dialog:') && native.dialog.rect;
-    const pane = dialog && {x:native.frame.x+dialog.x, y:native.frame.y+native.frame.titleHeight+dialog.y,
+    const pane = dialog && {x:native.frame.x+nativeClientRect(native.frame).x+dialog.x, y:native.frame.y+native.frame.titleHeight+dialog.y,
         width:dialog.width,height:dialog.height};
     const bounds = pane ? {x:Math.min(rect.x,pane.x), y:Math.min(rect.y,pane.y),
         width:Math.max(rect.x+rect.width,pane.x+pane.width)-Math.min(rect.x,pane.x),
         height:Math.max(rect.y+rect.height,pane.y+pane.height)-Math.min(rect.y,pane.y)} : rect;
-    return expandedRect(bounds, NATIVE_WINDOW_VISUAL_OUTSET);
+    return expandedRect(bounds, Math.max(NATIVE_WINDOW_VISUAL_OUTSET,windowEffectsOutset(native.chrome)));
 }
 
 function intersects(left, right) {
@@ -244,15 +254,15 @@ export function riceNativeBackdropIntersectsDamage(rect, damageRects, occlusions
 export function riceNativeOpaqueInterior(native) {
     const { frame, chrome, shell } = native || {};
     if (!frame || !chrome || native.layerVisible === false || native.minimized ||
-        native.role === 'desktop' || native.dialogOnly || native.tileClip ||
+        native.role === 'desktop' || native.editorRegions?.length || native.dialogOnly || native.tileClip ||
         (!native.active && shell?.inactiveWindowsTranslucent !== false) ||
         chrome.material === 'frosted-ice' || chrome.body?.[3] !== 255 ||
         (shell?.surface?.frame && shell.surface.frame !== 'standard') ||
         native.commands?.some(c => c.type === 'host-portal' || c.type === 'terminal-portal' ||
             c.type === 'terminal-grid' || (c.type === 'web-scene' && !c.vectorScene))) return null;
     const inset = Math.max(2, Number(chrome.radius) || 0);
-    const rect = { x: frame.x + inset, y: frame.y + frame.titleHeight + inset,
-        width: frame.width - inset * 2, height: frame.height - frame.titleHeight - inset * 2 };
+    const rect = { x: frame.x + nativeClientRect(frame).x + inset, y: frame.y + frame.titleHeight + inset,
+        width: nativeClientRect(frame).width - inset * 2, height: nativeClientRect(frame).height - inset * 2 };
     return rect.width > 0 && rect.height > 0 ? rect : null;
 }
 
@@ -264,11 +274,13 @@ export function riceNativeSnapshotDamage(previous, next) {
         const oldNative = before.get(app);
         const newNative = after.get(app);
         const geometryChanged = !oldNative || !newNative ||
+            oldNative.editorShapeRevision!==newNative.editorShapeRevision ||
             !sameRect(oldNative.frame, newNative.frame);
         const outsideFrameChanged = geometryChanged ||
             ((oldNative?.dialog?.title?.startsWith("panel:drawer-dialog:") || newNative?.dialog?.title?.startsWith("panel:drawer-dialog:")) && !sameValue(oldNative?.dialog, newNative?.dialog)) ||
             oldNative?.active !== newNative?.active ||
             oldNative?.maximized !== newNative?.maximized ||
+            oldNative?.fullscreen !== newNative?.fullscreen ||
             !sameValue(oldNative?.chrome, newNative?.chrome) ||
             !sameValue(oldNative?.shell, newNative?.shell);
         if (!oldNative || !newNative ||
@@ -278,6 +290,7 @@ export function riceNativeSnapshotDamage(previous, next) {
             oldNative.active !== newNative.active ||
             oldNative.layerVisible !== newNative.layerVisible ||
             oldNative.maximized !== newNative.maximized ||
+            oldNative.fullscreen !== newNative.fullscreen ||
             oldNative.title !== newNative.title ||
             !sameValue(oldNative.desktopBackground, newNative.desktopBackground) ||
             // Dialog and popup surfaces include compositor-owned dimming,
@@ -298,6 +311,13 @@ export function riceNativeSnapshotDamage(previous, next) {
             if (oldRect) damage.push(oldRect);
             if (newRect) damage.push(newRect);
             continue;
+        }
+        // Caption faces are compositor-owned, outside the retained client
+        // commands. Holding, leaving or releasing a control must repaint them
+        // even when the application has no content update.
+        if (oldNative.pressedControl !== newNative.pressedControl && newNative.frame.titleHeight > 0) {
+            damage.push({x: newNative.frame.x, y: newNative.frame.y,
+                width: newNative.frame.width, height: newNative.frame.titleHeight});
         }
         const oldCommands = [
             ...(oldNative.commands || []),

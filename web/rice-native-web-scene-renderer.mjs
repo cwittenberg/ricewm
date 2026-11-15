@@ -1,7 +1,6 @@
 export const CONTENT_SHADOW_RENDERER_VERSION = 1;
 import { beginContentShadow, endContentShadow } from './rice-native-content-shadow.mjs';
 import { renderRiceBoxShadow } from './rice-native-box-shadow.mjs';
-import { mailDocumentHtml } from "./rice-mail-document-surface.mjs";
 import {
     packedRgba,
     roundedPath,
@@ -44,6 +43,14 @@ function retainedTextures(context, key) {
 
 function equalPixels(left, right) {
     if (!left || left.byteLength !== right.byteLength) return false;
+    // Scene records and RGBA pixels are word aligned. Compare four bytes at
+    // once rather than running a JavaScript iteration for every color channel.
+    if (!(left.byteOffset % 4) && !(right.byteOffset % 4) && !(right.byteLength % 4)) {
+        const a = new Uint32Array(left.buffer, left.byteOffset, left.byteLength / 4);
+        const b = new Uint32Array(right.buffer, right.byteOffset, right.byteLength / 4);
+        for (let index = 0; index < b.length; index++) if (a[index] !== b[index]) return false;
+        return true;
+    }
     for (let index = 0; index < right.byteLength; index += 1) {
         if (left[index] !== right[index]) return false;
     }
@@ -96,23 +103,31 @@ function replayRetainedPath(context, segments) {
     }
 }
 
-function renderPathRecord(context, view, offset, opcode, recordBytes, read, paths) {
+function renderPathRecord(context, bytes, view, offset, opcode, recordBytes, read, paths, residents) {
     if (opcode === 19 && recordBytes >= 44) {
         const path = view.getUint32(offset + 8, true);
         const count = view.getUint32(offset + 12, true);
         if (path === 0 || count === 0 || recordBytes !== 16 + count * 28) {
             throw new RangeError("invalid Rice retained path");
         }
-        const segments = [];
-        for (let index = 0; index < count; index += 1) {
+        const definition = bytes.subarray(offset, offset + recordBytes);
+        let resident = residents.get(path);
+        if (!resident || !equalPixels(resident.definition, definition)) {
+          const segments = [];
+          for (let index = 0; index < count; index += 1) {
             const position = offset + 16 + index * 28;
             const coordinates = [];
             for (let coordinate = 0; coordinate < 6; coordinate += 1) {
                 coordinates.push(view.getFloat32(position + 4 + coordinate * 4, true));
             }
-            segments.push({ verb: view.getUint8(position), coordinates });
+              segments.push({ verb: view.getUint8(position), coordinates });
+          }
+          const compiled = typeof globalThis.Path2D === 'function' ? new globalThis.Path2D() : null;
+          if (compiled) replayRetainedPath({beginPath(){},moveTo:(...v)=>compiled.moveTo(...v),lineTo:(...v)=>compiled.lineTo(...v),quadraticCurveTo:(...v)=>compiled.quadraticCurveTo(...v),bezierCurveTo:(...v)=>compiled.bezierCurveTo(...v),closePath:()=>compiled.closePath()}, segments);
+          resident = { definition: definition.slice(), segments: compiled ? null : segments, compiled };
+          residents.set(path, resident);
         }
-        paths.set(path, segments);
+        paths.set(path, resident);
         return { handled: true, depthDelta: 0 };
     }
     if (![20, 21, 22].includes(opcode)) return { handled: false, depthDelta: 0 };
@@ -121,9 +136,10 @@ function renderPathRecord(context, view, offset, opcode, recordBytes, read, path
     const transform = [4, 8, 12, 16, 20, 24].map(read.number);
     context.save();
     context.transform(...transform);
-    replayRetainedPath(context, path);
+    if (!path.compiled) replayRetainedPath(context, path.segments);
     if (opcode === 20 && recordBytes === 40) {
-        context.clip(view.getUint8(offset + 36) === 0 ? "nonzero" : "evenodd");
+        const rule = view.getUint8(offset + 36) === 0 ? "nonzero" : "evenodd";
+        if (path.compiled) context.clip(path.compiled, rule); else context.clip(rule);
         const [a, b, c, d, e, f] = transform;
         const determinant = a * d - b * c;
         if (!Number.isFinite(determinant) || Math.abs(determinant) < 1e-12) {
@@ -146,14 +162,15 @@ function renderPathRecord(context, view, offset, opcode, recordBytes, read, path
     }
     if (opcode === 21 && recordBytes === 44) {
         context.fillStyle = packedRgba(view.getUint32(offset + 36, true));
-        context.fill(view.getUint8(offset + 40) === 0 ? "nonzero" : "evenodd");
+        const rule = view.getUint8(offset + 40) === 0 ? "nonzero" : "evenodd";
+        if (path.compiled) context.fill(path.compiled, rule); else context.fill(rule);
     } else if (opcode === 22 && recordBytes === 52) {
         context.strokeStyle = packedRgba(view.getUint32(offset + 36, true));
         context.lineWidth = read.number(32);
         context.miterLimit = read.number(36);
         context.lineCap = ["butt", "round", "square"][view.getUint8(offset + 48)];
         context.lineJoin = ["bevel", "miter", "round"][view.getUint8(offset + 49)];
-        context.stroke();
+        if (path.compiled) context.stroke(path.compiled); else context.stroke();
     } else {
         context.restore();
         throw new RangeError("invalid Rice retained path operation");
@@ -522,6 +539,7 @@ function contentShadowBudget(bytes, view) {
         if (offset + 8 > bytes.length) throw new RangeError('Truncated scene record');
         const compact = view.getUint16(offset + 2, true), size = compact ? compact * 4 : view.getUint32(offset + 4, true);
         if (size < 8 || offset + size > bytes.length) throw new RangeError('Invalid scene record');
+        if (bytes[offset] === 28) throw new TypeError('HTML document records are unavailable in the standalone native renderer');
         if (bytes[offset] === 29 && ++count > 128) throw new RangeError('Too many content shadows');
         offset += size;
     }
@@ -534,6 +552,7 @@ function replayRiceWebScene(context, scene, bytes, textures, mediaSurface, usedT
     const width = Math.max(1, scene.viewportWidth);
     const height = Math.max(1, scene.viewportHeight);
     const paths = new Map();
+    const residentPaths = textures.paths ??= new Map();
     const mediaRegions = new Map((scene.mediaRegions || []).map(region => [region.offset, region.request]));
     let depth = 0;
     const compositeLayers = [];
@@ -638,12 +657,14 @@ function replayRiceWebScene(context, scene, bytes, textures, mediaSurface, usedT
         }
         const pathResult = renderPathRecord(
             context,
+            bytes,
             view,
             offset,
             opcode,
             recordBytes,
             read,
             paths,
+            residentPaths,
         );
         let nextDepth = depth + pathResult.depthDelta;
         if (!pathResult.handled) nextDepth = renderStackRecord(
@@ -687,15 +708,12 @@ function replayRiceWebScene(context, scene, bytes, textures, mediaSurface, usedT
         depth -= 1;
     }
     context.restore();
+    // Keep only this self-contained frame's definitions. Old IDs may not be
+    // referenced by a later frame, even if their compiled paths are resident.
+    for (const id of residentPaths.keys()) if (!paths.has(id)) residentPaths.delete(id);
 }
 
 export function renderRiceWebScene(context, scene, mediaSurface = () => null) {
-    if (mailDocumentHtml(scene) !== null) {
-        // Live documents sit below the desktop canvas, like terminal portals.
-        // Erase the native WebSurface placeholder so the DOM remains visible.
-        context.clearRect(scene.rect.x, scene.rect.y, scene.rect.width, scene.rect.height);
-        return;
-    }
     const bytes = scene.displayList instanceof Uint8Array
         ? scene.displayList
         : Uint8Array.from(scene.displayList);
@@ -719,7 +737,8 @@ export function renderRiceWebScene(context, scene, mediaSurface = () => null) {
     const surfaces = retainedSceneTextures.get(context);
     if (surfaces) {
         const cost = () => [...surfaces.values()].reduce((sum, entries) => sum +
-            [...entries.values()].reduce((bytes, entry) => bytes + entry.rgba.byteLength * 2, 0), 0);
+            [...entries.values()].reduce((bytes, entry) => bytes + entry.rgba.byteLength * 2, 0) +
+            [...(entries.paths?.values() || [])].reduce((bytes, path) => bytes + path.definition.byteLength * 4, 0), 0);
         while (surfaces.size && cost() > MAX_RETAINED_TEXTURE_BYTES) surfaces.delete(surfaces.keys().next().value);
     }
 }

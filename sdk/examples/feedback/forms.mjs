@@ -1,23 +1,23 @@
 export const issueForms = Object.freeze({
     bug: {
         name: 'Report bug', template: 'bug-report.yml', prefix: '[Bug] ',
-        description: 'Tell us what went wrong and how to reproduce it.',
+        description: 'Something not working? Tell us what happened.',
         fields: [
-            { id: 'happened', label: 'What happened?', required: true, rows: 3 },
-            { id: 'steps', label: 'Steps to reproduce', required: true, rows: 3 },
-            { id: 'expected', label: 'What did you expect?', required: true, rows: 2 },
-            { id: 'environment', label: 'RiceWM version, browser and operating system', required: true, rows: 2 },
-            { id: 'extra', label: 'Anything else? (optional)', rows: 2 },
+            { id: 'happened', label: 'What went wrong?', required: true, rows: 3, height: 56 },
+            { id: 'steps', label: 'How can we reproduce it?', required: true, rows: 3, height: 72 },
+            { id: 'expected', label: 'What should have happened?', required: true, singleLine: true },
+            { id: 'environment', label: 'Browser and operating system', required: true, singleLine: true },
+            { id: 'extra', label: 'Anything else we should know?', rows: 3, height: 72 },
         ],
     },
     feature: {
         name: 'Request feature', template: 'feature-request.yml', prefix: '[Feature] ',
-        description: 'Suggest something that would make RiceWM more useful to you.',
+        description: 'Have an idea for RiceWM? We’d like to hear it.',
         fields: [
-            { id: 'problem', label: 'What would this help you do?', required: true, rows: 3 },
-            { id: 'proposal', label: 'How should it work?', required: true, rows: 3 },
-            { id: 'alternatives', label: 'What have you tried instead? (optional)', rows: 2 },
-            { id: 'extra', label: 'Examples or other details (optional)', rows: 2 },
+            { id: 'problem', label: 'What would you like to do?', required: true, rows: 3, height: 72 },
+            { id: 'proposal', label: 'How would it work?', required: true, rows: 4, height: 88 },
+            { id: 'alternatives', label: 'What have you tried instead?', rows: 3, height: 72 },
+            { id: 'extra', label: 'Examples or other notes', rows: 3, height: 72 },
         ],
     },
 });
@@ -39,6 +39,6 @@ export function issueUrl(kind, values) {
     }
     // GitHub rejects oversized request URLs. Keep every field intact and let
     // the author shorten the report rather than silently losing their text.
-    if (url.href.length > 7500) throw new Error('This report is too long to open as a link. Shorten the details and attach longer logs on GitHub.');
+    if (url.href.length > 4000) throw new Error('This report is too long to open as a link. Shorten the details and attach longer logs on GitHub.');
     return url.href;
 }

@@ -6,7 +6,10 @@
   "version": "1.2.0",
   "description": "Learn, scaffold, run, debug, install, and distribute JavaScript RiceWM apps.",
   "entry": "app.mjs",
-  "categories": ["Development", "Utility"],
+  "categories": [
+    "Development",
+    "Utility"
+  ],
   "permissions": {
     "services": [
       "files.read",
@@ -26,8 +29,15 @@
       "extensions.call"
     ],
     "bus": {
-      "subscribe": ["org.ricewm.development/"],
-      "provide": ["org.ricewm.extension/demo"]
+      "subscribe": [
+        "org.ricewm.development/"
+      ],
+      "provide": [
+        "org.ricewm.extension/demo"
+      ]
     }
+  },
+  "sdk": {
+    "version": "1.0.0"
   }
 }

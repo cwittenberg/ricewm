@@ -25,6 +25,8 @@ export async function loadDeckScene(port, { index, revision, maximumObjects = 40
             page.background?.color !== scene.background?.color || page.background?.opacity !== scene.background?.opacity ||
             JSON.stringify(page.backgroundPicture) !== JSON.stringify(scene.backgroundPicture) ||
             JSON.stringify(page.backgroundGradient) !== JSON.stringify(scene.backgroundGradient) ||
+            JSON.stringify(page.backgroundFill) !== JSON.stringify(scene.backgroundFill) ||
+            page.hideBackgroundGraphics !== scene.hideBackgroundGraphics ||
             JSON.stringify(page.transition) !== JSON.stringify(scene.transition) ||
             page.canSetTransition !== scene.canSetTransition || page.canDisableTransitionClick !== scene.canDisableTransitionClick ||
             page.hasAnimationTiming !== scene.hasAnimationTiming ||

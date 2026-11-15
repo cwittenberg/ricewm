@@ -7039,6 +7039,144 @@ fn settings_menu_with_choices_keeps_control_height_beside_multiline_help() {
 }
 
 #[test]
+fn settings_separators_align_with_copy_and_share_the_gap_between_visible_rows() {
+    let mut redmond = Theme::familiar_light();
+    redmond.chrome_profile = rice_ui::ChromeProfile::Redmond98;
+    redmond.metrics.control_height = 22;
+    redmond.typography.body_px = 11;
+    for (name, theme) in [("standard", Theme::ricewm_default()), ("familiar", Theme::familiar_light()), ("redmond98", redmond)] {
+        for width in [680, 360] {
+            let mut host = NativeUiHost::new(theme);
+            let mut patches = vec![
+                create(1, None, 0, WidgetKind::Column, WidgetState::ENABLED, Some("panel:fixed:padding=0"), None),
+                create(2, Some(1), 0, WidgetKind::Container, WidgetState::ENABLED, Some("panel:fixed:padding=12"), None),
+            ];
+            for (index, (title, help)) in [
+                ("Show dock", "Show the app launcher and running windows."),
+                ("Show dock on every monitor", "With multiple monitors, show a dock on each. Turn off to use only the primary monitor."),
+                ("Shell style", "Choose the appearance of the shell."),
+            ].into_iter().enumerate() {
+                let base = 10 + index as u64 * 10;
+                patches.extend([
+                    create(base, Some(2), index as u32 + u32::from(index > 0), WidgetKind::Row, WidgetState::ENABLED, Some("split:560:compact:form-field:padding=4"), None),
+                    create(base + 1, Some(base), 0, WidgetKind::Column, WidgetState::ENABLED, Some("panel:tight-stack:padding=0"), None),
+                    create(base + 2, Some(base + 1), 0, WidgetKind::Label, WidgetState::ENABLED, Some(title), None),
+                    create(base + 3, Some(base + 1), 1, WidgetKind::Label, WidgetState::ENABLED | WidgetState::MUTED, Some(help), None),
+                    create(base + 4, Some(base), 1, WidgetKind::Button, WidgetState::ENABLED, Some("Standard"), None),
+                ]);
+                if index == 0 {
+                    patches.push(create(18, Some(2), 1, WidgetKind::Tooltip, WidgetState::ENABLED, Some("Additional dock help"), None));
+                }
+            }
+            patches.push(create(40, Some(2), 4, WidgetKind::Tooltip, WidgetState::ENABLED, Some("Shell appearance help"), None));
+            host.apply_patch(&envelope(1, patches)).unwrap();
+            let output = host.render(app(1), window(1), fixed_constraints(width, 700)).unwrap();
+            let geometry = &host.windows[&(app(1), window(1))].geometry;
+            let separators = output.commands.iter().filter_map(|command| match command {
+                DrawCommand::ThemeSurface { rect, role: 6, .. } => Some(*rect),
+                _ => None,
+            }).collect::<Vec<_>>();
+            assert_eq!(separators.len(), 2, "only the two boundaries between visible form rows receive rules: theme={name}, width={width}");
+            for (index, row_id) in [10, 20].into_iter().enumerate() {
+                let row = geometry[&widget(row_id)];
+                let next = geometry[&widget(row_id + 10)];
+                let separator = separators[index];
+                let bottom = row.origin.y + row.size.height as i32;
+                let top_clearance = separator.origin.y - bottom;
+                let bottom_clearance = next.origin.y - separator.origin.y - separator.size.height as i32;
+                assert_eq!(separator.origin.x, row.origin.x + 4, "the rule follows the row's reading edge");
+                assert_eq!(separator.size, Size { width: row.size.width - 8, height: 1 });
+                assert!(top_clearance >= 0 && bottom_clearance >= 0);
+                assert!((top_clearance - bottom_clearance).abs() <= 1, "the rule shares actual inter-row space equally: {separator:?}, {row:?}, {next:?}");
+                assert!(output.commands.iter().any(|command| matches!(command,
+                    DrawCommand::Fill { rect, color, radius: 0 } if *rect == separator && *color == theme.palette.border)),
+                    "semantic separator skin and native rule use the same geometry");
+            }
+            let help = output.commands.iter().find_map(|command| match command {
+                DrawCommand::Text { rect, text, .. } if text.starts_with("With multiple monitors") => Some(*rect),
+                _ => None,
+            }).unwrap();
+            let title = output.commands.iter().find_map(|command| match command {
+                DrawCommand::Text { rect, text, .. } if text == "Show dock on every monitor" => Some(*rect),
+                _ => None,
+            }).unwrap();
+            assert!(help.size.height > title.size.height, "the fixture exercises multiline help");
+            if let Some(directory) = std::env::var_os("SETTINGS_SEPARATOR_EVIDENCE") {
+                let directory = std::path::PathBuf::from(directory);
+                std::fs::create_dir_all(&directory).unwrap();
+                let name = format!("{name}-{width}.ruid");
+                let bytes = crate::native_ui_snapshot::encode_snapshot(1, 1, &output).unwrap();
+                std::fs::write(directory.join(name), bytes).unwrap();
+            }
+        }
+    }
+}
+
+#[test]
+fn settings_single_row_groups_ignore_trailing_overlay_and_empty_siblings() {
+    for trailing_kind in [None, Some(WidgetKind::Tooltip), Some(WidgetKind::Dialog), Some(WidgetKind::Popover), Some(WidgetKind::Notification), Some(WidgetKind::Label)] {
+        let mut host = NativeUiHost::default();
+        let mut patches = vec![
+            create(1, None, 0, WidgetKind::Column, WidgetState::ENABLED, Some("panel:fixed:padding=0"), None),
+            create(2, Some(1), 0, WidgetKind::Container, WidgetState::ENABLED, None, None),
+            create(3, Some(2), 0, WidgetKind::Row, WidgetState::ENABLED, Some("split:560:compact:form-field:padding=0"), None),
+            create(4, Some(3), 0, WidgetKind::Label, WidgetState::ENABLED, Some("Only setting"), None),
+            create(5, Some(3), 1, WidgetKind::Button, WidgetState::ENABLED, Some("Standard"), None),
+        ];
+        if let Some(kind) = trailing_kind {
+            patches.push(create(6, Some(2), 1, kind, WidgetState::ENABLED,
+                Some(match kind {
+                    WidgetKind::Label => "",
+                    WidgetKind::Popover => "panel:anchored-popup:0:0:240:160",
+                    _ => "Additional information",
+                }), None));
+        }
+        host.apply_patch(&envelope(1, patches)).unwrap();
+        let output = host.render(app(1), window(1), fixed_constraints(680, 300)).unwrap();
+        assert!(!output.commands.iter().any(|command| matches!(command,
+            DrawCommand::ThemeSurface { role: 6, .. })), "a final form row has no divider before {trailing_kind:?}");
+        let row = host.windows[&(app(1), window(1))].geometry[&widget(3)];
+        assert!(!output.commands.iter().any(|command| matches!(command,
+            DrawCommand::Fill { rect, color, .. } if *color == host.theme.palette.border
+                && rect.size.height == 1 && rect.size.width > row.size.width / 2)),
+            "the native fallback also omits the trailing rule");
+    }
+}
+
+#[test]
+fn settings_separator_refinement_preserves_table_and_explicit_rules() {
+    for classic in [false, true] {
+        let mut theme = Theme::familiar_light();
+        if classic { theme.chrome_profile = rice_ui::ChromeProfile::Redmond98; }
+        let mut host = NativeUiHost::new(theme);
+        host.apply_patch(&envelope(1, vec![
+            create(1, None, 0, WidgetKind::Column, WidgetState::ENABLED, Some("panel:fixed:padding=0"), None),
+            create(2, Some(1), 0, WidgetKind::Table, WidgetState::ENABLED, None, None),
+            create(3, Some(2), 0, WidgetKind::Row, WidgetState::ENABLED, Some("panel:padding=0"), None),
+            create(4, Some(3), 0, WidgetKind::Label, WidgetState::ENABLED, Some("First record"), None),
+            create(5, Some(2), 1, WidgetKind::Row, WidgetState::ENABLED, Some("panel:padding=0"), None),
+            create(6, Some(5), 0, WidgetKind::Label, WidgetState::ENABLED, Some("Last record"), None),
+            create(7, Some(1), 1, WidgetKind::Row, WidgetState::ENABLED, Some("panel:separator"), None),
+        ])).unwrap();
+        let output = host.render(app(1), window(1), fixed_constraints(680, 300)).unwrap();
+        let geometry = &host.windows[&(app(1), window(1))].geometry;
+        assert_eq!(output.commands.iter().filter(|command| matches!(command,
+            DrawCommand::ThemeSurface { role: 6, .. })).count(), 2);
+        for row_id in [3, 7] {
+            let row = geometry[&widget(row_id)];
+            let inset = u32::from(theme.spacing.control_x);
+            let expected = Rect {
+                origin: Point { x: row.origin.x + inset as i32, y: row.origin.y + row.size.height as i32 - 1 },
+                size: Size { width: row.size.width.saturating_sub(inset * 2), height: 1 },
+            };
+            assert!(output.commands.iter().any(|command| matches!(command,
+                DrawCommand::Fill { rect, color, radius: 0 } if *rect == expected && *color == theme.palette.border)),
+                "ordinary table and explicit separators retain their inset and bottom placement");
+        }
+    }
+}
+
+#[test]
 fn action_row_menu_and_buttons_share_chrome_and_height() {
     let mut host=NativeUiHost::default();
     host.apply_patch(&envelope(1,vec![
@@ -8164,5 +8302,221 @@ fn wrapped_action_rows_measure_their_actual_fixed_accessory_widths() {
         let point = Point {x: caption.origin.x + 2, y: caption.origin.y + 2};
         assert_eq!(host.hit_test(app(1), window(1), point).unwrap().widget, widget(4));
         assert!(host.activate_event(app(1), window(1), widget(4)).unwrap().is_some());
+    }
+}
+
+#[test]
+fn settings_slider_uses_its_painted_track_through_capture_and_thumb_grabs() {
+    for themed in [false, true] {
+        let mut host = NativeUiHost::default();
+        if themed {
+            host.theme.control_chrome.metrics_mask = 0x38;
+            host.theme.control_chrome.metrics[3] = 8;
+            host.theme.control_chrome.metrics[4] = 28;
+            host.theme.control_chrome.metrics[5] = 20;
+        }
+        host.apply_patch(&envelope(1, vec![
+            create(1,None,0,WidgetKind::Row,WidgetState::ENABLED,Some("split:560:compact:form-field:padding=0:control-for=4"),None),
+            create(2,Some(1),0,WidgetKind::Label,WidgetState::ENABLED,Some("Taskbar opacity"),None),
+            create(3,Some(1),1,WidgetKind::Row,WidgetState::ENABLED,Some("panel:actions:padding=0"),None),
+            create(4,Some(3),0,WidgetKind::Slider,WidgetState::ENABLED|WidgetState::EXPANSIVE,Some("720/1000"),None),
+            create(5,Some(3),1,WidgetKind::Label,WidgetState::ENABLED,Some("72%"),None),
+        ])).unwrap();
+        let constraints = fixed_constraints(960,100);
+        for percent in [0_u32,25,50,75,100] {
+            host.render(app(1),window(1),constraints).unwrap();
+            let rect=host.windows[&(app(1),window(1))].geometry[&widget(4)];
+            let track=super::control_chrome::slider(rect,0,1000,&host.theme).track;
+            let point=Point {x:track.origin.x+(track.size.width*percent/100) as i32,y:track.origin.y+2};
+            host.pointer_event(app(1),window(1),PointerEventKind::Down,point,1,0).unwrap();
+            host.render(app(1),window(1),constraints).unwrap();
+            let event=host.pointer_event(app(1),window(1),PointerEventKind::Up,point,1,0).unwrap().unwrap();
+            let UiEvent::ValueChanged(value)=event.event else {panic!("slider event")};
+            let position=value.split('/').next().unwrap().parse::<u32>().unwrap();
+            assert!(position.abs_diff(percent*10)<=6,"{themed}: {percent}% -> {position}");
+        }
+        // Grab off-center without a value jump, then drag beyond either end.
+        host.render(app(1),window(1),constraints).unwrap();
+        let rect=host.windows[&(app(1),window(1))].geometry[&widget(4)];
+        let parts=super::control_chrome::slider(rect,1000,1000,&host.theme);
+        let grab=Point {x:parts.thumb.origin.x+2,y:parts.thumb.origin.y+2};
+        host.pointer_event(app(1),window(1),PointerEventKind::Down,grab,1,0).unwrap();
+        let event=host.pointer_event(app(1),window(1),PointerEventKind::Up,grab,1,0).unwrap().unwrap();
+        assert!(matches!(event.event,UiEvent::ValueChanged(ref value) if value=="1000/1000"));
+        for (x,expected) in [(rect.origin.x-100,"0/1000"),(rect.origin.x+rect.size.width as i32+100,"1000/1000")] {
+            host.render(app(1),window(1),constraints).unwrap();
+            let center=Point {x:parts.track.origin.x+(parts.track.size.width/2) as i32,y:parts.track.origin.y+2};
+            host.pointer_event(app(1),window(1),PointerEventKind::Down,center,1,0).unwrap();
+            let end=Point {x,y:center.y};
+            host.pointer_event(app(1),window(1),PointerEventKind::Move,end,1,0).unwrap();
+            host.render(app(1),window(1),constraints).unwrap();
+            let event=host.pointer_event(app(1),window(1),PointerEventKind::Up,end,1,0).unwrap().unwrap();
+            assert!(matches!(event.event,UiEvent::ValueChanged(ref value) if value==expected));
+        }
+    }
+}
+
+#[test]
+fn selected_tabs_keep_their_selected_surface_while_hovered() {
+    for composite in [false,true] {
+        let mut host=NativeUiHost::default();
+        host.apply_patch(&envelope(1,vec![
+            create(1,None,0,WidgetKind::Tabs,WidgetState::ENABLED,None,None),
+            create(2,Some(1),0,if composite {WidgetKind::Row}else{WidgetKind::Button},WidgetState::ENABLED|WidgetState::SELECTED|WidgetState::HOVERED,
+                Some(if composite {"panel:tab:browser-tab:control-for=3"}else{"Active"}),None),
+            create(3,Some(2),0,WidgetKind::Button,WidgetState::ENABLED,Some("Active"),None),
+        ])).unwrap();
+        let output=host.render(app(1),window(1),fixed_constraints(640,80)).unwrap();
+        assert!(output.commands.iter().any(|command|matches!(command,DrawCommand::ThemeSurface{role:1,state:5,..})),"Active tab keeps its selected face while hovered: composite={composite}");
+    }
+}
+
+#[test]
+fn collection_selection_remains_selected_under_pointer_hover() {
+    for (parent,kind,role) in [(WidgetKind::List,WidgetKind::Button,14),(WidgetKind::IconGrid,WidgetKind::Button,15),(WidgetKind::List,WidgetKind::TreeItem,17)] {
+        let mut host=NativeUiHost::default();
+        host.apply_patch(&envelope(1,vec![
+            create(1,None,0,parent,WidgetState::ENABLED,None,None),
+            create(2,Some(1),0,kind,WidgetState::ENABLED|WidgetState::SELECTED|WidgetState::HOVERED,Some("Documents"),Some(IconId::Folder)),
+        ])).unwrap();
+        let output=host.render(app(1),window(1),fixed_constraints(480,160)).unwrap();
+        assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::ThemeSurface{role:r,state:5,..}if *r==role)),"Selection must not disappear under hover for {kind:?}");
+    }
+}
+
+#[test]
+fn familiar_toolbar_uses_the_same_chrome_plane_as_menu_bar() {
+    let mut host=NativeUiHost::default();host.theme.chrome_profile=ChromeProfile::Familiar;
+    let chrome=rice_ui::Color::opaque(174,176,195);let field=rice_ui::Color::opaque(255,247,232);
+    host.theme.palette.surface=chrome;host.theme.palette.surface_raised=field;
+    host.apply_patch(&envelope(1,vec![create(1,None,0,WidgetKind::ToolBar,WidgetState::ENABLED,None,None)])).unwrap();
+    let output=host.render(app(1),window(1),fixed_constraints(480,30)).unwrap();
+    assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{color,..}if *color==chrome)));
+    assert!(!output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{color,..}if *color==field)));
+}
+
+#[test]
+fn hovered_tab_close_does_not_paint_an_independent_button_face() {
+    let mut host=NativeUiHost::default();
+    host.apply_patch(&envelope(1,vec![
+        create(1,None,0,WidgetKind::Tabs,WidgetState::ENABLED,None,None),
+        create(2,Some(1),0,WidgetKind::Row,WidgetState::ENABLED|WidgetState::SELECTED,Some("panel:tab:browser-tab:control-for=3"),None),
+        create(3,Some(2),0,WidgetKind::Button,WidgetState::ENABLED|WidgetState::FLAT,Some("Shell"),None),
+        create(4,Some(2),1,WidgetKind::Button,WidgetState::ENABLED|WidgetState::FLAT|WidgetState::HOVERED,Some("panel:tab-close"),Some(IconId::Close)),
+    ])).unwrap();
+    let output=host.render(app(1),window(1),fixed_constraints(640,100)).unwrap();
+    let close=host.windows[&(app(1),window(1))].geometry[&widget(4)];
+    assert!(!output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{rect,..}|DrawCommand::Border{rect,..}|DrawCommand::ShapedFill{rect,..}|DrawCommand::ShapedBorder{rect,..}if *rect==close)));
+    assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Icon{icon:IconId::Close,..})));
+}
+
+#[test]
+fn popup_separators_keep_their_rules_above_semantic_separator_skins() {
+    let mut host=NativeUiHost::default();host.theme.chrome_profile=ChromeProfile::Familiar;
+    host.apply_patch(&envelope(1,vec![
+        create(1,None,0,WidgetKind::Column,WidgetState::ENABLED,None,None),
+        create(10,Some(1),0,WidgetKind::Menu,WidgetState::ENABLED,Some("Context"),None),
+        create(11,Some(10),0,WidgetKind::MenuItem,WidgetState::ENABLED|WidgetState::HOVERED,Some("Open"),None),
+        create(12,Some(10),1,WidgetKind::MenuItem,WidgetState::empty(),Some("menu:separator"),None),
+        create(13,Some(10),2,WidgetKind::MenuItem,WidgetState::ENABLED,Some("Copy"),None),
+    ])).unwrap();
+    host.windows.get_mut(&(app(1),window(1))).unwrap().opened_menu=Some(widget(10));
+    let output=host.render(app(1),window(1),fixed_constraints(640,480)).unwrap();
+    let popup=&output.commands[output.popup.unwrap().command_start as usize..];
+    let index=popup.iter().position(|c|matches!(c,DrawCommand::ThemeSurface{role:6,..})).unwrap();
+    let rect=match popup[index] {DrawCommand::ThemeSurface{rect,..}=>rect,_=>unreachable!()};
+    assert_eq!(rect.size.height,2);
+    assert!(matches!(popup[index+1],DrawCommand::Fill{rect:r,..} if r.origin==rect.origin && r.size.height==1));
+    assert!(matches!(popup[index+2],DrawCommand::Fill{rect:r,..} if r.origin.y==rect.origin.y+1 && r.size.height==1));
+    assert_eq!(popup.iter().filter(|c|matches!(c,DrawCommand::ThemeSurface{role:3,..})).count(),2,"Rules must never be repainted as menu items");
+    assert!(popup.iter().any(|c|matches!(c,DrawCommand::ThemeSurface{role:3,state:1,..})),"Enabled commands keep hover feedback");
+}
+
+#[test]
+fn context_menu_commands_fit_short_viewports_and_wheel_reaches_the_last_action() {
+    for (profile,control,row,expected) in [(ChromeProfile::Familiar,26,26,26),(ChromeProfile::Orchard,34,0,28),(ChromeProfile::CommandDeck,34,0,28)] {
+        let mut theme=Theme::familiar_light();theme.chrome_profile=profile;theme.metrics.control_height=control;theme.metrics.menu_row_height=row;
+        let mut host=NativeUiHost::default();host.theme=theme;
+        let mut patches=vec![create(1,None,0,WidgetKind::Column,WidgetState::ENABLED,None,None),create(10,Some(1),0,WidgetKind::Menu,WidgetState::ENABLED,Some("Context"),None)];
+        for i in 0..18 {patches.push(create(20+i,Some(10),i as u32,WidgetKind::MenuItem,WidgetState::ENABLED,Some("Command"),Some(IconId::Folder)));}
+        host.apply_patch(&envelope(1,patches)).unwrap();
+        {let w=host.windows.get_mut(&(app(1),window(1))).unwrap();w.opened_menu=Some(widget(10));w.popup_anchor=Some(Point{x:180,y:240});}
+        let constraints=fixed_constraints(600,300);
+        let output=host.render(app(1),window(1),constraints).unwrap();let popup=output.popup.unwrap().rect;
+        assert!(popup.origin.y>=0&&popup.origin.y+popup.size.height as i32<=300);
+        let first=host.windows[&(app(1),window(1))].geometry[&widget(20)];assert_eq!(first.size.height,expected);
+        assert!(!host.windows[&(app(1),window(1))].geometry.contains_key(&widget(37)));
+        let p=Point{x:popup.origin.x+30,y:popup.origin.y+30};
+        for _ in 0..25 {host.pointer_event(app(1),window(1),PointerEventKind::Wheel,p,5,0).unwrap();host.render(app(1),window(1),constraints).unwrap();}
+        let last=host.windows[&(app(1),window(1))].geometry[&widget(37)];assert!(last.origin.y+last.size.height as i32<=300,"The last action remains visible and clickable");
+    }
+}
+
+#[test]
+fn color_swatches_never_receive_an_opaque_command_button_skin() {
+    for kind in [WidgetKind::Button,WidgetKind::MenuItem,WidgetKind::Container] {
+        for state in [WidgetState::empty(),WidgetState::SELECTED,WidgetState::HOVERED] {
+            let mut host=NativeUiHost::default();
+            host.apply_patch(&envelope(1,vec![create(1,None,0,kind,WidgetState::ENABLED|state,Some("color-swatch:#ffc66d"),None)])).unwrap();
+            let output=host.render(app(1),window(1),fixed_constraints(28,28)).unwrap();
+            assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{color,..}if *color==rice_ui::Color::opaque(255,198,109))));
+            assert!(!output.commands.iter().any(|c|matches!(c,DrawCommand::ThemeSurface{..})),"A surface skin would cover the swatch: {kind:?} {state:?}");
+            assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Border{width,..}if *width==if state.contains(WidgetState::SELECTED){3}else{1})));
+        }
+    }
+}
+
+#[test]
+fn mail_unread_sender_and_subject_are_bold_with_a_contrasting_selected_marker() {
+    for mut theme in [Theme::familiar_light(), Theme::ricewm_dark()] {
+        for classic in [false, true] {
+            if classic { theme.chrome_profile = rice_ui::ChromeProfile::Redmond98; }
+            for selected in [false, true] {
+                for unread in [false, true] {
+                    let mut host = NativeUiHost::new(theme);
+                    let mut state = WidgetState::ENABLED | WidgetState::FLAT;
+                    if unread { state = state | WidgetState::EMPHASIZED; }
+                    if selected { state = state | WidgetState::SELECTED | WidgetState::ACCENT; }
+                    host.apply_patch(&envelope(1, vec![create(1, None, 0, WidgetKind::Button,
+                        state, Some("mail-summary:Ada\nDesign notes\nPreview\n22 Oct"), Some(IconId::MailUnread))])).unwrap();
+                    let output = host.render(app(1), window(1), fixed_constraints(320, 92)).unwrap();
+                    for label in ["Ada", "Design notes", "Preview"] {
+                        let (role, ink) = output.commands.iter().find_map(|command| match command {
+                            DrawCommand::Text { text, role, color, .. } if text == label => Some((*role, *color)), _ => None,
+                        }).unwrap();
+                        assert_eq!(role, if unread && label != "Preview" { TextRole::Emphasized } else { TextRole::Label });
+                        if unread && selected && label == "Ada" {
+                            assert!(output.commands.iter().any(|command| matches!(command,
+                                DrawCommand::Fill { rect, color, .. } if rect.size == Size { width: 6, height: 6 } && *color == ink)),
+                                "Selected unread marker must use the same contrasting ink as the sender");
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[test]
+fn mail_header_actions_keep_compact_hit_targets_beside_a_tall_avatar() {
+    for mut theme in [Theme::familiar_light(), Theme::ricewm_dark()] {
+        for classic in [false, true] {
+            if classic { theme.chrome_profile = rice_ui::ChromeProfile::Redmond98; }
+            let mut host = NativeUiHost::new(theme);
+            host.apply_patch(&envelope(1, vec![
+                create(1, None, 0, WidgetKind::Row, WidgetState::ENABLED, Some("panel:compact:mail-header"), None),
+                create(2, Some(1), 0, WidgetKind::Label, WidgetState::ENABLED, Some("mail-avatar:AL"), None),
+                create(3, Some(1), 1, WidgetKind::Label, WidgetState::ENABLED | WidgetState::EXPANSIVE, Some("Ada Lovelace"), None),
+                create(4, Some(1), 2, WidgetKind::ToolBar, WidgetState::ENABLED, Some("panel:compact:accessory-height=32:padding=0"), None),
+                create(5, Some(4), 0, WidgetKind::Button, WidgetState::ENABLED | WidgetState::DISPLAY, Some(""), Some(IconId::MailReply)),
+                create(6, Some(4), 1, WidgetKind::Button, WidgetState::ENABLED | WidgetState::DISPLAY, Some(""), Some(IconId::DocumentOpen)),
+            ])).unwrap();
+            let output = host.render(app(1), window(1), fixed_constraints(620, 76)).unwrap();
+            for id in [5, 6] {
+                let target = output.hit_targets.iter().find(|target| target.widget == widget(id)).unwrap();
+                assert_eq!(target.rect.size, Size { width:32, height:32 }, "Actions must not stretch with the avatar");
+                assert!(target.rect.origin.y > 0, "Actions are centered beside the avatar");
+            }
+        }
     }
 }

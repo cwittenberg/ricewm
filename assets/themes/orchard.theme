@@ -2,45 +2,43 @@
   "$schema": "ricewm.theme/v2",
   "name": "Orchard",
   "version": 1,
-  "description": "Airy blue and white, softly frosted sidebars, and clear rounded controls.",
+  "description": "A complete Orchard desktop: clear glass, unified navigation, colorful icons and coordinated light and dark appearances.",
   "appearance": {
     "chrome.profile": "orchard",
     "material": "liquid-glass",
-    "corner.radius": "18",
+    "corner.radius": "14",
     "sidebar.material": "glass",
     "taskbar.bar": "e6f0fa",
     "taskbar.ridge": "ffffff",
     "taskbar.start": "007aff",
     "taskbar.task": "f5f9ff",
     "taskbar.tray": "dceaf7",
-    "taskbar.text": "1d2935",
+    "taskbar.text": "202126",
     "accent": "0088ff",
-    "icon": "1679bd",
-    "icon.hover": "0069d9",
-    "icon.variant": "monochrome",
+    "icon": "535965",
+    "icon.hover": "007aff",
+    "icon.variant": "color",
     "icon.overrides": "",
-    "menu.background": "edf5fc",
+    "menu.background": "ffffff",
     "menu.alternate": "ffffff",
     "menu.separator": "c7d6e3",
     "menu.hover": "0088ff",
     "menu.selected": "0088ff",
-    "menu.text": "1d2935",
-    "frame.active": "f1f7fd",
-    "frame.inactive": "f6f9fc",
-    "frame.border": "aebdcb",
+    "menu.text": "202126",
+    "frame.active": "f5f5f7",
+    "frame.inactive": "ededf0",
+    "frame.border": "c6c6cc",
     "frame.body": "ffffff",
-    "frame.text": "1d2935",
-    "frame.control": "e7edf3",
+    "frame.text": "202126",
+    "frame.control": "ffffff",
     "frame.close": "ff5f57",
     "frame.pressed": "0088ff",
     "menu.material": "glass"
   },
   "background": {
-    "type": "gradient",
-    "start": "#e3f0ff",
-    "middle": "#b5d9ff",
-    "end": "#80baff",
-    "accent": "#0088ff"
+    "type": "image",
+    "source": "/usr/share/ricewm/wallpapers/orchard-day.svg",
+    "mode": "Crop"
   },
   "settings": {
     "dock.style": "Compact dock",
@@ -58,17 +56,1041 @@
     "appearance.frosted_ice.pointer_light": "false",
     "appearance.frosted_ice.window_content_pointer_light": "false",
     "appearance.frosted_ice.ricewm_menu_pointer_light": "false",
-    "appearance.frosted_ice.thickness": "36",
-    "appearance.frosted_ice.opacity": "68",
+    "appearance.frosted_ice.thickness": "24",
+    "appearance.frosted_ice.opacity": "78",
     "appearance.frosted_ice.blur": "72",
-    "appearance.frosted_ice.refraction": "36",
-    "appearance.frosted_ice.chroma": "6",
-    "appearance.frosted_ice.window_border": "24",
-    "appearance.frosted_ice.widget_border": "65",
+    "appearance.frosted_ice.refraction": "14",
+    "appearance.frosted_ice.chroma": "2",
+    "appearance.frosted_ice.window_border": "16",
+    "appearance.frosted_ice.widget_border": "28",
     "appearance.frosted_ice.widgets.buttons": "true",
     "appearance.frosted_ice.widgets.switches": "true",
     "appearance.frosted_ice.widgets.sliders": "true",
     "appearance.frosted_ice.widgets.scrollbars": "false",
-    "dock.magnification": "false"
+    "dock.magnification": "true",
+    "dock.top_bar.visible": "true",
+    "dock.top_bar.transparent": "true",
+    "dock.launcher.visible": "true",
+    "dock.magnification.zoom": "28",
+    "dock.magnification.spread": "38",
+    "dock.top_bar.layout": "{\"version\":1,\"tooltips\":true,\"items\":[{\"key\":\"@applications\",\"visible\":true,\"position\":0,\"icon\":\"ricewm-logo\"},{\"key\":\"@network\",\"visible\":true,\"position\":2,\"icon\":\"network\"},{\"key\":\"@audio\",\"visible\":true,\"position\":2,\"icon\":\"audio\"},{\"key\":\"@battery\",\"visible\":true,\"position\":2,\"icon\":\"battery\"},{\"key\":\"@search\",\"visible\":true,\"position\":2,\"icon\":\"search\"},{\"key\":\"@session\",\"visible\":true,\"position\":2,\"icon\":\"settings\"},{\"key\":\"@clock\",\"visible\":true,\"position\":2,\"icon\":\"clock\"}]}"
+  },
+  "shellAppearance": {
+    "menuBar": {
+      "mode": "application",
+      "showAppName": true
+    },
+    "menu": {
+      "fontSize": 13,
+      "fontWeight": 400,
+      "rootWidth": 270,
+      "cascadeWidth": 240
+    },
+    "launcher": {
+      "width": 36,
+      "icon": "ricewm-logo",
+      "iconSize": 20
+    },
+    "dock": {
+      "folders": true
+    }
+  },
+  "typography": {
+    "family": "system",
+    "titleFamily": "system",
+    "bodyPx": 13,
+    "smallPx": 11,
+    "titlePx": 13,
+    "bodyWeight": 400,
+    "titleWeight": 600,
+    "lineHeightPercent": 125
+  },
+  "metrics": {
+    "titlebarHeight": 38,
+    "controlHeight": 28,
+    "menuRowHeight": 26,
+    "cornerRadius": 7,
+    "controlPaddingX": 10,
+    "controlPaddingY": 5,
+    "scrollbarWidth": 10,
+    "scrollbarArrowSize": 0,
+    "scrollbarInset": 2,
+    "scrollbarThumbMin": 28,
+    "tabHeight": 30,
+    "tabPaddingX": 14,
+    "tabGap": 3,
+    "focusWidth": 2,
+    "borderWidth": 1,
+    "sliderTrackHeight": 4,
+    "sliderThumbWidth": 18,
+    "sliderThumbHeight": 18,
+    "checkboxSize": 15,
+    "radioSize": 15,
+    "switchWidth": 34,
+    "switchHeight": 21,
+    "switchInset": 2
+  },
+  "windowDecorations": {
+    "controlBoxPosition": "Left",
+    "controlOrder": [
+      "close",
+      "minimize",
+      "maximize"
+    ],
+    "controlBoxEdgeInset": 12,
+    "titleAlignment": "center",
+    "showTitleIcon": false,
+    "frameBorderWidth": 1,
+    "captionWidth": 20,
+    "captionHeight": 20,
+    "captionGap": 2
+  },
+  "treeView": {
+    "expander": "chevron",
+    "lines": "none",
+    "indent": 18,
+    "expanderSize": 10,
+    "rootLines": false
+  },
+  "surfaceSkins": {
+    "button": {
+      "normal": {
+        "background": "#ffffffb8",
+        "radius": 7,
+        "border": {
+          "color": "#00000015",
+          "width": 1
+        }
+      },
+      "hover": {
+        "background": "#0000000b"
+      },
+      "pressed": {
+        "background": "#007aff30"
+      }
+    },
+    "toolbarButton": {
+      "normal": {
+        "background": "transparent",
+        "radius": 7
+      },
+      "hover": {
+        "background": "#0000000b"
+      },
+      "pressed": {
+        "background": "#007aff30"
+      }
+    },
+    "input": {
+      "normal": {
+        "background": "#ffffffcc",
+        "radius": 7,
+        "border": {
+          "color": "#00000015",
+          "width": 1
+        }
+      }
+    },
+    "menu": {
+      "normal": {
+        "background": "#fafafaf0",
+        "foreground": "#242429",
+        "radius": 10,
+        "border": {
+          "color": "#00000015",
+          "width": 1
+        }
+      }
+    },
+    "menuItem": {
+      "normal": {
+        "radius": 5
+      },
+      "selected": {
+        "background": "#007aff",
+        "foreground": "#ffffff"
+      },
+      "hover": {
+        "background": "#007aff",
+        "foreground": "#ffffff"
+      }
+    },
+    "notification": {
+      "normal": {
+        "background": "#fafafaf0",
+        "foreground": "#242429",
+        "radius": 16,
+        "border": {
+          "color": "#00000015",
+          "width": 1
+        }
+      }
+    },
+    "navigationItem": {
+      "normal": {
+        "radius": 6
+      },
+      "selected": {
+        "background": "#00000010"
+      }
+    },
+    "runningIndicator": {
+      "normal": {
+        "background": "#42424a",
+        "radius": 2
+      },
+      "selected": {
+        "background": "#25252a",
+        "radius": 2
+      }
+    },
+    "scrollbarTrackVertical": {
+      "normal": {
+        "background": "transparent"
+      }
+    },
+    "scrollbarTrackHorizontal": {
+      "normal": {
+        "background": "transparent"
+      }
+    },
+    "scrollbarThumbVertical": {
+      "normal": {
+        "background": "#00000050",
+        "radius": 5
+      }
+    },
+    "scrollbarThumbHorizontal": {
+      "normal": {
+        "background": "#00000050",
+        "radius": 5
+      }
+    },
+    "windowTitle": {
+      "normal": {
+        "background": "#f4f4f6f0",
+        "foreground": "#777780",
+        "radius": 0,
+        "border": {
+          "color": "#0000000c",
+          "width": 1,
+          "edges": [
+            "bottom"
+          ]
+        }
+      },
+      "selected": {
+        "background": "#fbfbfcf0",
+        "foreground": "#1d1d20"
+      }
+    }
+  },
+  "palettes": [
+    {
+      "id": "light",
+      "name": "Light \u00b7 Clear",
+      "appearance": {
+        "taskbar.bar": "e6f0fa",
+        "taskbar.ridge": "ffffff",
+        "taskbar.start": "007aff",
+        "taskbar.task": "f5f9ff",
+        "taskbar.tray": "dceaf7",
+        "taskbar.text": "202126",
+        "menu.background": "ffffff",
+        "menu.alternate": "ffffff",
+        "menu.separator": "c7d6e3",
+        "menu.hover": "0088ff",
+        "menu.selected": "0088ff",
+        "menu.text": "202126",
+        "frame.active": "f5f5f7",
+        "frame.inactive": "ededf0",
+        "frame.border": "c6c6cc",
+        "frame.body": "ffffff",
+        "frame.text": "202126",
+        "frame.control": "ffffff",
+        "frame.close": "ff5f57",
+        "frame.pressed": "0088ff"
+      },
+      "surfaceSkins": {
+        "button": {
+          "normal": {
+            "background": "#ffffffb8",
+            "radius": 7,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          },
+          "hover": {
+            "background": "#0000000b"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "toolbarButton": {
+          "normal": {
+            "background": "transparent",
+            "radius": 7
+          },
+          "hover": {
+            "background": "#0000000b"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "input": {
+          "normal": {
+            "background": "#ffffffcc",
+            "radius": 7,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "menu": {
+          "normal": {
+            "background": "#fafafaf0",
+            "foreground": "#242429",
+            "radius": 10,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "menuItem": {
+          "normal": {
+            "radius": 5
+          },
+          "selected": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          },
+          "hover": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          }
+        },
+        "notification": {
+          "normal": {
+            "background": "#fafafaf0",
+            "foreground": "#242429",
+            "radius": 16,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "navigationItem": {
+          "normal": {
+            "radius": 6
+          },
+          "selected": {
+            "background": "#00000010"
+          }
+        },
+        "runningIndicator": {
+          "normal": {
+            "background": "#42424a",
+            "radius": 2
+          },
+          "selected": {
+            "background": "#25252a",
+            "radius": 2
+          }
+        },
+        "scrollbarTrackVertical": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarTrackHorizontal": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarThumbVertical": {
+          "normal": {
+            "background": "#00000050",
+            "radius": 5
+          }
+        },
+        "scrollbarThumbHorizontal": {
+          "normal": {
+            "background": "#00000050",
+            "radius": 5
+          }
+        },
+        "windowTitle": {
+          "normal": {
+            "background": "#f4f4f6f0",
+            "foreground": "#777780",
+            "radius": 0,
+            "border": {
+              "color": "#0000000c",
+              "width": 1,
+              "edges": [
+                "bottom"
+              ]
+            }
+          },
+          "selected": {
+            "background": "#fbfbfcf0",
+            "foreground": "#1d1d20"
+          }
+        }
+      },
+      "wallpaper": "orchard-day",
+      "settings": {
+        "appearance.frosted_ice.opacity": "72",
+        "appearance.frosted_ice.refraction": "14",
+        "appearance.frosted_ice.chroma": "2"
+      }
+    },
+    {
+      "id": "dark",
+      "name": "Dark \u00b7 Clear",
+      "appearance": {
+        "taskbar.bar": "252529",
+        "taskbar.ridge": "55555b",
+        "taskbar.start": "0a84ff",
+        "taskbar.task": "353539",
+        "taskbar.tray": "29292e",
+        "taskbar.text": "f5f5f7",
+        "menu.background": "1e1e22",
+        "menu.alternate": "323237",
+        "menu.separator": "49494f",
+        "menu.hover": "0a84ff",
+        "menu.selected": "0a84ff",
+        "menu.text": "f1f1f4",
+        "frame.active": "303035",
+        "frame.inactive": "252529",
+        "frame.border": "515157",
+        "frame.body": "1e1e22",
+        "frame.text": "f1f1f4",
+        "frame.control": "2a2a2e",
+        "frame.close": "ff5f57",
+        "frame.pressed": "0a84ff",
+        "accent": "0a84ff",
+        "icon": "d5d5dc",
+        "icon.hover": "409cff"
+      },
+      "surfaceSkins": {
+        "button": {
+          "normal": {
+            "background": "#ffffff12",
+            "radius": 7,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          },
+          "hover": {
+            "background": "#ffffff1c"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "toolbarButton": {
+          "normal": {
+            "background": "transparent",
+            "radius": 7
+          },
+          "hover": {
+            "background": "#ffffff1c"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "input": {
+          "normal": {
+            "background": "#11111466",
+            "radius": 7,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "menu": {
+          "normal": {
+            "background": "#29292de8",
+            "foreground": "#f1f1f4",
+            "radius": 10,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "menuItem": {
+          "normal": {
+            "radius": 5
+          },
+          "selected": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          },
+          "hover": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          }
+        },
+        "notification": {
+          "normal": {
+            "background": "#29292deb",
+            "foreground": "#f1f1f4",
+            "radius": 16,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "navigationItem": {
+          "normal": {
+            "radius": 6
+          },
+          "selected": {
+            "background": "#ffffff23"
+          }
+        },
+        "runningIndicator": {
+          "normal": {
+            "background": "#e4e4e7",
+            "radius": 2
+          },
+          "selected": {
+            "background": "#ffffff",
+            "radius": 2
+          }
+        },
+        "scrollbarTrackVertical": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarTrackHorizontal": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarThumbVertical": {
+          "normal": {
+            "background": "#ffffff55",
+            "radius": 5
+          }
+        },
+        "scrollbarThumbHorizontal": {
+          "normal": {
+            "background": "#ffffff55",
+            "radius": 5
+          }
+        },
+        "windowTitle": {
+          "normal": {
+            "background": "#29292df0",
+            "foreground": "#a4a4ac",
+            "radius": 0,
+            "border": {
+              "color": "#ffffff12",
+              "width": 1,
+              "edges": [
+                "bottom"
+              ]
+            }
+          },
+          "selected": {
+            "background": "#252529f0",
+            "foreground": "#f3f3f5"
+          }
+        }
+      },
+      "wallpaper": "orchard-night",
+      "settings": {
+        "appearance.frosted_ice.opacity": "72",
+        "appearance.frosted_ice.refraction": "14",
+        "appearance.frosted_ice.chroma": "2"
+      }
+    },
+    {
+      "id": "light-tinted",
+      "name": "Light \u00b7 Tinted",
+      "appearance": {
+        "taskbar.bar": "e6f0fa",
+        "taskbar.ridge": "ffffff",
+        "taskbar.start": "007aff",
+        "taskbar.task": "f5f9ff",
+        "taskbar.tray": "dceaf7",
+        "taskbar.text": "202126",
+        "menu.background": "ffffff",
+        "menu.alternate": "ffffff",
+        "menu.separator": "c7d6e3",
+        "menu.hover": "0088ff",
+        "menu.selected": "0088ff",
+        "menu.text": "202126",
+        "frame.active": "f5f5f7",
+        "frame.inactive": "ededf0",
+        "frame.border": "c6c6cc",
+        "frame.body": "ffffff",
+        "frame.text": "202126",
+        "frame.control": "ffffff",
+        "frame.close": "ff5f57",
+        "frame.pressed": "0088ff"
+      },
+      "surfaceSkins": {
+        "button": {
+          "normal": {
+            "background": "#ffffffb8",
+            "radius": 7,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          },
+          "hover": {
+            "background": "#0000000b"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "toolbarButton": {
+          "normal": {
+            "background": "transparent",
+            "radius": 7
+          },
+          "hover": {
+            "background": "#0000000b"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "input": {
+          "normal": {
+            "background": "#ffffffcc",
+            "radius": 7,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "menu": {
+          "normal": {
+            "background": "#fafafaf0",
+            "foreground": "#242429",
+            "radius": 10,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "menuItem": {
+          "normal": {
+            "radius": 5
+          },
+          "selected": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          },
+          "hover": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          }
+        },
+        "notification": {
+          "normal": {
+            "background": "#fafafaf0",
+            "foreground": "#242429",
+            "radius": 16,
+            "border": {
+              "color": "#00000015",
+              "width": 1
+            }
+          }
+        },
+        "navigationItem": {
+          "normal": {
+            "radius": 6
+          },
+          "selected": {
+            "background": "#00000010"
+          }
+        },
+        "runningIndicator": {
+          "normal": {
+            "background": "#42424a",
+            "radius": 2
+          },
+          "selected": {
+            "background": "#25252a",
+            "radius": 2
+          }
+        },
+        "scrollbarTrackVertical": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarTrackHorizontal": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarThumbVertical": {
+          "normal": {
+            "background": "#00000050",
+            "radius": 5
+          }
+        },
+        "scrollbarThumbHorizontal": {
+          "normal": {
+            "background": "#00000050",
+            "radius": 5
+          }
+        },
+        "windowTitle": {
+          "normal": {
+            "background": "#f4f4f6fa",
+            "foreground": "#777780",
+            "radius": 0,
+            "border": {
+              "color": "#0000000c",
+              "width": 1,
+              "edges": [
+                "bottom"
+              ]
+            }
+          },
+          "selected": {
+            "background": "#fbfbfcfa",
+            "foreground": "#1d1d20"
+          }
+        }
+      },
+      "wallpaper": "orchard-day",
+      "settings": {
+        "appearance.frosted_ice.opacity": "92",
+        "appearance.frosted_ice.refraction": "4",
+        "appearance.frosted_ice.chroma": "0"
+      }
+    },
+    {
+      "id": "dark-tinted",
+      "name": "Dark \u00b7 Tinted",
+      "appearance": {
+        "taskbar.bar": "252529",
+        "taskbar.ridge": "55555b",
+        "taskbar.start": "0a84ff",
+        "taskbar.task": "353539",
+        "taskbar.tray": "29292e",
+        "taskbar.text": "f5f5f7",
+        "menu.background": "1e1e22",
+        "menu.alternate": "323237",
+        "menu.separator": "49494f",
+        "menu.hover": "0a84ff",
+        "menu.selected": "0a84ff",
+        "menu.text": "f1f1f4",
+        "frame.active": "303035",
+        "frame.inactive": "252529",
+        "frame.border": "515157",
+        "frame.body": "1e1e22",
+        "frame.text": "f1f1f4",
+        "frame.control": "2a2a2e",
+        "frame.close": "ff5f57",
+        "frame.pressed": "0a84ff",
+        "accent": "0a84ff",
+        "icon": "d5d5dc",
+        "icon.hover": "409cff"
+      },
+      "surfaceSkins": {
+        "button": {
+          "normal": {
+            "background": "#ffffff12",
+            "radius": 7,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          },
+          "hover": {
+            "background": "#ffffff1c"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "toolbarButton": {
+          "normal": {
+            "background": "transparent",
+            "radius": 7
+          },
+          "hover": {
+            "background": "#ffffff1c"
+          },
+          "pressed": {
+            "background": "#007aff30"
+          }
+        },
+        "input": {
+          "normal": {
+            "background": "#11111466",
+            "radius": 7,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "menu": {
+          "normal": {
+            "background": "#29292de8",
+            "foreground": "#f1f1f4",
+            "radius": 10,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "menuItem": {
+          "normal": {
+            "radius": 5
+          },
+          "selected": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          },
+          "hover": {
+            "background": "#007aff",
+            "foreground": "#ffffff"
+          }
+        },
+        "notification": {
+          "normal": {
+            "background": "#29292deb",
+            "foreground": "#f1f1f4",
+            "radius": 16,
+            "border": {
+              "color": "#ffffff20",
+              "width": 1
+            }
+          }
+        },
+        "navigationItem": {
+          "normal": {
+            "radius": 6
+          },
+          "selected": {
+            "background": "#ffffff23"
+          }
+        },
+        "runningIndicator": {
+          "normal": {
+            "background": "#e4e4e7",
+            "radius": 2
+          },
+          "selected": {
+            "background": "#ffffff",
+            "radius": 2
+          }
+        },
+        "scrollbarTrackVertical": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarTrackHorizontal": {
+          "normal": {
+            "background": "transparent"
+          }
+        },
+        "scrollbarThumbVertical": {
+          "normal": {
+            "background": "#ffffff55",
+            "radius": 5
+          }
+        },
+        "scrollbarThumbHorizontal": {
+          "normal": {
+            "background": "#ffffff55",
+            "radius": 5
+          }
+        },
+        "windowTitle": {
+          "normal": {
+            "background": "#29292dfa",
+            "foreground": "#a4a4ac",
+            "radius": 0,
+            "border": {
+              "color": "#ffffff12",
+              "width": 1,
+              "edges": [
+                "bottom"
+              ]
+            }
+          },
+          "selected": {
+            "background": "#252529fa",
+            "foreground": "#f3f3f5"
+          }
+        }
+      },
+      "wallpaper": "orchard-night",
+      "settings": {
+        "appearance.frosted_ice.opacity": "92",
+        "appearance.frosted_ice.refraction": "4",
+        "appearance.frosted_ice.chroma": "0"
+      }
+    }
+  ],
+  "defaultPalette": "light",
+  "wallpapers": [
+    {
+      "id": "orchard-day",
+      "name": "Orchard Coast \u2014 Day",
+      "source": "/usr/share/ricewm/wallpapers/orchard-day.svg",
+      "credit": "Original RiceWM artwork",
+      "mode": "Crop"
+    },
+    {
+      "id": "orchard-night",
+      "name": "Orchard Coast \u2014 Night",
+      "source": "/usr/share/ricewm/wallpapers/orchard-night.svg",
+      "credit": "Original RiceWM artwork",
+      "mode": "Crop"
+    }
+  ],
+  "defaultWallpaper": "orchard-day",
+  "motion": {
+    "window.open": {
+      "preset": "Fade",
+      "duration": 160
+    },
+    "window.close": {
+      "preset": "Fade",
+      "duration": 120
+    },
+    "menu.open": {
+      "preset": "Fade",
+      "duration": 100
+    },
+    "menu.close": {
+      "preset": "Fade",
+      "duration": 80
+    },
+    "notification.open": {
+      "preset": "Fade",
+      "duration": 180
+    },
+    "notification.close": {
+      "preset": "Fade",
+      "duration": 120
+    },
+    "hover": {
+      "preset": "Fade",
+      "duration": 80
+    }
+  },
+  "icons": {
+    "folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder."
+    },
+    "documents": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/><path d=\"M25 28h15v20H25Z\" fill=\"#fff\" opacity=\".85\"/><path d=\"M28 33h9m-9 4h9m-9 4h6\" stroke=\"#409dea\" stroke-width=\"1.5\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder artwork."
+    },
+    "downloads": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/><path d=\"M29 28h6v10h7L32 48 22 38h7Z\" fill=\"#fff\" opacity=\".85\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder artwork."
+    },
+    "pictures": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/><rect x=\"20\" y=\"29\" width=\"24\" height=\"18\" rx=\"2\" fill=\"#fff\" opacity=\".85\"/><path d=\"m22 44 6-7 5 5 4-6 5 8Z\" fill=\"#409dea\"/><circle cx=\"26\" cy=\"33\" r=\"2\" fill=\"#409dea\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder artwork."
+    },
+    "home-folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/><path d=\"m21 38 11-10 11 10h-3v11H24V38Zm8 4v7h6v-7Z\" fill=\"#fff\" opacity=\".85\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder artwork."
+    },
+    "desktop-folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"f\" x2=\"0\" y2=\"1\"><stop stop-color=\"#7bd9ff\"/><stop offset=\"1\" stop-color=\"#268ff2\"/></linearGradient></defs><path d=\"M5 19a5 5 0 0 1 5-5h17l6 6h21a5 5 0 0 1 5 5v28H5Z\" fill=\"#1590dc\"/><rect x=\"5\" y=\"22\" width=\"54\" height=\"32\" rx=\"5\" fill=\"url(#f)\"/><path d=\"M10 23h44\" stroke=\"#fff\" stroke-opacity=\".55\"/><rect x=\"20\" y=\"28\" width=\"25\" height=\"17\" rx=\"2\" fill=\"#fff\" opacity=\".85\"/><path d=\"M32 45v5m-7 0h14\" stroke=\"#fff\" stroke-width=\"2\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard folder artwork."
+    },
+    "terminal": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#24252c\"/><stop offset=\"1\" stop-color=\"#24252c\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><path d=\"m17 22 11 10-11 10m16 0h13\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "settings": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#8b94a5\"/><stop offset=\"1\" stop-color=\"#8b94a5\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><circle cx=\"32\" cy=\"32\" r=\"15\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><circle cx=\"32\" cy=\"32\" r=\"6\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M32 11v6m0 30v6M11 32h6m30 0h6M17 17l4 4m22 22 4 4m0-30-4 4M21 43l-4 4\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "mail": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#148cff\"/><stop offset=\"1\" stop-color=\"#148cff\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><rect x=\"14\" y=\"20\" width=\"36\" height=\"26\" rx=\"3\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"m15 22 17 13 17-13\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "inbox": "mail",
+    "mail-unread": "mail",
+    "mail-read": "mail",
+    "bowl": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#13b8e8\"/><stop offset=\"1\" stop-color=\"#13b8e8\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><circle cx=\"32\" cy=\"32\" r=\"19\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"m39 23-4 13-13 6 5-15Z\" fill=\"#fff\"/><path d=\"m39 23-4 13-8-9Z\" fill=\"#f85a68\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "calendar": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#f75b65\"/><stop offset=\"1\" stop-color=\"#f75b65\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><rect x=\"12\" y=\"22\" width=\"40\" height=\"29\" rx=\"4\" fill=\"#fff\"/><path d=\"M12 23h40\" stroke=\"#fff\" stroke-width=\"2\"/><path d=\"M23 31h7l-6 12m14-12v12\" fill=\"none\" stroke=\"#333540\" stroke-width=\"3\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "calculator": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#ed9b31\"/><stop offset=\"1\" stop-color=\"#ed9b31\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><rect x=\"17\" y=\"13\" width=\"30\" height=\"38\" rx=\"4\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/><path d=\"M22 23h20M23 32h2m8 0h2m6 0h1m-19 9h2m8 0h2m6 0h1\" fill=\"none\" stroke=\"#fff\" stroke-width=\"3\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "text": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#e7e9f0\"/><stop offset=\"1\" stop-color=\"#e7e9f0\" stop-opacity=\".72\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><rect x=\"4.5\" y=\"4.5\" width=\"55\" height=\"55\" rx=\"12.5\" fill=\"none\" stroke=\"#fff\" stroke-opacity=\".3\"/><path d=\"M20 16h24v33H20Z\" fill=\"#fff\"/><path d=\"M25 25h14m-14 6h14m-14 6h11\" stroke=\"#8b91a1\" stroke-width=\"2\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    },
+    "trash": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"b\" x2=\"1\" y2=\"0\"><stop stop-color=\"#a6abb7\"/><stop offset=\".5\" stop-color=\"#f1f3f7\"/><stop offset=\"1\" stop-color=\"#9a9fac\"/></linearGradient></defs><path d=\"m16 19 4 36h24l4-36Z\" fill=\"url(#b)\" stroke=\"#9399a7\"/><ellipse cx=\"32\" cy=\"19\" rx=\"17\" ry=\"4\" fill=\"#e1e5ec\" stroke=\"#9399a7\"/><path d=\"M25 25v24m7-24v24m7-24v24\" stroke=\"#8b92a0\" stroke-width=\"2\"/></svg>",
+      "monochrome": false
+    },
+    "app:native:rice-files": "files",
+    "app:native:rice-settings": "settings",
+    "app:native:rice-box": "mail",
+    "app:native:rice-term": "terminal",
+    "app:native:bowl": "bowl",
+    "app:native:rice-calc": "calculator",
+    "app:native:rice-paper": "text",
+    "files": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 64 64\"><defs><linearGradient id=\"g\" x2=\"0\" y2=\"1\"><stop stop-color=\"#6ccfff\"/><stop offset=\"1\" stop-color=\"#238aeb\"/></linearGradient></defs><rect x=\"4\" y=\"4\" width=\"56\" height=\"56\" rx=\"13\" fill=\"url(#g)\"/><path d=\"M32 4h15a13 13 0 0 1 13 13v30a13 13 0 0 1-13 13H32Z\" fill=\"#e7f3ff\"/><path d=\"M19 23v6m26-6v6m-23 11q10 8 20 0\" fill=\"none\" stroke=\"#144a78\" stroke-width=\"3\" stroke-linecap=\"round\"/><path d=\"m33 16-4 18h6\" fill=\"none\" stroke=\"#144a78\" stroke-width=\"2\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Orchard artwork."
+    }
+  },
+  "quickMenu": {
+    "applications": "grid",
+    "density": "comfortable",
+    "font": "system",
+    "width": 820
   }
 }

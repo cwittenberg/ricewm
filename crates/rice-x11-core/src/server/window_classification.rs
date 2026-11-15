@@ -13,7 +13,7 @@ impl DisplayServer {
 
     pub(super) fn wm_backdrop_material_window(&self, id: ResourceId) -> bool {
         let id = output_layout::shell_replica_source(id).unwrap_or(id);
-        if id == WM_TASKBAR && self.wm_dock_style { return true; }
+        if id == WM_TASKBAR && self.wm_dock_style && !self.wm_icons_taskbar { return true; }
         self.wm_themes
             .get(usize::from(self.wm_theme))
             .is_some_and(|theme| {

@@ -47,6 +47,7 @@ export function createPictureBackgroundTools({ root, apply, choosePicture, notic
         tile.on(Message.ACTIVATE, updateTile); updateTile();
         const settings = () => {
             const result = { mode: tile.getProperty('checked') ? 'tile' : 'stretch' };
+            for(const key of ['alignment','mirror'])if(source?.[key]!==undefined)result[key]=source[key];
             for (const [key, { input, original, initial, uiToWire, minimum, maximum }] of fields) {
                 const text = input.getProperty('value').trim();
                 const value = result.mode === 'stretch' && key !== 'opacity' || text === initial ? original : uiToWire(number(text));

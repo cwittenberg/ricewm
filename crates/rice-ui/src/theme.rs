@@ -142,7 +142,53 @@ impl FrostedWidgets {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TreeViewAppearance {
+    pub expander: u8,
+    pub lines: u8,
+    pub indent: u16,
+    pub expander_size: u8,
+    pub root_lines: bool,
+    pub line_color: Color,
+    pub background: Color,
+    pub border: Color,
+    pub foreground: Color,
+}
+impl TreeViewAppearance {
+    pub const fn default_appearance() -> Self { Self { expander:0, lines:0, indent:0, expander_size:9, root_lines:true,
+        line_color:Color::opaque(128,128,128), background:Color::opaque(255,255,255), border:Color::opaque(128,128,128), foreground:Color::opaque(0,0,0) } }
+}
+
+/// Optional control part geometry. Bits distinguish explicit zero from profile defaults.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct ControlChrome {
+    pub parts: u32,
+    pub metrics_mask: u32,
+    pub metrics: [u16; 28],
+    pub states: [u16; 23],
+}
+impl ControlChrome {
+    pub const fn empty() -> Self { Self {parts:0, metrics_mask:0, metrics:[0;28], states:[0;23]} }
+    pub fn styled(&self,role:u8,state:u8)->bool {role.checked_sub(21).and_then(|i|self.states.get(usize::from(i))).is_some_and(|mask|state<16 && mask & (1<<state)!=0)}
+    pub fn metric(&self, index:usize, fallback:u32) -> u32 { if self.metrics_mask & (1<<index)!=0 {u32::from(self.metrics[index])} else {fallback} }
+    pub fn choice(&self, kind: crate::WidgetKind) -> bool {
+        let (parts, metrics) = match kind {
+            crate::WidgetKind::CheckBox => (3<<15, (1<<16)|(1<<18)|(1<<24)),
+            crate::WidgetKind::RadioButton => (3<<17, (1<<17)|(1<<18)|(1<<25)),
+            crate::WidgetKind::Toggle => (7<<19, 0x0cf8_0000),
+            _ => return false,
+        };
+        self.parts & parts != 0 || self.metrics_mask & metrics != 0
+    }
+    pub fn choice_size(&self, kind:crate::WidgetKind, fallback:u32)->u32 { self.metric(if kind==crate::WidgetKind::RadioButton {17}else{16},fallback) }
+    pub fn scrollbar(&self) -> bool { self.parts & 0x3ff != 0 || self.metrics_mask & 0x107 != 0 }
+    pub fn slider_height(&self,control_height:u32)->u32 {self.metric(5,self.metric(4,control_height*2/3)).max(self.metric(3,4))}
+    pub fn slider(&self) -> bool { self.parts & 0x1c00 != 0 || self.metrics_mask & 0x8038 != 0 }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Theme {
+    pub control_chrome: ControlChrome,
+    pub tree_view: TreeViewAppearance,
     pub palette: Palette,
     /// Popup-specific colors, kept separate so translucent launchers can sit
     /// over otherwise light application surfaces.
@@ -225,6 +271,8 @@ impl Theme {
             signal_controls: false,
             glass_sidebars: false,
             glass_menus: false,
+            tree_view: TreeViewAppearance::default_appearance(),
+            control_chrome: ControlChrome::empty(),
         }
     }
 
@@ -269,6 +317,8 @@ impl Theme {
             signal_controls: false,
             glass_sidebars: false,
             glass_menus: false,
+            tree_view: TreeViewAppearance::default_appearance(),
+            control_chrome: ControlChrome::empty(),
         }
     }
 
@@ -339,6 +389,8 @@ impl Theme {
             signal_controls: false,
             glass_sidebars: false,
             glass_menus: false,
+            tree_view: TreeViewAppearance::default_appearance(),
+            control_chrome: ControlChrome::empty(),
         }
     }
 
@@ -382,6 +434,8 @@ impl Theme {
             signal_controls: false,
             glass_sidebars: false,
             glass_menus: false,
+            tree_view: TreeViewAppearance::default_appearance(),
+            control_chrome: ControlChrome::empty(),
         }
     }
 }
@@ -507,4 +561,11 @@ impl Theme {
         let (r,g,b) = if dark { dark_inks } else { light_inks }[usize::from(slot % 8)];
         Color::opaque(r,g,b)
     }
+}
+
+impl Theme {
+    pub fn tree_boxed_expander(&self) -> bool { self.tree_view.expander == 2 || self.tree_view.expander == 0 && self.chrome_profile == ChromeProfile::Redmond98 }
+    pub fn tree_lines(&self) -> u8 { if self.tree_view.lines == 0 { if self.chrome_profile == ChromeProfile::Redmond98 {2} else {1} } else { self.tree_view.lines } }
+    pub fn tree_indent(&self) -> u32 { if self.tree_view.indent != 0 { u32::from(self.tree_view.indent) } else if self.chrome_profile == ChromeProfile::Redmond98 { u32::from(self.metrics.icon_small) } else { u32::from(self.metrics.icon_small)+u32::from(self.spacing.unit) } }
+    pub fn tree_disclosure_width(&self) -> u32 { u32::from(self.metrics.icon_small).max(u32::from(self.tree_view.expander_size)) }
 }

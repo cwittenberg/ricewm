@@ -495,6 +495,19 @@ use super::*;
             for atom_offset in (32..64).step_by(4) {
                 assert_ne!(read_u32(order, &names[atom_offset..atom_offset + 4]), 0);
             }
+            // Consumers such as FreeRDP translate physical XKB names to
+            // scancodes. Numeric placeholders make them fall back to using
+            // the X11 keycode itself, including its eight-code offset.
+            let key_names = names.len() - usize::from(names[19]) * 4;
+            for (keycode, expected) in [
+                (27u8, *b"AD04"), (40, *b"AC03"), (33, *b"AD10"),
+                (13, *b"AE04"), (11, *b"AE02"), (36, *b"RTRN"),
+                (37, *b"LCTL"), (105, *b"RCTL"), (108, *b"RALT"),
+                (110, *b"HOME"), (111, *b"UP\0\0"), (104, *b"KPEN"),
+            ] {
+                let offset = key_names + usize::from(keycode - names[18]) * 4;
+                assert_eq!(&names[offset..offset + 4], &expected, "keycode {keycode}");
+            }
         }
     }
 

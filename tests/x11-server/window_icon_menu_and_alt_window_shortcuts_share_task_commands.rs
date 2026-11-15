@@ -1,5 +1,33 @@
 use super::*;
 
+#[test]
+fn paddy_task_menu_offers_logout_and_quit_for_its_application_identity() {
+    let mut server = DisplayServer::new(DisplayConfig {
+        native_window_manager: true, ..DisplayConfig::default()
+    });
+    assert!(server.replace_native_tasks(vec![WmNativeTask {
+        id: 17, workspace: 0, icon: 1, minimized: true, maximized: false,
+        active: false, title: b"Private conversation".to_vec(),
+    }]));
+    let target = WmTaskTarget::Native(17);
+    assert!(!server.wm_task_window_rows(target).contains(&WmMenuRow::WindowLogoutQuit));
+    let key = b"native:rice-paddy".iter().fold(2166136261_u32,
+        |hash, byte| (hash ^ u32::from(*byte)).wrapping_mul(16777619));
+    server.set_dock_identity(0, 17, key);
+    assert!(server.show_native_task_menu(17, 100, 120));
+    let rows = server.wm_menu_columns()[0].clone();
+    assert!(rows.contains(&WmMenuRow::WindowClose));
+    assert_eq!(rows.last(), Some(&WmMenuRow::WindowLogoutQuit));
+    assert!(server.wm_text_overlays.iter().any(|label| label.text == b"Logout & Quit"));
+    while server.drain_wm_action().is_some() {}
+    // Exercise the same menu activation path used by a taskbar context menu.
+    server.inject_key(true, 115, 0);
+    server.inject_key(true, 36, 0);
+    assert_eq!(server.drain_wm_action(), Some(WM_ACTION_TASK_LOGOUT_QUIT_PREFIX | 17));
+    server.set_dock_identity(0, 17, 1);
+    assert!(!server.wm_task_window_rows(target).contains(&WmMenuRow::WindowLogoutQuit));
+}
+
 
     #[test]
     fn window_icon_menu_and_alt_window_shortcuts_share_task_commands() {

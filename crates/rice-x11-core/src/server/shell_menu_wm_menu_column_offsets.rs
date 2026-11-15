@@ -7,7 +7,7 @@ impl DisplayServer {
         let row_height = self.wm_menu_base_row_height();
         let available_height = self.wm_menu_available_height();
         let root_rows = self.wm_root_rows();
-        let root_height = wm_menu_rows_height_with(&root_rows, row_height).min(available_height);
+        let root_height = self.wm_theme_menu_panel_height(0,&root_rows).min(available_height);
         let root_y =
             if self.wm_taskbar_edge == WmTaskbarEdge::Top || self.wm_taskbar_edge.vertical() {
                 0
@@ -24,7 +24,7 @@ impl DisplayServer {
             // already aligned with the disclosure caret.
             WmMenuLevel::Categories => {
                 let categories = self.wm_category_rows();
-                vec![root_y, fit_flyout(root_y, &categories)]
+                vec![root_y, fit_flyout(root_y+self.wm_theme_menu_insets(0).1, &categories)]
             }
             WmMenuLevel::Applications(category) => {
                 let categories = self.wm_category_rows();
@@ -32,7 +32,7 @@ impl DisplayServer {
                     .iter()
                     .position(|row| *row == WmMenuRow::Category(category))
                     .unwrap_or_default();
-                let category_y = fit_flyout(root_y, &categories);
+                let category_y = fit_flyout(root_y+self.wm_theme_menu_insets(0).1, &categories);
                 let applications = self.wm_application_rows(category);
                 let application_y = fit_flyout(
                     category_y.saturating_add(wm_menu_row_top_with(
@@ -46,12 +46,12 @@ impl DisplayServer {
             }
             WmMenuLevel::MenuFolders => {
                 let folders = self.wm_menu_folder_rows(None);
-                vec![root_y, fit_flyout(root_y, &folders)]
+                vec![root_y, fit_flyout(root_y+self.wm_theme_menu_insets(0).1, &folders)]
             }
             WmMenuLevel::MenuFolder(folder) => {
                 let chain = self.wm_menu_folder_chain(folder);
                 let mut parent_rows = self.wm_menu_folder_rows(None);
-                let mut parent_y = fit_flyout(root_y, &parent_rows);
+                let mut parent_y = fit_flyout(root_y+self.wm_theme_menu_insets(0).1, &parent_rows);
                 let mut offsets = vec![root_y, parent_y];
                 for folder in chain {
                     let folder_row = parent_rows
@@ -83,9 +83,7 @@ impl DisplayServer {
                 vec![
                     root_y,
                     fit_flyout(
-                        root_y.saturating_add(wm_menu_row_top_with(
-                            &root_rows, theme_row, row_height,
-                        )),
+                        root_y.saturating_add(self.wm_theme_menu_row_rects(0,&root_rows,1)[theme_row].1),
                         &themes,
                     ),
                 ]
@@ -128,14 +126,14 @@ impl DisplayServer {
                 if local_y < column_y {
                     continue;
                 }
-                let Some((row, mut entry)) = wm_menu_row_at_with(
-                    columns.get(column)?,
-                    local_y.saturating_sub(column_y),
-                    self.wm_menu_base_row_height(),
-                ) else { continue; };
+                let entries=columns.get(column)?;
+                let rects=self.wm_theme_menu_row_rects(column,entries,width);
+                let Some((row,&(row_x,_row_y,row_width,_)))=rects.iter().enumerate().find(|(_, (x,y,w,h))|
+                    (left+x..left+x+w).contains(&local_x) && (column_y+y..column_y+y+h).contains(&local_y)) else {continue;};
+                let mut entry=entries[row].clone();
                 if entry == WmMenuRow::WorkspaceNavigation {
-                    let within = usize::try_from(local_x).ok()?.saturating_sub(left);
-                    entry = if within < width / 2 {
+                    let within = local_x.saturating_sub(left+row_x);
+                    entry = if within < row_width / 2 {
                         WmMenuRow::PreviousWorkspace
                     } else {
                         WmMenuRow::NextWorkspace

@@ -241,6 +241,12 @@ pub(super) fn encode_request(
             writer.u8(14);
             writer.string(path, MAX_PATH_BYTES, "document path")?;
         }
+        DataProviderOperation::DocumentEdit { path, command } => {
+            validate_document_path(path).map_err(EncodeError::InvalidValue)?;
+            writer.u8(24);
+            writer.string(path, MAX_PATH_BYTES, "document path")?;
+            writer.string(command, MAX_TEXT_BYTES, "PDF edit command")?;
+        }
         DataProviderOperation::DocumentSearch {
             path,
             query,
@@ -406,6 +412,12 @@ pub(super) fn decode_request(reader: &mut Reader<'_>) -> Result<DataProviderRequ
             let path = nonempty_string(reader, MAX_PATH_BYTES, "document path")?;
             validate_document_path(&path).map_err(DecodeError::InvalidValue)?;
             DataProviderOperation::DocumentInfo { path }
+        }
+        24 => {
+            let path = nonempty_string(reader, MAX_PATH_BYTES, "document path")?;
+            validate_document_path(&path).map_err(DecodeError::InvalidValue)?;
+            let command = nonempty_string(reader, MAX_TEXT_BYTES, "PDF edit command")?;
+            DataProviderOperation::DocumentEdit { path, command }
         }
         15 => {
             let path = nonempty_string(reader, MAX_PATH_BYTES, "document path")?;
@@ -633,6 +645,7 @@ pub(super) fn encode_response(
             writer.u8(10);
             writer.string(callback_url, MAX_TEXT_BYTES, "auth callback URL")?;
         }
+        DataProviderResult::DocumentEdit { json } => {writer.u8(15);writer.string(json, 1024 * 1024, "PDF editor state")?;}
         DataProviderResult::CloudProviders { json } => {writer.u8(12);writer.string(json, MAX_TEXT_BYTES, "cloud providers")?;}
         DataProviderResult::NetworkConnectionInfo { json } => {writer.u8(11);writer.string(json, MAX_TEXT_BYTES, "network connection info")?;}
         DataProviderResult::Unavailable { reason } => {
@@ -779,6 +792,7 @@ pub(super) fn decode_response(
             validate_auth_result_url(&callback_url).map_err(DecodeError::InvalidValue)?;
             DataProviderResult::Authorization { callback_url }
         }
+        15 => DataProviderResult::DocumentEdit {json:reader.string(1024 * 1024,"PDF editor state")?},
         12 => DataProviderResult::CloudProviders {json:reader.string(MAX_TEXT_BYTES,"cloud providers")?},
         11 => DataProviderResult::NetworkConnectionInfo {json:reader.string(MAX_TEXT_BYTES,"network connection info")?},
         _ => return Err(DecodeError::InvalidValue("data provider result")),

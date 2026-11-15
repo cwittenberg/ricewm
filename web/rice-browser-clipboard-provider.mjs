@@ -52,6 +52,7 @@ export class RiceBrowserClipboardProvider {
         this.clipboard = clipboard || null;
         this.ClipboardItem = ClipboardItem_;
         this.onChange = null;
+        this.selectionListeners=new Set();
         this.selectionBridge = selectionBridge;
         this.owned = {
             clipboard: null,
@@ -59,7 +60,40 @@ export class RiceBrowserClipboardProvider {
         };
         this.selectionBridge?.setOwnerLostHandler(selection => {
             this.owned[selection] = null;
+            this.#notifySelections();
         });
+    }
+
+    /** Metadata from actual shared ownership; no speculative system reads. */
+    getSelectionState() {
+        this.selectionObservations ||= new Map();
+        const result={};
+        for(const name of ['primary','clipboard']){
+            const owned=this.owned[name];const formats=owned?.formats||(owned?[owned]:[]);
+            const previous=this.selectionObservations.get(name);
+            const changed=!previous||previous.owned!==owned&&(previous.formats.length!==formats.length||formats.some((format,index)=>{
+                const prior=previous.formats[index];return prior.mimeType!==format.mimeType||!equalBytes(prior.data,format.data);
+            }));
+            const current=changed?{owned,revision:(previous?.revision||0)+1,formats:formats.map(format=>({mimeType:format.mimeType,data:format.data.slice()}))}:previous;
+            current.owned=owned;
+            if(changed)this.selectionObservations.set(name,current);
+            result[name]={revision:current.revision,mimeTypes:current.formats.map(format=>format.mimeType)};
+        }
+        return result;
+    }
+
+    subscribeSelections(callback) {
+        if(typeof callback!=='function')throw TypeError('Clipboard observer must be a function');
+        if(this.selectionListeners.size>=128)throw RangeError('Clipboard observer bound');
+        if(!this.selectionListeners.size)this.selectionNotice=JSON.stringify(this.getSelectionState());
+        this.selectionListeners.add(callback);let active=true;
+        return()=>{if(active){active=false;this.selectionListeners.delete(callback);}};
+    }
+    #notifySelections() {
+        if(!this.selectionListeners.size)return;
+        const state=this.getSelectionState(),signature=JSON.stringify(state);
+        if(signature===this.selectionNotice)return;this.selectionNotice=signature;
+        for(const callback of this.selectionListeners){try{callback(structuredClone(state));}catch{ /* Observers cannot change clipboard acceptance. */ }}
     }
 
     get available() {
@@ -68,13 +102,31 @@ export class RiceBrowserClipboardProvider {
 
     async handle(message) {
         const request = decodeRequest(message);
-        if (request.operation === "read") return this.#read(request);
-        if (request.operation === "writeFormats") return this.#writeFormats(request);
-        return this.#write(request);
+        const result=await(request.operation==='read'?this.#read(request):request.operation==='writeFormats'?this.#writeFormats(request):this.#write(request));
+        this.#notifySelections();return result;
+    }
+
+    async readFormats(options){const result=await this.#readFormatsValue(options);this.#notifySelections();return result;}
+    async #readFormatsValue({accepted,selection='clipboard'}) {
+        if(!['clipboard','primary'].includes(selection))throw TypeError('Invalid clipboard selection');
+        if(!Array.isArray(accepted)||!accepted.length||accepted.length>64||accepted.some(type=>typeof type!=='string'||type.length>255||!type.includes('/')))throw TypeError('Choose bounded clipboard MIME types');
+        const reader=decodeVfsFrame(await this.#readFormats({request:1n,selection,accepted}),RESPONSE_KIND);
+        reader.id('request');const status=reader.u8('status');if(status===1){reader.finish();return null;}if(status!==0)throw Error('Requested clipboard formats are unavailable');
+        const mimeType=reader.text(MAX_TEXT_BYTES,'MIME'),data=reader.data(MAX_CLIPBOARD_BYTES,'data');reader.finish();return{mimeType,data};
+    }
+
+    async writeFormats(options){const result=await this.#writeFormatsValue(options);this.#notifySelections();return result;}
+    async #writeFormatsValue({formats,selection='clipboard'}) {
+        if(!['clipboard','primary'].includes(selection))throw TypeError('Invalid clipboard selection');
+        if(!Array.isArray(formats))throw TypeError('Clipboard formats must be an array');
+        for(const format of formats)if(!format||typeof format.mimeType!=='string'||!(format.data instanceof Uint8Array))throw TypeError('Clipboard formats require MIME and bytes');
+        validateFormats(formats);
+        const reader=decodeVfsFrame(await this.#writeFormats({request:1n,selection,formats}),RESPONSE_KIND);reader.id('request');const status=reader.u8('status');if(status!==0)throw Error('Clipboard write was rejected');reader.text(MAX_TEXT_BYTES,'MIME');reader.data(MAX_CLIPBOARD_BYTES,'data');reader.finish();return true;
     }
 
     /** Shared text-copy capability for shell adapters and native apps. */
-    async writeText(value, {requireHost = false} = {}) {
+    async writeText(value, options){const result=await this.#writeTextValue(value, options);this.#notifySelections();return result;}
+    async #writeTextValue(value, {requireHost = false} = {}) {
         const data = encoder.encode(String(value));
         if (data.byteLength > MAX_CLIPBOARD_BYTES) {
             throw new RangeError("clipboard text exceeds the RiceWM transfer limit");
@@ -104,7 +156,8 @@ export class RiceBrowserClipboardProvider {
     }
 
     /** Shared text-paste capability for standard native text controls. */
-    async readText() {
+    async readText(){const result=await this.#readTextValue();this.#notifySelections();return result;}
+    async #readTextValue() {
         if (typeof this.clipboard?.readText === "function") {
             try {
                 const value = await this.clipboard.readText();
@@ -144,7 +197,7 @@ export class RiceBrowserClipboardProvider {
     }
 
     async #read(request) {
-        if (request.accepted.some(type => mimeEssence(type) === "text/html") ||
+        if (request.accepted.some(type => mimeEssence(type) === "text/html" || mimeEssence(type).startsWith('application/')) ||
             (this.owned[request.selection]?.formats && request.accepted.some(type => !matchesText(type)))) return this.#readFormats(request);
         try {
             if (
@@ -216,7 +269,11 @@ export class RiceBrowserClipboardProvider {
     }
 
     async #readFormats(request) {
-        const reply = formats => {
+        const reply = (formats,systemVerified=false) => {
+            // Plain-text equality cannot authenticate a native application
+            // identity. A live browser must actually offer that representation;
+            // otherwise returning an old Cut token could move stale cells.
+            if(request.selection==='clipboard'&&this.clipboard&&!systemVerified)formats=formats?.filter(format=>!mimeEssence(format.mimeType).startsWith('application/'));
             if (!formats?.length) return encodeResponse(request.request, { result: "empty" });
             for (const accepted of request.accepted) {
                 const format = formats.find(value => mimeEssence(value.mimeType) === mimeEssence(accepted));
@@ -235,7 +292,7 @@ export class RiceBrowserClipboardProvider {
                     this.owned.clipboard = null;
                     if (!items.length) return reply([]);
                     const item = items[0];
-                    const types = item.types.filter(type => request.accepted.some(accepted => mimeEssence(accepted) === mimeEssence(type)));
+                    const types = item.types.filter(type => request.accepted.some(accepted => mimeEssence(accepted) === browserMimeEssence(type)));
                     if (types.length > 64) throw new RangeError("clipboard MIME count");
                     const formats = [];
                     let total = 0;
@@ -245,7 +302,7 @@ export class RiceBrowserClipboardProvider {
                         if (blob.size > MAX_CLIPBOARD_BYTES - total) throw new RangeError("clipboard aggregate data");
                         const data = new Uint8Array(await blob.arrayBuffer());
                         total += data.length;
-                        formats.push({ mimeType, data });
+                        formats.push({ mimeType:browserMimeEssence(mimeType), data });
                     }
                     if (formats.length) {
                         validateFormats(formats);
@@ -254,7 +311,7 @@ export class RiceBrowserClipboardProvider {
                             try { await this.selectionBridge?.write("clipboard", plain.mimeType, plain.data); } catch { /* System data remains usable. */ }
                         }
                         this.owned.clipboard = ownedFormats(formats);
-                        return reply(formats);
+                        return reply(formats,true);
                     }
                     // Some browsers grant read() but deny a particular rich
                     // representation. Try readText/shared plain data below;
@@ -298,12 +355,21 @@ export class RiceBrowserClipboardProvider {
         let accepted = false;
         let attempted = false;
         if (request.selection === "clipboard") {
-            if (typeof this.clipboard?.write === "function" && typeof this.ClipboardItem === "function") {
+            const png = formats.some(format => mimeEssence(format.mimeType) === "image/png");
+            if ((png || plain) && typeof this.clipboard?.writeFormats === "function") {
+                attempted = true;
+                try { accepted = await this.clipboard.writeFormats({ formats }) === true; } catch { /* Report image host failure below. */ }
+                // A native selection is not the host image clipboard. Never
+                // report Copy PNG success when the containing browser denied it.
+                if (png && !accepted) return encodeResponse(request.request, { result: "rejected" });
+            } else if (typeof this.clipboard?.write === "function" && typeof this.ClipboardItem === "function") {
                 attempted = true;
                 try {
                     const representations = Object.fromEntries(formats.map(format => {
-                        const mimeType = mimeEssence(format.mimeType);
-                        return [mimeType, new Blob([format.data], { type: mimeType })];
+                        const essence = mimeEssence(format.mimeType);
+                        const mimeType = essence.startsWith('application/')&&typeof this.ClipboardItem.supports==='function'
+                            &&!this.ClipboardItem.supports(essence)&&this.ClipboardItem.supports('web '+essence)?'web '+essence:essence;
+                        return [mimeType, new Blob([format.data], { type: essence })];
                     }));
                     await this.clipboard.write([new this.ClipboardItem(representations)]);
                     accepted = true;
@@ -326,7 +392,8 @@ export class RiceBrowserClipboardProvider {
         return encodeResponse(request.request, { result: "data", mimeType: fallback.mimeType, data: new Uint8Array() });
     }
 
-    async writeData(mimeType, bytes) {
+    async writeData(mimeType, bytes){const result=await this.#writeDataValue(mimeType, bytes);this.#notifySelections();return result;}
+    async #writeDataValue(mimeType, bytes) {
         const data = new Uint8Array(bytes);
         if (data.length > MAX_CLIPBOARD_BYTES) throw new RangeError("Clipboard data is too large");
         this.owned.clipboard = { mimeType, data };
@@ -464,6 +531,12 @@ function matchesText(mimeType) {
 }
 
 function mimeEssence(mimeType) { return String(mimeType).split(";", 1)[0].toLowerCase(); }
+function browserMimeEssence(mimeType) {
+    const name=String(mimeType),custom=name.startsWith('web ')?mimeEssence(name.slice(4)):null;
+    // Do not alias unsanitized custom HTML/images into a standard browser
+    // representation. Only the application MIME namespace is bridged here.
+    return custom?.startsWith('application/')?custom:mimeEssence(name);
+}
 
 function validateFormats(formats) {
     const types = new Set();

@@ -1,5 +1,7 @@
+import {RiceOverviewCarousel} from '../rice-overview-carousel.mjs';
 import {t, riceLocale} from '../rice-i18n.mjs';
 import {RiceEffectRenderer} from '../rice-effect-renderer.mjs';
+import {RiceDecorativeMotion} from '../rice-term-renderer.mjs';
 import * as CanvasRendererShared from "./shared.mjs";
 const {MAX_NATIVE_MEDIA_REQUEST_TRACKING,MAX_NATIVE_MEDIA_SURFACES,RICEWM_FIRST_MANAGED_FRAME_ID,RICEWM_GNOME_BACKGROUND_ID,RICEWM_GNOME_PANEL_ID,RICEWM_MANAGED_FRAME_ID_LIMIT,RICEWM_MENU_ID,RICEWM_NATIVE_PREVIEW_PREFIX,RICEWM_NOTIFICATION_ID,RICEWM_TASKBAR_ID,RICEWM_TASK_PREVIEW_ID,RICE_BUILTIN_MENU_ICONS,RICE_NATIVE_MEDIA_CACHE_MAX_BYTES,RICE_NATIVE_MENU_ICONS,RICE_SCENE_COMMAND_BYTES,RICE_SCENE_DAMAGE_WINDOW,RICE_SCENE_OWNED_WINDOW_STACK_FLAG,RICE_SCENE_REMOVE_WINDOW,RICE_SCENE_RESET,RICE_SCENE_RESIZABLE_WINDOW_STACK_FLAG,RICE_SCENE_STACK_INDEX_MASK,RICE_SCENE_UPSERT_WINDOW,ROOT_PARENT_SENTINEL,appendWedgedSurfacePath,defaultCancelFrame,defaultCanvasFactory,defaultRequestFrame,overviewEase,pixelColor,riceFocusOverlayRects,riceNativeMenuIconName,riceNativeTaskIconName,riceOverviewLayout,riceWindowTransitionOrigin,riceWmBarBorderPixels,sameSceneWindow,appendWindowSilhouette,RiceNativeCanvasWindow,FrostedIceMaterial,RiceGnomeEffectRenderer,riceIconName,NATIVE_ENTRYPOINTS,nativeEntrypointIconName,nativeEntrypointTitle,nativeTitlebarLayout} = CanvasRendererShared;
 let spatialX11RendererEpoch = 0;
@@ -9,6 +11,7 @@ export class RiceCanvasRendererBase {
     }
 
     set damaged(value) {
+        this.wallpaperOnlyDamage = false;
         this.terminalImageReplay = null;
         this.terminalImageOnlyDamage = false;
         this._damaged = Boolean(value);
@@ -22,6 +25,7 @@ export class RiceCanvasRendererBase {
             cancelFrame = defaultCancelFrame,
             onFrame = () => {},
             onNativeFault = () => {},
+            onNativeAccessibilityAction = null,
             onFault = () => {},
             onNativeMediaMissing = () => {},
             onNativeMediaRequestsChanged = () => {},
@@ -138,6 +142,7 @@ export class RiceCanvasRendererBase {
         this.overviewSearchVisible = true;
         this.overviewDashVisible = true;
         this.overviewWorkspacesVisible = true;
+        this.overviewCarousel = new RiceOverviewCarousel(this);
         this.overviewWorkspaceScale = 0.1;
         this.calendarActive = false;
         this.calendarFromTopBar = false;
@@ -169,6 +174,7 @@ export class RiceCanvasRendererBase {
         this.nativeCanvasWindow = new RiceNativeCanvasWindow(
             context,
             (damage, imageOnly) => {
+                this.overviewPreviewRevision = (this.overviewPreviewRevision || 0) + 1;
                 this._markNativeDamage(damage, imageOnly);
                 this.schedule();
             },
@@ -182,7 +188,7 @@ export class RiceCanvasRendererBase {
             fault => this.onNativeFault(fault),
             now,
             onDesktopIconAnimation,
-            { canvasFactory, onVisualEffectStatus },
+            { canvasFactory, onVisualEffectStatus, onAccessibilityAction:onNativeAccessibilityAction },
         );
         this.nativeCanvasWindow.paintCustomFrame=(context,native,root)=>{
             if(native.entrypoint==='rice-settings'||native.role==='desktop')return;
@@ -190,7 +196,12 @@ export class RiceCanvasRendererBase {
             this.customEffects.render(context,{width:root.width,height:root.height,target:'window-frame',
                 rects:[{x:0,y:0,width:f.width,height:f.titleHeight}],reducedMotion:native.shell?.motionEnabled===false});
         };
-        this.effectVisibilityListener=()=>{this.customEffects.pause(globalThis.document?.hidden===true);this.damaged=true;this.schedule();};
+        this.decorativeMotion = new RiceDecorativeMotion({document:canvas.ownerDocument || globalThis.document,
+            now, onWake:()=>{this.damaged=true;this.schedule();}});
+        this.nativeCanvasWindow.commandRenderer.decorativeMotion = this.decorativeMotion;
+        this.effectVisibilityListener=()=>{this.customEffects.pause(globalThis.document?.hidden===true);this._syncWindowEffectAnimation?.();this.damaged=true;this.schedule();};
+        this.windowEffectMotionQuery=globalThis.matchMedia?.('(prefers-reduced-motion: reduce)');
+        this.windowEffectMotionQuery?.addEventListener?.('change',this.effectVisibilityListener);
         globalThis.document?.addEventListener('visibilitychange',this.effectVisibilityListener);
         if (!this.shellLogo && typeof globalThis.Image === "function") {
             const logo = new globalThis.Image();
@@ -528,11 +539,22 @@ export class RiceCanvasRendererBase {
     }
 
     applyNative(snapshot) {
+        const overlayFrames=this.nativeCanvasWindow.gnomeOverlaySurfaces;
+        const panelFrames=this.nativeCanvasWindow.gnomePanelSurfaces;
         this.nativeCanvasWindow.apply(snapshot);
-        // Native snapshots own the current dock layout. Do not paint standard
-        // taskbar overlays above a compact dock while a preference message is
-        // still in flight (or when this compositor is hosted directly).
-        if (snapshot?.shell?.dockStyle) this.dockStyle = snapshot.shell.dockStyle;
+        const nextOverlayFrames=this.nativeCanvasWindow.gnomeOverlaySurfaces;
+        if(overlayFrames?.size!==nextOverlayFrames?.size||[...(nextOverlayFrames||[])].some(([key,frame])=>overlayFrames?.get(key)?.revision!==frame.revision)){
+            this.damaged=true;this.schedule();
+        }
+        const nextPanelFrames=this.nativeCanvasWindow.gnomePanelSurfaces;
+        if(panelFrames?.size!==nextPanelFrames?.size || [...(nextPanelFrames||[])].some(([key,frame])=>panelFrames?.get(key)?.revision!==frame.revision)){
+            this.damaged=true;this.schedule();
+        }
+        this.activitiesWindows = Array.isArray(snapshot?.activitiesWindows) ? snapshot.activitiesWindows : null;
+        // Window stacks can carry shell settings on their active window rather
+        // than the aggregate envelope. Use the normalized snapshot in that case.
+        const dockStyle = snapshot?.shell?.dockStyle ?? this.nativeCanvasWindow.snapshot?.shell?.dockStyle;
+        if (dockStyle) this.dockStyle = dockStyle;
         this._reconcileNativeMedia(snapshot);
         if (this.overviewActive) this.overviewItems = null;
     }
@@ -586,7 +608,7 @@ export class RiceCanvasRendererBase {
     }
 
     get shellOverlayActive() {
-        return this.overviewActive || this.calendarActive ||
+        return this.nativeCanvasWindow.gnomeKeyboardGrabbed===true || this.overviewActive || this.calendarActive ||
             this.windows.get(RICEWM_MENU_ID)?.viewable === true ||
             (this.nativeCanvasWindow.snapshot?.windows || []).some(window =>
                 window?.role === "desktop" && window.layerVisible !== false &&
@@ -680,7 +702,8 @@ export class RiceCanvasRendererBase {
         context.putImageData(image, 0, 0);
         if(frame.role==='wallpaper')this.nativeMediaWallpaperRequests.add(key);
         this._retainNativeMediaSurface(key, surface, width * height * 4);
-        this.damaged = true;
+        if (frame.role === 'wallpaper' && this._markWallpaperDamage) this._markWallpaperDamage();
+        else this.damaged = true;
         this.schedule();
         return true;
     }
@@ -700,6 +723,12 @@ export class RiceCanvasRendererBase {
             width * height > 37_748_736 ||
             surfaceWidth !== width || surfaceHeight !== height
         ) throw new RangeError("invalid native preview surface");
+        const hasLogicalSize = frame.logicalWidth !== undefined || frame.logicalHeight !== undefined;
+        if (hasLogicalSize && (!Number.isFinite(frame.logicalWidth) || frame.logicalWidth <= 0 || frame.logicalWidth > 100000
+            || !Number.isFinite(frame.logicalHeight) || frame.logicalHeight <= 0 || frame.logicalHeight > 100000)) {
+            surface.close?.();
+            throw new RangeError("invalid native page dimensions");
+        }
         const key = String(frame.request);
         if (
             this.nativeMediaRetiredRequests.has(key) ||
@@ -710,9 +739,16 @@ export class RiceCanvasRendererBase {
             return false;
         }
         if(frame.role==='wallpaper')this.nativeMediaWallpaperRequests.add(key);
+        // ImageBitmap transfer preserves pixels, not own properties. Restore
+        // native PDF page points independently of the checked raster dimensions.
+        if (hasLogicalSize) Object.defineProperties(surface, {
+            riceNativeLogicalWidth: {value: frame.logicalWidth, configurable: true},
+            riceNativeLogicalHeight: {value: frame.logicalHeight, configurable: true},
+        });
         this._retainNativeMediaSurface(key, surface, width * height * 4);
         this.nativeMediaRefreshQueue.delete(key);
-        this.damaged = true;
+        if (frame.role === 'wallpaper' && this._markWallpaperDamage) this._markWallpaperDamage();
+        else this.damaged = true;
         this.schedule();
         return true;
     }
@@ -804,7 +840,12 @@ export class RiceCanvasRendererBase {
     }
 
     setGnomeShellState(state = null) {
+        const oldBackground=JSON.stringify(this.gnomeShellState?.panel?.backgroundColor??null);
         this.gnomeShellState = state && typeof state === "object" ? state : null;
+        if(oldBackground!==JSON.stringify(this.gnomeShellState?.panel?.backgroundColor??null)){
+            const panel=this.windows.get(RICEWM_GNOME_PANEL_ID);
+            if(panel&&Array.isArray(this.damageRects))this.damageRects.push({x:panel.x,y:panel.y,width:panel.width,height:panel.height});
+        }
         const overview = this.gnomeShellState?.overview;
         const styleClasses = Array.isArray(this.gnomeShellState?.styleClasses)
             ? this.gnomeShellState.styleClasses : [];
@@ -857,11 +898,16 @@ export class RiceCanvasRendererBase {
         if (panel?.viewable && y >= panel.y && y < panel.y + panel.height) {
             const mail = this._mailIndicatorRect(panel);
             if (x >= mail.x && x < mail.x + mail.width) return "mail";
-            const clockLeft = panel.x + Math.max(0, (panel.width - 84) / 2);
-            if (x >= clockLeft && x < clockLeft + 84) return "clock";
+            const clock = this.topbarController
+                ? this.topbarController.rows.find(row => row.key === "@clock")
+                : {x: panel.x + Math.max(0, (panel.width - 84) / 2),
+                    y: panel.y, width: 84, height: panel.height};
+            if (clock && clock.width > 0 && clock.height > 0 &&
+                x >= clock.x && x < clock.x + clock.width &&
+                y >= clock.y && y < clock.y + clock.height) return "clock";
         }
         const taskbar = this.windows.get(RICEWM_TASKBAR_ID);
-        if (this.dockStyle === "Compact dock") return null;
+        if (["Compact dock", "Icons-only taskbar"].includes(this.dockStyle)) return null;
         if (!taskbar?.viewable || y < taskbar.y || y >= taskbar.y + taskbar.height) {
             return null;
         }
@@ -1326,6 +1372,8 @@ export class RiceCanvasRendererBase {
         this.overviewStartedAt = this.now();
         this.overviewTarget = next;
         if (!next) this.overviewInteraction?.cancel();
+        if (next || !this.overviewCarousel.activation) this.overviewCarousel.reset();
+        if (!next && this.overviewCarousel.enabled && this.overviewCarousel.reduced) this.overviewProgress=0;
         if (next > 0) {
             this.overviewItems = null;
             this.calendarActive = false;
@@ -1346,6 +1394,7 @@ export class RiceCanvasRendererBase {
     }
 
     setOverviewSearchQuery(query) {
+        if (this.overviewCarousel.activation) return this.overviewSearchQuery;
         this.overviewSearchQuery = Array.from(String(query || "")).slice(0, 96).join("");
         this.overviewItems = null;
         this.overviewHover = null;
@@ -1373,22 +1422,26 @@ export class RiceCanvasRendererBase {
     }
 
     selectFirstOverviewResult() {
+        if (this.overviewCarousel.activation) return null;
         const selected = this.overviewLayout.find(({ item }) =>
             this.overviewHover === `${item.kind}:${item.id}`
         )?.item;
         const first = selected || this.overviewLayout[0]?.item;
         if (!first) return null;
+        this.overviewCarousel.beginActivation(first);
         this.closeOverview();
         return Object.freeze({
             kind: first.kind,
             id: first.id,
             title: first.title,
+            ...(Number.isInteger(first.workspace) ? { workspace: first.workspace } : {}),
             ...(first.action ? { action: first.action } : {}),
             ...(first.path ? { path: first.path } : {}),
         });
     }
 
     moveOverviewSelection(direction, layout = this.overviewLayout) {
+        if (this.overviewCarousel?.enabled) return this.overviewCarousel.move(direction);
         if (!this.overviewActive || layout.length === 0) return null;
         const axis = {
             left: [-1, 0],

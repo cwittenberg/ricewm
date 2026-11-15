@@ -24,7 +24,8 @@ export function createSpeakerNotes({ save, changed, notice }) {
     const help = new Label({ name: 'speaker-notes-hint', text: 'Click to add notes' });
     const editor = new TextEditor({ name: 'speaker-notes-editor', accessibleName: 'Speaker notes',
         value: '', rows: 4, enabled: false, readOnly: true, state: State.EXPANSIVE });
-    const control = new Column({ name: 'speaker-notes-pane', text: 'panel:fixed-height:148:gap=2', visible: false }, [heading, editor, help]);
+    const editorHost = new Column({ name: 'speaker-notes-editor-host', text: 'panel:flush', state: State.EXPANSIVE }, [editor]);
+    const control = new Column({ name: 'speaker-notes-pane', text: 'panel:fixed-height:148:gap=2', visible: false }, [heading, editorHost, help]);
     const dirty = () => Boolean(slide && value !== original);
     function cancel() { if (timer !== null) clearTimeout(timer); timer = null; }
     function schedule() {
@@ -60,7 +61,7 @@ export function createSpeakerNotes({ save, changed, notice }) {
         help.text = value ? '' : 'Click to add notes'; help.setProperty('visible', !value);
         changed(); schedule();
     });
-    return Object.freeze({ control, editor,
+    return Object.freeze({ control, editor, editorHost,
         get opened() { return opened; }, get dirty() { return dirty(); },
         get committing() { return Boolean(pending); }, get slide() { return slide; },
         bind(snapshot, { preserveDraft = false } = {}) {

@@ -74,7 +74,7 @@ pub(super) fn render_tab(
         }
     };
     // Plain settings tabs keep their dimensions while selection changes.
-    let recess = if selected || stable { 0 } else { 4.min(depth) };
+    let recess = if selected || stable && theme.control_chrome.metrics_mask & (1<<12)==0 { 0 } else { theme.control_chrome.metric(12,4).min(depth) };
     let tab = local(0, recess, length, depth.saturating_sub(recess));
     let face = if selected {
         page_color(theme, browser)

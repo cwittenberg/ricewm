@@ -6,8 +6,9 @@
   "sdk": { "version": "1.0.0" },
   "description": "Prepare a bug report and review it on GitHub.",
   "entry": "app.mjs",
-  "iconName": "dialog-information",
-  "window": { "width": 580, "height": 680 },
+  "iconName": "dialog-warning",
+  "icon": "icons/report-bug-symbolic.png",
+  "window": { "width": 560, "height": 650 },
   "categories": ["Documentation", "Utility"],
   "permissions": { "services": ["host.openExternal"], "bus": {} }
 }

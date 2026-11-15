@@ -4,10 +4,13 @@ import { objectInkBounds } from './scene-ink-bounds.mjs';
 import { transformRect, unionRects } from './affine.mjs';
 import { objectShadowPlan, shadowVisualBounds, pushObjectShadow, popObjectShadow } from './shadow-render.mjs';
 import { objectCorners, linePoints, rotationHandle, previewObjects, canResize } from './canvas-geometry.mjs';
+import {deckSelectionColors,objectResizeHandles} from './selection-chrome.mjs';
+import {cellKey} from './table-values.mjs';
 
 import { textClipRect } from './text-overflow.mjs';
 import { shapeById } from './shape-catalog.mjs';
 import { paintBackgroundPicture, paintBackgroundGradient } from './background-render.mjs';
+import { glowFrameKey, glowPreviewTransform } from './glow-render.mjs';
 
 const packed = ({ color, opacity }) => {
     const rgb = Number.parseInt(color.slice(1), 16);
@@ -15,9 +18,13 @@ const packed = ({ color, opacity }) => {
 };
 
 /** Paint source-resolved vectors, native text outlines and decoded pictures. */
-export function geometryFrame(scene, { selected = [], boxes = new Map(), textFrames = new Map(), imageFrames = new Map(), lines = new Map(), rotations = new Map(), placeholderGuides = false, preview = null, selectedCell = null, editingCell = null, captureLayers = false, objectOpacity = new Map() } = {}) {
+export function geometryFrame(scene, { selected = [], boxes = new Map(), textFrames = new Map(), imageFrames = new Map(), lines = new Map(), rotations = new Map(), placeholderGuides = false, preview = null, selectedCell = null, editingCell = null, editingTextObject = null, captureLayers = false, objectOpacity = new Map(), viewScale=1, selectionTheme=null } = {}) {
     if (!scene.size) throw new Error('Slide size is inherited or unavailable; geometry cannot be placed yet');
+    if(!Number.isFinite(viewScale)||viewScale<=0)throw RangeError('Invalid selection viewport scale');
     const ratio = Math.min(1, 4096 / Math.max(scene.size.width, scene.size.height));
+    const pixel=1/(ratio*viewScale),chrome=deckSelectionColors(selectionTheme);
+    const cellEditing=object=>selectedCell?.object.id===object.id&&editingCell===cellKey(object.id,selectedCell.row,selectedCell.column);
+    const textEditing=object=>object.id===editingTextObject||cellEditing(object);
     const width = Math.max(1, Math.round(scene.size.width * ratio)), height = Math.max(1, Math.round(scene.size.height * ratio));
     const builder = new SceneBuilder(width, height).rect([0, 0, width, height], 0xffffffff);
     if (scene.background) builder.rect([0, 0, width, height], packed(scene.background));
@@ -87,6 +94,11 @@ export function geometryFrame(scene, { selected = [], boxes = new Map(), textFra
         if (!Number.isFinite(opacity) || opacity < 0 || opacity > 1) throw new RangeError('Invalid object presentation opacity');
         if (opacity !== 1) builder.pushTransform([1, 0, 0, 1, 0, 0], opacity);
         if (layer) layer.contentStart = builder.bytes;
+        const glow = imageFrames.get(glowFrameKey(object.id));
+        if (glow) {
+            const matrix = glowPreviewTransform(object, glow);
+            if (matrix) builder.pushTransform(matrix).image(textures.get(glow.key), glow.bounds).popTransform();
+        }
         let plan = plans.get(object.id);
         if (plan && (depth >= 4 || shadowScopes >= 128)) {
             unsupportedShadow(object, 'Composite shadow scope budget exceeded'); plan = null;
@@ -148,7 +160,7 @@ export function geometryFrame(scene, { selected = [], boxes = new Map(), textFra
             painted++;
         }
         const text = textFrames.get(object.id);
-        if (text && !text.placeholder) {
+        if (text && !text.placeholder && object.id!==editingTextObject) {
             const clip = textClipRect(scene, object);
             if (clip) builder.pushClip(clip);
             builder.append(text.displayList);
@@ -171,14 +183,13 @@ export function geometryFrame(scene, { selected = [], boxes = new Map(), textFra
             selectedCell?.object.id !== object.id) continue;
         const { x, y, width: w, height: h } = object.bounds;
         builder.pushTransform(object.transform);
-        if (object.table) paintTableSelection(builder, object, selectedCell);
-        if (placeholderGuides && text?.placeholder) {
+        if (placeholderGuides && text?.placeholder && object.id!==editingTextObject) {
             const clip = textClipRect(scene, object);
             if (clip) builder.pushClip(clip);
             builder.append(text.displayList);
             if (clip) builder.popClip();
         }
-        if (placeholderGuides && object.placeholder && !object.text?.text) {
+        if (placeholderGuides && object.placeholder && !object.text?.text&&!textEditing(object)) {
             const points = [[x, y], [x + w, y], [x + w, y + h], [x, y + h]];
             for (let edge = 0; edge < 4; edge++) {
                 const start = points[edge], end = points[(edge + 1) % 4];
@@ -194,17 +205,31 @@ export function geometryFrame(scene, { selected = [], boxes = new Map(), textFra
     for (const object of projected.filter(object => selected.includes(object.id))) {
         const points = objectCorners(object);
         if (!points.length) continue;
-        for (let index = 0; index < (points.length === 2 ? 1 : 4); index++) builder.line(points[index], points[(index + 1) % points.length], 1.5 / ratio, 0xffc47b25);
-        const handle = rotationHandle(object, ratio);
-        if (handle) {
-            builder.line(handle.top, handle.point, 1.5 / ratio, 0xffc47b25);
-            builder.ellipse([handle.point[0]-5/ratio, handle.point[1]-5/ratio, 10/ratio, 10/ratio], 0xffffffff);
-            builder.ellipse([handle.point[0]-5/ratio, handle.point[1]-5/ratio, 10/ratio, 10/ratio], 0xffc47b25, { filled: false, width: 1.5/ratio });
+        const editing=textEditing(object);
+        for (let index = 0; index < (points.length === 2 ? 1 : 4); index++) {
+            if(editing)builder.dashedLine(points[index],points[(index+1)%4],pixel,chrome.selection,{dash:4*pixel,gap:3*pixel});
+            else builder.line(points[index], points[(index + 1) % points.length],pixel,chrome.selection);
         }
-        if (canResize(object)) for (const [x, y] of points) {
-            builder.rect([x - 3 / ratio, y - 3 / ratio, 6 / ratio, 6 / ratio], 0xffc47b25);
+        const handle = !editing&&rotationHandle(object);
+        if (handle) {
+            builder.line(handle.top,handle.point,pixel,chrome.selection);
+            builder.ellipse([handle.point[0]-6*pixel,handle.point[1]-6*pixel,12*pixel,12*pixel],chrome.handleFill);
+            for(let n=0;n<20;n++) {
+                const point=i=>[handle.point[0]+4*pixel*Math.cos(-.4+i/20*5.2),handle.point[1]+4*pixel*Math.sin(-.4+i/20*5.2)];
+                builder.line(point(n),point(n+1),1.3*pixel,chrome.handleStroke);
+            }
+        }
+        if ((selected.length===1||!editing)&&canResize(object)) for (const [x, y] of objectResizeHandles(object)) {
+            const rect=[x-4.5*pixel,y-4.5*pixel,9*pixel,9*pixel];
+            builder.ellipse(rect,chrome.handleFill).ellipse(rect,chrome.handleStroke,{filled:false,width:pixel});
         }
     }
+    // A cell's accent outline is editor chrome in screen units, outside object
+    // transforms/effects, and above the neutral whole-table selection.
+    const activeTable=selectedCell&&projected.find(object=>object.id===selectedCell.object.id);
+    if(activeTable&&(cellEditing(activeTable)||selectedCell.multiple))paintTableSelection(builder,activeTable,selectedCell,{transform:activeTable.transform,width:2*pixel,color:chrome.accent});
     builder.popTransform();
-    return { frame: builder.finish(), painted, ratio, diagnostics, ...(captureLayers ? { layers: { resourceStart, resourceEnd, backgroundEnd, objects: objectLayers, tree: layerTree } } : {}) };
+    const target=selected.length===1?projected.find(object=>object.id===selected[0]&&canResize(object)):null;
+    const handles=target?objectResizeHandles(target).map((point,index)=>({id:String(index),point:[point[0]/scene.size.width,point[1]/scene.size.height]})):[];
+    return { frame: builder.finish(), painted, ratio, diagnostics, handles, ...(captureLayers ? { layers: { resourceStart, resourceEnd, backgroundEnd, objects: objectLayers, tree: layerTree } } : {}) };
 }

@@ -6,8 +6,73 @@ use rice_ui::virtual_grid::GridAxis;
 use rice_ui::{Constraints, Point, Size};
 use rice_ui::{WidgetKind, WidgetState};
 
+#[test]
+fn selected_header_paint_uses_logical_axes_even_when_the_other_axis_is_offscreen() {
+    let mut f=frame();f.selection=None;f.active=Some((f.rows[0].index,0));
+    f.selection_areas=vec![GridSelection{first_row:f.rows[0].index,last_row:f.rows[0].index,first_column:0,last_column:0},GridSelection{first_row:500,last_row:500,first_column:f.columns[0].index,last_column:f.columns[0].index}];
+    let (app,window,_)=ids();let mut h=host(f.encode().unwrap());let output=h.render(app,window,constraints()).unwrap();
+    let origin=output.hit_targets[0].rect.origin;
+    let base=h.theme().palette.surface_raised.channels();let accent=h.theme().palette.selection.channels();
+    let tint=rice_ui::Color::opaque(((u16::from(base[0])*3+u16::from(accent[0]))/4)as u8,((u16::from(base[1])*3+u16::from(accent[1]))/4)as u8,((u16::from(base[2])*3+u16::from(accent[2]))/4)as u8);
+    for (slot,row) in f.rows.iter().enumerate(){
+        let color=if slot==0{tint}else{h.theme().palette.surface_raised};
+        assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{rect,color:actual,..}if *actual==color&&rect.origin.x==origin.x&&i64::from(rect.origin.y)==i64::from(origin.y)+i64::from(f.column_header)+row.start&&rect.size.width==f.row_header&&rect.size.height==row.extent)));
+    }
+    for (slot,column) in f.columns.iter().enumerate(){
+        let color=if slot==0{tint}else{h.theme().palette.surface_raised};
+        assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{rect,color:actual,..}if *actual==color&&rect.origin.y==origin.y&&i64::from(rect.origin.x)==i64::from(origin.x)+i64::from(f.row_header)+column.start&&rect.size.height==f.column_header&&rect.size.width==column.extent)));
+    }
+}
+
+#[test]
+fn sheet_corner_tint_requires_complete_logical_selection() {
+    for complete in [false,true]{
+        let mut f=frame();f.selection=None;f.active=Some((0,0));
+        f.selection_areas=vec![GridSelection{first_row:0,last_row:if complete{f.row_count-1}else{0},first_column:0,last_column:f.column_count-1}];
+        let (app,window,_)=ids();let mut h=host(f.encode().unwrap());let output=h.render(app,window,constraints()).unwrap();let origin=output.hit_targets[0].rect.origin;
+        let fill=output.commands.iter().find_map(|c|match c{DrawCommand::Fill{rect,color,..}if rect.origin==origin&&rect.size.width==f.row_header&&rect.size.height==f.column_header=>Some(*color),_=>None}).unwrap();
+        assert_eq!(fill==h.theme().palette.surface_raised,!complete);
+    }
+}
+
+#[test]
+fn grid_drag_captures_signed_outside_motion_and_release_uses_the_full_widget_origin() {
+    let (app,window,id)=ids();let mut h=host(frame().encode().unwrap());let output=h.render(app,window,constraints()).unwrap();let rect=output.hit_targets[0].rect;
+    let start=Point{x:rect.origin.x+80,y:rect.origin.y+40};
+    h.pointer_event(app,window,PointerEventKind::Down,start,1,0).unwrap().unwrap();
+    // A frame update during native autoscroll must retain pointer ownership.
+    let mut next=frame();next.revision+=1;
+    h.apply_patch(&UiPatchEnvelope{app,window,sequence:2,patches:vec![UiPatch::Update{id,state:rice_native_app_protocol::PatchValue::Keep,text:rice_native_app_protocol::PatchValue::Set(next.encode().unwrap()),icon:rice_native_app_protocol::PatchValue::Keep}]}).unwrap();
+    h.render(app,window,constraints()).unwrap();
+    let outside=Point{x:rect.origin.x-30,y:rect.origin.y+rect.size.height as i32+25};
+    let motion=h.pointer_event(app,window,PointerEventKind::Move,outside,0,0).unwrap().unwrap();
+    assert_eq!(motion.target,id);assert!(matches!(motion.event,UiEvent::Pointer{kind:PointerEventKind::Move,x:-30,y,..}if y==rect.size.height as i32+25));
+    let up=h.pointer_event(app,window,PointerEventKind::Up,outside,1,0).unwrap().unwrap();assert_eq!(up.target,id);
+    assert!(h.pointer_event(app,window,PointerEventKind::Move,outside,0,0).unwrap().is_none());
+}
+
+#[test]
+fn grid_drag_delivers_browser_leave_once_then_releases_capture() {
+    let (app,window,id)=ids();let mut h=host(frame().encode().unwrap());let output=h.render(app,window,constraints()).unwrap();let rect=output.hit_targets[0].rect;
+    h.pointer_event(app,window,PointerEventKind::Down,Point{x:rect.origin.x+80,y:rect.origin.y+40},1,0).unwrap().unwrap();
+    let outside=Point{x:-100,y:-100};
+    let leave=h.pointer_event(app,window,PointerEventKind::Leave,outside,0,0).unwrap().unwrap();assert_eq!(leave.target,id);assert!(matches!(leave.event,UiEvent::Pointer{kind:PointerEventKind::Leave,..}));
+    assert!(h.pointer_event(app,window,PointerEventKind::Move,outside,0,0).unwrap().is_none());
+}
+
+#[test]
+fn logical_multi_area_native_paint_colors_each_selected_cell_and_leaves_the_gap_unselected(){
+    let mut f=frame();
+    f.selection=Some(GridSelection{first_row:0,last_row:1,first_column:0,last_column:1});
+    f.selection_areas=vec![GridSelection{first_row:f.rows[0].index,last_row:f.rows[0].index,first_column:f.columns[0].index,last_column:f.columns[0].index},GridSelection{first_row:10,last_row:10,first_column:3,last_column:3}];
+    let (app,window,_)=ids();let mut h=host(f.encode().unwrap());let output=h.render(app,window,constraints()).unwrap();
+    assert_eq!(output.commands.iter().filter(|c|matches!(c,DrawCommand::Fill{color,..}if *color==h.theme().palette.selection)).count(),2);
+    assert!(!output.commands.iter().any(|c|matches!(c,DrawCommand::Fill{rect,color,..}if rect.size==Size{width:6,height:6}&&*color==h.theme().palette.focus)));
+}
+
 fn frame() -> GridFrame {
     GridFrame {
+        selection_areas:Vec::new(),
         merges:Vec::new(),
         version: 1,
         revision: 9,
@@ -136,6 +201,28 @@ fn table_filter_arrow_is_painted_and_hit_in_the_actual_data_header() {
     let hit=frame.hit_test(x,y).unwrap();
     assert!(hit.filter);
     assert_eq!(hit.row,frame.filter_header_row);
+}
+
+#[test]
+fn frozen_pane_dividers_use_the_visible_track_boundaries_and_cross_headers(){
+    let (app,window,_)=ids();let frame=frame();
+    assert!(frame.rows[0].frozen&&frame.columns[0].frozen);
+    let y=frame.column_header+frame.rows.iter().take_while(|t|t.frozen).last().unwrap().clip_end-1;
+    let x=frame.row_header+frame.columns.iter().take_while(|t|t.frozen).last().unwrap().clip_end-1;
+    let mut host=host(frame.encode().unwrap());let output=host.render(app,window,constraints()).unwrap();let origin=output.hit_targets[0].rect.origin;let ink=host.theme().palette.text_muted;
+    assert!(output.commands.iter().any(|command|matches!(command,DrawCommand::Fill{rect,color,radius:0}if *color==ink&&rect.origin.x==origin.x&&rect.origin.y==origin.y+y as i32&&rect.size.width==frame.width&&rect.size.height==1)));
+    assert!(output.commands.iter().any(|command|matches!(command,DrawCommand::Fill{rect,color,radius:0}if *color==ink&&rect.origin.x==origin.x+x as i32&&rect.origin.y==origin.y&&rect.size.width==1&&rect.size.height==frame.height)));
+}
+
+#[test]
+fn conditional_decoration_is_one_native_command_and_show_value_controls_only_visible_text(){
+    use rice_ui::grid_frame::{GridPaint,GridDecorations,GridConditionalIcon};
+    for show_value in [false,true]{
+        let (app,window,_)=ids();let mut frame=frame();frame.styles[1].paint=Some(GridPaint{decorations:Some(GridDecorations{icon:Some(GridConditionalIcon{kind:"ArrowUp".into(),color:"#379754".into(),show_value}),..Default::default()}),..Default::default()});
+        let mut host=host(frame.encode().unwrap());let output=host.render(app,window,constraints()).unwrap();
+        assert_eq!(output.commands.iter().filter(|c|matches!(c,DrawCommand::GridDecorations{..})).count(),1);
+        assert_eq!(output.commands.iter().any(|c|matches!(c,DrawCommand::GridText{text,..}if text=="125.50")),show_value);
+    }
 }
 
 #[test]

@@ -43,6 +43,10 @@ export function createSlideSelection() {
         return active;
     }
     return Object.freeze({ reconcile, activate, choose,
+        replace(ids, next=ids?.at(-1)) {
+            if(!Array.isArray(ids)||!ids.length||new Set(ids).size!==ids.length||ids.some(id=>!order.includes(id))||!ids.includes(next))throw Error('Choose existing distinct slides and an active member');
+            selected=new Set(ids);active=anchor=next;
+        },
         all() { selected = new Set(order); active ||= order[0] || null; anchor ||= active; },
         reset() { order = []; selected.clear(); active = anchor = null; },
         has: id => selected.has(id),

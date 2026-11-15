@@ -13,6 +13,7 @@ import {
 import { createServices } from "./services.mjs";
 import { encodeScenePatch } from "./scene-wire.mjs";
 import {resolveChartTheme} from './chart-theme.mjs';
+import {accessibilitySnapshot} from './accessibility.mjs';
 
 export class RiceJavaScriptAppCore {
     constructor(definition, {
@@ -99,22 +100,36 @@ export class RiceJavaScriptAppCore {
         }
     }
 
-    controlMetadata(appId, windowId = 1n) {
+    gameRenderingSurfaces() {
+        const signature=[...this.instances.values()].map(app=>`${app.id}:${app.gameSurfaceRevision??0}`).join(',');
+        if(this.gameSurfaceSignature===signature)return this.gameSurfaceMetadata;
+        const surfaces=[];
+        for(const app of this.instances.values())for(const target of app.gameSurfaces??[]){
+            const control=app.controls.get(target),window=app.controlWindows.get(target);
+            if(control&&!control.destroyed&&window&&!window.presentationState.closed)surfaces.push(Object.freeze({app:String(app.id),window:String(window.id),surface:String(target)}));
+        }
+        this.gameSurfaceSignature=signature;this.gameSurfaceMetadata=Object.freeze(surfaces);return this.gameSurfaceMetadata;
+    }
+
+    controlMetadata(appId, windowId = 1n, inspection = null) {
+        if(inspection!==null&&(!inspection||typeof inspection!=='object'||Object.keys(inspection).some(k=>!['name','start','limit'].includes(k))||typeof inspection.name!=='string'||!Number.isInteger(inspection.start)||inspection.start<0||!Number.isInteger(inspection.limit)||inspection.limit<1||inspection.limit>500))throw TypeError('Object inspection requires name, start and limit 1..500');
         const app = this.instances.get(BigInt(appId)), window = app?.windows.get(BigInt(windowId));
         if (!window || app.closed || window.presentationState.closed) return [];
         const names = [];
         for (const control of app.controls.values()) {
             if (app.controlWindows.get(control.id) !== window || !window.rendered.has(control.id)) continue;
             if (typeof control.name !== 'string' || !/^[A-Za-z][A-Za-z0-9_.:-]{0,127}$/.test(control.name)) continue;
-            names.push({target:String(control.id),name:control.name});
+            names.push({target:String(control.id),name:control.name,
+                ...(typeof control.inspectControl==='function'?{semantic:control.inspectControl(inspection?.name===control.name?{start:inspection.start,limit:inspection.limit}:undefined)}:{}),
+                ...(control.values.accessibleName?{accessibleName:control.values.accessibleName}:{})});
             if (names.length >= 4096) break;
         }
         return names;
     }
 
-    controlState(appId, windowId = 1n) {
+    controlState(appId, windowId = 1n, inspection = null) {
         const app=BigInt(appId),window=BigInt(windowId);
-        return {controls:this.controlMetadata(app,window),pendingInteractions:this.pendingInteractions.get(app)?.get(window)?.size||0};
+        return {controls:this.controlMetadata(app,window,inspection),accessibility:accessibilitySnapshot(this.instances.get(app)?.windows.get(window)),pendingInteractions:this.pendingInteractions.get(app)?.get(window)?.size||0};
     }
 
     async launch(current) {
@@ -152,12 +167,18 @@ export class RiceJavaScriptAppCore {
             if(typeof this.callHost!=='function')throw Error('Native control measurement is unavailable');
             return this.callHost('native-ui','measure',parameters);
         };
+        app.editorLayoutHost=parameters=>{
+            if(this.closed||app.closed)throw Error('Application is closed');
+            if(typeof this.callHost!=='function')throw Error('Shaped editor resources are unavailable');
+            return this.callHost('native-ui','editor-layout',parameters);
+        };
         this.instances.set(current.app, app);
         app.windowListeners.add(window => this.bindWindow(app, window));
         app.hostCapabilities = this.capabilities;
         app.maximumSceneFrameBytes = this.maximumMessageBytes > 0 ? Math.min(this.maximumMessageBytes, 8 * 1024 * 1024) : 8 * 1024 * 1024;
         const context = Object.freeze({
             instanceId:String(current.app),
+            get capabilityAvailability(){return app.capabilityAvailability||null;},
             app,
             bus,
             services: app.services,
@@ -169,9 +190,11 @@ export class RiceJavaScriptAppCore {
             createWindow: options => app.createWindow(options),
         });
         try {
+            if(this.manifest.permissions?.services?.includes('system.capabilities'))app.capabilityAvailability=await services.system.capabilities();
             const root = await this.definition.start(context);
             if (root instanceof Control) app.createWindow({ root });
             if (app.windows.size === 0) throw new Error("app start() must create a window or return a root control");
+            if(this.manifest.capabilities?.length&&![...(app.capabilityRegistries||[])].some(registry=>registry.endpoints.size))throw Error('Declared app capabilities must bind to a live SDK window before start returns');
             for (const window of app.windows.values()) {
                 // start() may create a window before yielding. Its scheduled
                 // render can then run at the await boundary above, before an

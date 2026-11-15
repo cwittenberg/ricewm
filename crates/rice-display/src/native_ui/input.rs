@@ -61,7 +61,7 @@ impl NativeUiHost {
         if native_window.grid_resync_shadow.is_some() || native_window.opened_menu.is_some() { return None; }
         let target = self.hit_test(app, window, point);
         if let Some(dialog) = super::layout_overlay::dialog_widgets(&native_window.tree).last().copied() {
-            if !target.is_some_and(|target| super::layout_overlay::widget_belongs_to(&native_window.tree, target.widget, dialog)) { return None; }
+            if target.is_some_and(|target| !super::layout_overlay::widget_belongs_to(&native_window.tree, target.widget, dialog)) { return None; }
         }
         if target.and_then(|target| native_window.tree.get(target.widget)).is_some_and(|widget| {
             let document = widget.kind == WidgetKind::WebSurface
@@ -71,7 +71,7 @@ impl NativeUiHost {
                 | WidgetKind::TerminalSurface | WidgetKind::TerminalGrid | WidgetKind::TerminalRow)
         }) { return None; }
         let scroll = target.and_then(|target| enclosing_scroll_view(&native_window.tree, target.widget))
-            .or_else(|| scroll_view_at_point(&native_window.tree, &native_window.geometry, point))?;
+            .or_else(|| scroll_view_at_point(&native_window.tree, &native_window.geometry, point, None))?;
         let theme = effective_window_theme(&native_window.tree, self.theme);
         let geometry = super::layout::scroll_view_geometry(&native_window.tree, scroll, &native_window.geometry, &theme)?;
         (geometry.content_extent > geometry.viewport_extent).then_some(scroll)
@@ -162,12 +162,16 @@ impl NativeUiHost {
         // A pointer can leave the browser canvas before its button-up reaches
         // us. Never let that stale capture turn a later click or ordinary
         // hover into an unexpected splitter jump.
+        let leaving_surface = (kind == PointerEventKind::Leave).then(|| self.windows.get(&(app,window))
+            .and_then(|window| window.scroll_drag.filter(|id| window.tree.get(*id)
+                .is_some_and(|widget|matches!(widget.kind,WidgetKind::SceneSurface|WidgetKind::VirtualGrid))))).flatten();
         if matches!(kind, PointerEventKind::Down | PointerEventKind::Leave) {
             let native_window = self
                 .windows
                 .get_mut(&(app, window))
                 .ok_or(NativeUiError::UnknownWindow { app, window })?;
             native_window.scroll_drag = None;
+            native_window.slider_grab_offset = 0;
             native_window.text_drag = None;
         }
         let captured = self
@@ -176,6 +180,7 @@ impl NativeUiHost {
             .and_then(|native_window| {
                 native_window
                     .scroll_drag
+                    .or(leaving_surface)
                     .or_else(|| native_window.text_drag.map(|drag| drag.widget))
             })
             .and_then(|widget| {
@@ -344,6 +349,11 @@ impl NativeUiHost {
         } else if native_window.opened_menu.is_none() {
             native_window.popup_anchor = None;
         }
+        let popup_owner = native_window.opened_submenus.iter().rev().copied()
+            .chain(native_window.opened_menu).find(|menu| {
+                menu_popup_rect(&native_window.tree, *menu, &native_window.geometry, &theme)
+                    .is_some_and(|popup| popup.contains(point))
+            });
         let target_owns_wheel = target
             .and_then(|target| native_window.tree.get(target.widget))
             .is_some_and(|widget| {
@@ -365,7 +375,7 @@ impl NativeUiHost {
             });
         if kind == PointerEventKind::Wheel && matches!(button,4|5) && !target_owns_wheel
             && native_window.opened_menu.is_none()
-            && let Some(viewport) = scroll_view_at_point(&native_window.tree,&native_window.geometry,point)
+            && let Some(viewport) = scroll_view_at_point(&native_window.tree,&native_window.geometry,point,None)
             && native_window.tree.get(viewport).and_then(|widget| widget.text.as_deref())
                 .is_some_and(|text| text.split(':').any(|part| part=="document-viewport"))
         {
@@ -375,11 +385,7 @@ impl NativeUiHost {
         }
         if kind == PointerEventKind::Wheel
             && matches!(button, 4 | 5)
-            && let Some(menu) = native_window.opened_submenus.iter().rev().copied()
-                .chain(native_window.opened_menu).find(|menu| {
-                    menu_popup_rect(&native_window.tree, *menu, &native_window.geometry, &theme)
-                        .is_some_and(|popup| popup.contains(point))
-                })
+            && let Some(menu) = popup_owner
         {
             let visible_rows = native_window.tree.get(menu).map_or(0, |menu| {
                 super::layout::menu_content_children(&native_window.tree, menu)
@@ -422,8 +428,11 @@ impl NativeUiHost {
             .then(|| {
                 target
                     .and_then(|target| enclosing_scroll_view(&native_window.tree, target.widget))
+                    // A menu can live inside a scrolling inspector. Popup
+                    // padding must not scroll that owner or a surface behind it.
+                    .filter(|scroll| popup_owner.is_none_or(|menu| menu_contains(&native_window.tree, menu, *scroll)))
                     .or_else(|| {
-                        scroll_view_at_point(&native_window.tree, &native_window.geometry, point)
+                        scroll_view_at_point(&native_window.tree, &native_window.geometry, point, popup_owner)
                     })
             })
             .flatten();
@@ -498,6 +507,23 @@ impl NativeUiHost {
             .tree
             .get(target.widget)
             .map(|widget| widget.kind);
+        // A popup background shares its menu identity for input ownership,
+        // but is not a disclosure button. Wheel handling above can use the
+        // popup's nested scroll view; padding clicks/hover must neither toggle
+        // a menu, promote a submenu nor reach application pointer handlers.
+        if target_kind == Some(WidgetKind::Menu) && !target.activatable {
+            return Ok(None);
+        }
+        // A spreadsheet drag owns motion outside its clipped grid, including
+        // across sibling controls. Keep signed widget-local coordinates so the
+        // app can scroll at the edge; Leave is delivered once before release.
+        if target_kind == Some(WidgetKind::VirtualGrid) {
+            if kind == PointerEventKind::Down && button == 1 {
+                native_window.scroll_drag = Some(target.widget);
+            } else if kind == PointerEventKind::Up {
+                native_window.scroll_drag = None;
+            }
+        }
         if matches!(kind, PointerEventKind::Move | PointerEventKind::Up)
             && target_kind == Some(WidgetKind::TextEditor)
             && let Some(drag) = native_window.text_drag
@@ -682,24 +708,55 @@ impl NativeUiHost {
                 .flatten();
             let (position, total) = if let Some(scroll_view) = scroll_view {
                 (
-                    super::scroll::scroll_view_pointer_position(
-                        target.rect,
-                        point,
-                        scroll_view.viewport_extent,
-                        scroll_view.content_extent,
-                    ),
+                    if theme.control_chrome.scrollbar() || theme.chrome_profile == rice_ui::ChromeProfile::YellowJacket {
+                        let maximum=scroll_view.content_extent.saturating_sub(scroll_view.viewport_extent);
+                        let extent=(u64::from(target.rect.size.height)*u64::from(scroll_view.viewport_extent)/u64::from(scroll_view.content_extent.max(1))) as u32;
+                        let parts=super::control_chrome::scrollbar(target.rect,scroll_view.position,maximum,extent,&theme);
+                        if parts.decrement_contains(point)||parts.increment_contains(point) {
+                            native_window.scroll_drag=None;
+                            if kind!=PointerEventKind::Down {return Ok(None);}
+                            let step=(scroll_view.viewport_extent/10).max(1);
+                            let position=if parts.decrement_contains(point) {scroll_view.position.saturating_sub(step)}else{scroll_view.position.saturating_add(step).min(maximum)};
+                            return Ok(Some(UiEventEnvelope{app,window,target:target.widget,event:UiEvent::ValueChanged(document_scroll_value(native_window,target.widget,position,maximum,&theme))}));
+                        }
+                        super::control_chrome::scroll_position(&parts,point,maximum)
+                    } else {super::scroll::scroll_view_pointer_position(target.rect,point,scroll_view.viewport_extent,scroll_view.content_extent)},
                     scroll_view
                         .content_extent
                         .saturating_sub(scroll_view.viewport_extent),
                 )
             } else {
+                let text = text.map(|value| value.strip_prefix("slim:").unwrap_or(value));
                 let (_, total) = super::scroll::fraction(
                     text.and_then(|value| value.strip_prefix("seek:")).or(text),
                 );
                 let position = if target_kind == Some(WidgetKind::Slider) {
-                    super::scroll::progress_position(target.rect, point, 1000)
+                    // A form row may enlarge the hit target, and clipping may
+                    // shorten it. Values always use the painted widget geometry.
+                    let rect = native_window.geometry.get(&target.widget).copied().unwrap_or(target.rect);
+                    if kind == PointerEventKind::Down {
+                        let (current, total) = super::scroll::fraction(text);
+                        let thumb = super::control_chrome::slider(rect, current, total, &theme).thumb;
+                        native_window.slider_grab_offset = if thumb.contains(point) {
+                            point.x - thumb.origin.x - (thumb.size.width / 2) as i32
+                        } else { 0 };
+                    }
+                    let point = Point { x: point.x.saturating_sub(native_window.slider_grab_offset), ..point };
+                    super::control_chrome::slider_position(rect, point, &theme)
                 } else if target_kind == Some(WidgetKind::ProgressBar) {
                     super::scroll::progress_position(target.rect, point, total)
+                } else if target_kind == Some(WidgetKind::ScrollBar) && (theme.control_chrome.scrollbar() || theme.chrome_profile == rice_ui::ChromeProfile::YellowJacket) {
+                    let (current,total)=super::scroll::fraction(text);
+                    let parts=super::control_chrome::scrollbar(target.rect,current,total,super::scroll::thumb_extent(target.rect,text),&theme);
+                    let decrement=parts.decrement_contains(point);let increment=parts.increment_contains(point);
+                    if decrement||increment {
+                        native_window.scroll_drag=None;
+                        if kind!=PointerEventKind::Down {return Ok(None);}
+                        let step=super::scroll::viewport(text).map(|v|(v/10).max(1)).unwrap_or((total/20).max(1));
+                        let position=if decrement {current.saturating_sub(step)} else {current.saturating_add(step).min(total)};
+                        return Ok(Some(UiEventEnvelope{app,window,target:target.widget,event:UiEvent::ValueChanged(format!("{position}/{total}"))}));
+                    }
+                    super::control_chrome::scroll_position(&parts,point,total)
                 } else if target_kind == Some(WidgetKind::ScrollBar) && super::scroll::viewport(text).is_some() {
                     let flat = native_window.tree.get(target.widget).is_some_and(|widget| widget.state.contains(WidgetState::FLAT));
                     super::scroll::metadata_pointer_position(target.rect, point, text, flat)
@@ -743,6 +800,15 @@ impl NativeUiHost {
                 target: target.widget,
                 event: UiEvent::ValueChanged(document_scroll_value(native_window, target.widget, position, total, &theme)),
             }));
+        }
+        // A retained scene owns its drag until release. Coordinates below still
+        // use its full scene geometry, including points outside the viewport.
+        if target_kind == Some(WidgetKind::SceneSurface) {
+            if kind == PointerEventKind::Down && button == 1 {
+                native_window.scroll_drag = Some(target.widget);
+            } else if kind == PointerEventKind::Up {
+                native_window.scroll_drag = None;
+            }
         }
         // Positioned surfaces expose coordinates in the enclosing canvas,
         // not in a moving child's rectangle. Keep capture through the drag.
@@ -972,15 +1038,16 @@ impl NativeUiHost {
             }
             return Ok(None);
         }
-        let pointer_tree_toggle = kind == PointerEventKind::Up
-            && button == 1
-            && tree_disclosure_hit(
-                &native_window.tree,
-                target.widget,
-                target.rect,
-                point,
-                &theme,
-            );
+        let disclosure_hit = tree_disclosure_hit(&native_window.tree,target.widget,target.rect,point,&theme);
+        // DOM dblclick is delivered once as button 6 after the two primary
+        // clicks. Toggle folder labels/icons here; disclosure clicks already
+        // toggle on each primary release and must not toggle a third time.
+        let double_click_tree_toggle = kind == PointerEventKind::Down
+            && button == 6
+            && tree_item_expandable(&native_window.tree,target.widget)
+            && !disclosure_hit;
+        let pointer_tree_toggle = (kind == PointerEventKind::Up && button == 1 && disclosure_hit)
+            || double_click_tree_toggle;
         if pointer_tree_toggle {
             toggle_tree_item(native_window, target.widget)?;
         }
@@ -1006,7 +1073,12 @@ impl NativeUiHost {
             && !target_uses_pointer_selection
             && !pointer_tree_toggle
         {
-            UiEvent::Activate
+            if native_window.tree.get(target.widget).and_then(|widget|super::visual_control::chip(widget.text.as_deref()))
+                .is_some_and(|chip|chip.removable)
+                && native_window.geometry.get(&target.widget).is_some_and(|rect|
+                    point.x>=rect.origin.x.saturating_add_unsigned(rect.size.width.saturating_sub(24))) {
+                UiEvent::ValueChanged("remove".to_owned())
+            } else {UiEvent::Activate}
         } else {
             let vector_point = (target_kind == Some(WidgetKind::SceneSurface)).then(|| {
                 native_window.web_scenes.get(&target.widget).map(|scene| {
@@ -1181,6 +1253,18 @@ impl NativeUiHost {
             .get_mut(&(app, window))
             .ok_or(NativeUiError::UnknownWindow { app, window })?;
         if native_window.grid_resync_shadow.is_some() { return Ok(None); }
+        // Opted-in dialogs own Enter before a focused button can turn it
+        // into an activation of Cancel, a protocol choice, or another action.
+        if matches!(key_code, 36 | 104)
+            && let Some(dialog) = dialog_widgets(&native_window.tree).last().copied()
+            && native_window.tree.get(dialog).is_some_and(|widget|
+                widget.state.contains(WidgetState::ENABLED | WidgetState::KEY_NAVIGATION))
+        {
+            return Ok(Some(UiEventEnvelope {
+                app, window, target: dialog,
+                event: UiEvent::Key { pressed, key_code, modifiers, text },
+            }));
+        }
         if pressed && native_window.navigation_open.is_some() && matches!(key_code, 9 | 27) {
             native_window.focused = native_window.navigation_open.take();
             return Ok(None);
@@ -1223,6 +1307,7 @@ impl NativeUiHost {
                     widget.kind,
                     WidgetKind::TerminalGrid | WidgetKind::VirtualGrid
                 ) || (widget.kind == WidgetKind::TextEditor && !widget.state.contains(WidgetState::KEY_NAVIGATION))
+                    || (widget.kind == WidgetKind::SceneSurface && widget.state.contains(WidgetState::KEY_NAVIGATION))
                     || (widget.kind == WidgetKind::TextField && widget.state.contains(WidgetState::KEY_NAVIGATION))
             })
         });
@@ -1361,16 +1446,30 @@ impl NativeUiHost {
         let Some(target_id) = target_id else {
             return Ok(None);
         };
-        if pressed && matches!(key_code, 40 | 116)
+        // A Menu is a disclosure control unless KEY_NAVIGATION opts it into
+        // HoldMenuButton's default action. Both forms disclose with Down;
+        // ordinary menus also disclose with Enter/Space. Do this before
+        // spatial navigation so Down cannot move into the document instead.
+        if pressed
+            && native_window.opened_menu.is_none_or(|menu| menu == target_id
+                || !menu_contains(&native_window.tree, menu, target_id))
             && native_window.tree.get(target_id).is_some_and(|widget|
-                widget.kind == WidgetKind::Menu && widget.state.contains(WidgetState::KEY_NAVIGATION)
-                    && widget.state.contains(WidgetState::ENABLED))
+                widget.kind == WidgetKind::Menu && widget.state.contains(WidgetState::ENABLED)
+                    && ((!printable_text && matches!(key_code, 40 | 116) && modifiers & (1 | 4 | 64) == 0)
+                        || (!widget.state.contains(WidgetState::KEY_NAVIGATION)
+                            && matches!(key_code, 36 | 65 | 104) && modifiers & (1 | 4 | 8 | 64) == 0
+                            && text.as_deref().is_none_or(|value| value.chars().all(char::is_whitespace)))))
         {
             native_window.opened_menu = Some(target_id);
             native_window.opened_submenus.clear();
+            native_window.menu_scroll_rows.insert(target_id, 0);
             native_window.popup_anchor = None;
-            native_window.focused = menu_keyboard_items(&native_window.tree, target_id).first().copied();
-            return Ok(None);
+            native_window.popup_context_target = None;
+            let focused = menu_keyboard_items(&native_window.tree, target_id).first().copied().unwrap_or(target_id);
+            native_window.focused = Some(focused);
+            native_window.hovered = None;
+            return Ok(Some(UiEventEnvelope { app, window, target: focused,
+                event: UiEvent::Focus { focused: true } }));
         }
         // Arrow/Home/End navigation belongs to an active text editor before
         // it belongs to the surrounding spatial-navigation graph.  Resolving
@@ -1710,7 +1809,7 @@ fn tree_navigation_action(
         tree.get(*child)
             .is_some_and(|candidate| candidate.kind == WidgetKind::TreeItem)
     });
-    let has_children = children.clone().next().is_some();
+    let has_children = widget.state.contains(WidgetState::INDETERMINATE) || children.clone().next().is_some();
     match key_code {
         37 | 113 if has_children && widget.state.contains(WidgetState::CHECKED) => {
             Some(TreeNavigationAction::Toggle)
@@ -1773,10 +1872,10 @@ fn toggle_tree_item(window: &mut NativeWindow, id: WidgetId) -> Result<bool, Nat
 pub(super) fn tree_item_expandable(tree: &RetainedTree, id: WidgetId) -> bool {
     tree.get(id).is_some_and(|widget| {
         widget.kind == WidgetKind::TreeItem
-            && widget.children().iter().any(|child| {
+            && (widget.state.contains(WidgetState::INDETERMINATE) || widget.children().iter().any(|child| {
                 tree.get(*child)
                     .is_some_and(|candidate| candidate.kind == WidgetKind::TreeItem)
-            })
+            }))
     })
 }
 
@@ -1794,7 +1893,7 @@ fn tree_disclosure_hit(
         .origin
         .x
         .saturating_add_unsigned(u32::from(theme.spacing.control_x));
-    let right = left.saturating_add_unsigned(u32::from(theme.metrics.icon_small));
+    let right = left.saturating_add_unsigned(theme.tree_disclosure_width());
     point.x >= left && point.x < right
 }
 
@@ -2076,7 +2175,7 @@ fn rich_attribute_hit(p:&EditorText<'_>,rect:Rect,point:Point)->Option<usize> {
     loop {
         let end=(start..chars.len()).find(|i|chars[*i]=='\n').unwrap_or(chars.len());
         let active=|r:&&(char,usize,usize,&str)|r.1<=start&&r.2>=start;
-        let indent=if ranges.iter().filter(active).any(|r|matches!(r.0,'B'|'N'|'Q')){28.0}else{0.0};
+        let indent=if ranges.iter().filter(active).any(|r|matches!(r.0,'B'|'N'|'Q'|'K')){28.0}else{0.0};
         let align=ranges.iter().filter(active).rev().find(|r|matches!(r.0,'A'|'C'|'R'|'J')).map(|r|r.0);
         let mut at=start;
         loop {
@@ -2390,13 +2489,17 @@ fn scroll_view_at_point(
     tree: &RetainedTree,
     geometry: &BTreeMap<WidgetId, Rect>,
     point: Point,
+    popup_owner: Option<WidgetId>,
 ) -> Option<WidgetId> {
+    let dialog = super::layout_overlay::dialog_widgets(tree).last().copied();
     geometry
         .iter()
         .filter_map(|(id, rect)| {
             tree.get(*id)
                 .is_some_and(|widget| {
-                    widget.kind == WidgetKind::ScrollView
+                    dialog.is_none_or(|dialog| super::layout_overlay::widget_belongs_to(tree, *id, dialog))
+                        && popup_owner.is_none_or(|menu| menu_contains(tree, menu, *id))
+                        && widget.kind == WidgetKind::ScrollView
                         && widget.state.contains(WidgetState::ENABLED)
                         && rect.contains(point)
                 })

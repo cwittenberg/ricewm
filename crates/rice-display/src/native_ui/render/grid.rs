@@ -89,13 +89,15 @@ fn header(
     reserve_right: u32,
     theme: &Theme,
     zoom: u16,
+    selected: bool,
 ) -> Result<(), NativeUiError> {
     push_command(commands, DrawCommand::PushClip { rect: clip })?;
+    let fill = if selected { selected_fill(theme.palette.surface_raised, theme.palette.selection) } else { theme.palette.surface_raised };
     push_command(
         commands,
         DrawCommand::Fill {
             rect: bounds,
-            color: theme.palette.surface_raised,
+            color: fill,
             radius: 0,
         },
     )?;
@@ -118,7 +120,7 @@ fn header(
             ..bounds
         },
         value,
-        theme.palette.text_muted,
+        automatic_ink(fill, if selected { theme.palette.text } else { theme.palette.text_muted }),
         TextAlign::Center,
         theme,
         zoom,
@@ -233,10 +235,7 @@ pub(super) fn render(
                 clip=local_rect(body,i64::from(column.clip_start),i64::from(row.clip_start),last_column.clip_end-column.clip_start,last_row.clip_end-row.clip_start);
                 bounds=local_rect(body,m.x,m.y,m.width,m.height);
             }
-            let selected = frame
-                .selection
-                .as_ref()
-                .is_some_and(|s| s.contains(row_slot as u32, column_slot as u32));
+            let selected = frame.is_selected(row_slot as u32,column_slot as u32);
             let style = value.map_or(&frame.styles[0], |cell| &frame.styles[usize::from(cell.3)]);
             let paint=style.paint.as_ref();
             let explicit_fill=paint.and_then(|p|p.background.as_deref()).map(paint_color);
@@ -268,11 +267,18 @@ pub(super) fn render(
                     radius: 0,
                 },
             )?;
+            if let Some(decorations)=paint.and_then(|p|p.decorations.as_ref()){
+                push_command(commands,DrawCommand::GridDecorations{rect:bounds,decorations:decorations.clone(),zoom_percent:frame.zoom_percent.unwrap_or(100),background:fill})?;
+            }
             if let Some(GridCell(_, _, string, _)) = value {
-                let text_bounds = if frame.filter_header_row == Some(row.index)
+                let decorations=paint.and_then(|p|p.decorations.as_ref());
+                if decorations.is_none_or(|d|d.show_value()){
+                let mut text_bounds = if frame.filter_header_row == Some(row.index)
                     && frame.filter_button(column.index).is_some() {
                     Rect { size: Size { width: bounds.size.width.saturating_sub(18), ..bounds.size }, ..bounds }
                 } else { bounds };
+                let reserve=decorations.map_or(0,|d|(d.symbol_count()*18*u32::from(frame.zoom_percent.unwrap_or(100))+50)/100).min(text_bounds.size.width);
+                text_bounds.origin.x=text_bounds.origin.x.saturating_add_unsigned(reserve);text_bounds.size.width-=reserve;
                 let color = if let Some(color)=paint.and_then(|p|p.foreground.as_deref()) {paint_color(color)} else if document {
                     automatic_ink(fill,ink)
                 } else if selected {
@@ -317,6 +323,7 @@ pub(super) fn render(
                     frame.zoom_percent.unwrap_or(100),
                 )?;
                 }
+                }
             }
             if let Some(borders)=paint.and_then(|p|p.borders.as_ref()){for(edge,style)in[&borders.top,&borders.right,&borders.bottom,&borders.left].into_iter().enumerate(){if let Some(style)=style{border(commands,bounds,edge,style,frame.zoom_percent.unwrap_or(100))?;}}}
             if frame.active == Some(merged.map_or((row.index,column.index),|m|(m.first_row,m.first_column))) {
@@ -346,7 +353,7 @@ pub(super) fn render(
             rect: handle_rect, color: theme.palette.selection_text, width: 1, radius: 0,
         })?;
     }
-    for row in &frame.rows {
+    for (slot, row) in frame.rows.iter().enumerate() {
         let clip = local_rect(
             rect.origin,
             0,
@@ -369,9 +376,10 @@ pub(super) fn render(
             0,
             theme,
             100,
+            frame.row_header_selected(slot as u32),
         )?;
     }
-    for column in &frame.columns {
+    for (slot, column) in frame.columns.iter().enumerate() {
         let clip = local_rect(
             rect.origin,
             i64::from(frame.row_header + column.clip_start),
@@ -395,6 +403,7 @@ pub(super) fn render(
             if button.is_some() && frame.filter_header_row.is_none() { 18 } else { 0 },
             theme,
             100,
+            frame.column_header_selected(slot as u32),
         )?;
         if let Some((local, active)) = button {
             let button = local_rect(
@@ -460,7 +469,16 @@ pub(super) fn render(
         }
     }
     let corner = local_rect(rect.origin, 0, 0, frame.row_header, frame.column_header);
-    header(commands, corner, corner, String::new(), 0, theme,100)?;
+    header(commands, corner, corner, String::new(), 0, theme,100,frame.sheet_header_selected())?;
+    // Pane separators use the same clipped tracks as cells and hit targets.
+    // They cross the headers so the frozen boundary remains easy to locate.
+    let pane_ink=if document{Color::opaque(128,128,128)}else{theme.palette.text_muted};
+    if let Some(row)=frame.rows.iter().take_while(|track|track.frozen).last(){
+        push_command(commands,DrawCommand::Fill{rect:local_rect(rect.origin,0,i64::from(frame.column_header+row.clip_end).saturating_sub(1),frame.width,1),color:pane_ink,radius:0})?;
+    }
+    if let Some(column)=frame.columns.iter().take_while(|track|track.frozen).last(){
+        push_command(commands,DrawCommand::Fill{rect:local_rect(rect.origin,i64::from(frame.row_header+column.clip_end).saturating_sub(1),0,1,frame.height),color:pane_ink,radius:0})?;
+    }
     push_command(commands, DrawCommand::PopClip)
 }
 

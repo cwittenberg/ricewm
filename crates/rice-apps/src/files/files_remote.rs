@@ -25,6 +25,7 @@ pub(super) const BRIDGE_TOKEN: u64 = 310_026;
 pub(super) const BRIDGE: u64 = 310_027;
 pub(super) const CLOUD: u64 = 310_054;
 pub(super) const CLOUD_BACK: u64 = 310_056;
+pub(super) const NFS_ADVANCED: u64 = 310_057;
 pub(super) const CLOUD_FIELD_FIRST: u64 = 312_000;
 pub(super) const CLOUD_FIELD_LAST: u64 = CLOUD_FIELD_FIRST + 7;
 pub(super) const CLOUD_FIRST: u64 = 311_000;
@@ -73,12 +74,16 @@ struct ConnectDialog {
     cloud_values: std::collections::BTreeMap<String,String>,
     cloud_help: String,
     url: String,
+    // An explicit protocol choice owns submission, even if an address edit
+    // from the previous control arrives after the button activation.
+    selected_scheme: Option<&'static str>,
     username: String,
     password: String,
     domain: String,
     bridge_url: String,
     bridge_token: String,
     bridge: bool,
+    nfs_advanced: bool,
     uid: String,
     gid: String,
     error: ConnectionError,
@@ -87,6 +92,21 @@ struct ConnectDialog {
 
 impl ConnectDialog {
     fn clear_cloud_secrets(&mut self) { for field in &self.cloud_fields { if field.secret { self.cloud_values.remove(&field.id); } } }
+
+    fn scheme(&self) -> &str {
+        self.selected_scheme.unwrap_or_else(|| self.url.split_once("://").map_or("https", |(scheme, _)| scheme))
+    }
+
+    fn apply_selected_scheme(&mut self) {
+        if let Some(scheme) = self.selected_scheme {
+            // WebDAV supports both HTTPS and explicit loopback HTTP addresses.
+            if scheme == "https" && self.url.starts_with("http://") {
+                return;
+            }
+            let address = self.url.split_once("://").map_or(self.url.as_str(), |(_, address)| address);
+            self.url = format!("{scheme}://{address}");
+        }
+    }
 }
 
 // Owned failures retain their identity until rendering; provider text is data.
@@ -137,15 +157,17 @@ impl RemoteConnection {
         self.dialog = Some(ConnectDialog {
             cloud: false, provider_id: String::new(), account_id: String::new(),
             cloud_fields: Vec::new(), cloud_values: std::collections::BTreeMap::new(), cloud_help: String::new(),
-            url: String::from("https://"),
+            url: String::from("smb://"),
+            selected_scheme: None,
             username: String::new(),
             password: String::new(),
             domain: String::new(),
             bridge_url: String::new(),
             bridge_token: String::new(),
             bridge: false,
-            uid: String::from("65534"),
-            gid: String::from("65534"),
+            nfs_advanced: false,
+            uid: String::new(),
+            gid: String::new(),
             error: ConnectionError::None,
             pending: None,
         });
@@ -220,8 +242,13 @@ impl RiceFiles {
         if let Some(dialog) = self.remote.dialog_mut() {
             if dialog.pending.is_none() {
                 if target == BRIDGE {dialog.bridge = !dialog.bridge; return self.emit_full().map(|message| vec![message]);}
+                if target == NFS_ADVANCED {
+                    if dialog.scheme() == "nfs" { dialog.nfs_advanced = !dialog.nfs_advanced; }
+                    return self.emit_full().map(|message| vec![message]);
+                }
                 dialog.cloud = false; dialog.provider_id.clear(); dialog.account_id.clear();
-                dialog.url = String::from(match target { SMB => "smb://", NFS => "nfs://", _ => "https://" });
+                dialog.selected_scheme = Some(match target { SMB => "smb", NFS => "nfs", _ => "https" });
+                dialog.apply_selected_scheme();
                 dialog.username.clear(); dialog.password.clear(); dialog.clear_cloud_secrets();
             dialog.bridge_token.clear(); dialog.domain.clear(); dialog.error.clear();
             }
@@ -303,6 +330,7 @@ impl RiceFiles {
             dialog.pending = Some(request); dialog.error.clear();
             return Ok(vec![self.emit_full()?, Message::DataProviderRequest(DataProviderRequest {request, app:self.app, operation})]);
         }
+        dialog.apply_selected_scheme();
         let location = match supported_webdav_location(&dialog.url) {
             Ok(location) => location,
             Err(error) => {
@@ -320,9 +348,16 @@ impl RiceFiles {
         }
         let url = format!("{}://{}{}", location.scheme(), location.authority(), location.path());
         let operation = if matches!(location.scheme(), "smb" | "nfs") {
-            let (Ok(uid), Ok(gid)) = (dialog.uid.parse::<u32>(), dialog.gid.parse::<u32>()) else {
-                dialog.error = ConnectionError::Message("NFS user and group IDs must be unsigned integers");
-                return self.emit_full().map(|message| vec![message]);
+            let (uid, gid) = if location.scheme() == "nfs" {
+                let parse_id = |value: &str| if value.trim().is_empty() { Ok(65534) } else { value.trim().parse::<u32>() };
+                let (Ok(uid), Ok(gid)) = (parse_id(&dialog.uid), parse_id(&dialog.gid)) else {
+                    dialog.nfs_advanced = true;
+                    dialog.error = ConnectionError::Message("NFS user and group IDs must be unsigned integers");
+                    return self.emit_full().map(|message| vec![message]);
+                };
+                (uid, gid)
+            } else {
+                (65534, 65534)
             };
             DataProviderOperation::MountConnectNetwork {
                 url, username: dialog.username.clone(), password: dialog.password.clone(), domain: dialog.domain.clone(), bridge_url: dialog.bridge_url.clone(), bridge_token: dialog.bridge_token.clone(), uid, gid,
@@ -418,6 +453,9 @@ impl RiceFiles {
                         dialog.domain=profile["domain"].as_str().unwrap_or("").to_owned();
                         dialog.uid=profile["uid"].as_u64().unwrap_or(65534).to_string();
                         dialog.gid=profile["gid"].as_u64().unwrap_or(65534).to_string();
+                        if dialog.uid == "65534" { dialog.uid.clear(); }
+                        if dialog.gid == "65534" { dialog.gid.clear(); }
+                        dialog.nfs_advanced = !dialog.uid.is_empty() || !dialog.gid.is_empty();
                         dialog.bridge_url=profile["bridgeUrl"].as_str().unwrap_or("").to_owned();
                         dialog.bridge=!dialog.bridge_url.is_empty();
                     }
@@ -486,13 +524,14 @@ pub(super) fn patches(patches: &mut Vec<Patch>, remote: &RemoteConnection) {
     let Some(dialog) = &remote.dialog else {
         return;
     };
-    files_view::create(
+    files_view::create_with_state(
         patches,
         DIALOG,
         Some(files_view::ROOT),
         WidgetKind::Dialog,
         Some(rice_i18n::t("Connect to Server")),
         Some(IconId::Network),
+        WidgetState::ENABLED | WidgetState::KEY_NAVIGATION,
     );
     files_view::create(
         patches,
@@ -519,9 +558,9 @@ pub(super) fn patches(patches: &mut Vec<Patch>, remote: &RemoteConnection) {
         Some(IconId::Information),
     );
     files_view::create(patches, 310_050, Some(CONTENT), WidgetKind::Row, Some("panel:actions:choice-width=WebDAV"), None);
-    for (id, text, scheme) in [(SMB,"SMB","smb://"),(NFS,"NFS","nfs://"),(WEBDAV,"WebDAV","http"),(CLOUD,"Cloud storage","cloud")] {
+    for (id, text, scheme) in [(SMB,"SMB","smb"),(NFS,"NFS","nfs"),(WEBDAV,"WebDAV","http"),(CLOUD,"Cloud storage","cloud")] {
         files_view::create_with_state(patches,id,Some(310_050),WidgetKind::Button,Some(text),Some(IconId::Network),
-            (if dialog.pending.is_none() {WidgetState::ENABLED} else {WidgetState::empty()}) | if (id == CLOUD && dialog.cloud) || (!dialog.cloud && dialog.url.starts_with(scheme)) {WidgetState::ACCENT} else {WidgetState::empty()});
+            (if dialog.pending.is_none() {WidgetState::ENABLED} else {WidgetState::empty()}) | if (id == CLOUD && dialog.cloud) || (!dialog.cloud && dialog.scheme().starts_with(scheme)) {WidgetState::ACCENT} else {WidgetState::empty()});
     }
     if dialog.cloud {
         if dialog.cloud_fields.is_empty() {
@@ -552,13 +591,23 @@ pub(super) fn patches(patches: &mut Vec<Patch>, remote: &RemoteConnection) {
         &dialog.url,
         IconId::Network,
     );
-    if dialog.url.starts_with("nfs://") {
-        field_row(patches, USER_ROW, USER_LABEL, rice_i18n::t("User ID"), UID_FIELD, WidgetKind::TextField, &dialog.uid, IconId::Application);
-        field_row(patches, PASSWORD_ROW, PASSWORD_LABEL, rice_i18n::t("Group ID"), GID_FIELD, WidgetKind::TextField, &dialog.gid, IconId::Application);
+    if dialog.scheme() == "nfs" {
+        files_view::create(patches,310_058,Some(CONTENT),WidgetKind::Label,
+            Some(rice_i18n::t("files.remote.nfs-permissions")),None);
+        files_view::create_with_state(patches,NFS_ADVANCED,Some(CONTENT),WidgetKind::Button,
+            Some(rice_i18n::t("files.remote.nfs-advanced")),Some(IconId::Settings),
+            (if dialog.pending.is_none() {WidgetState::ENABLED} else {WidgetState::empty()})
+                | if dialog.nfs_advanced {WidgetState::ACCENT} else {WidgetState::empty()});
+        if dialog.nfs_advanced {
+            files_view::create(patches,310_059,Some(CONTENT),WidgetKind::Label,
+                Some(rice_i18n::t("files.remote.nfs-default")),None);
+            field_row(patches, USER_ROW, USER_LABEL, rice_i18n::t("files.remote.uid-optional"), UID_FIELD, WidgetKind::TextField, &dialog.uid, IconId::Application);
+            field_row(patches, PASSWORD_ROW, PASSWORD_LABEL, rice_i18n::t("files.remote.gid-optional"), GID_FIELD, WidgetKind::TextField, &dialog.gid, IconId::Application);
+        }
     } else {
         field_row(patches, USER_ROW, USER_LABEL, rice_i18n::t("Username"), USER_FIELD, WidgetKind::TextField, &dialog.username, IconId::Application);
         field_row(patches, PASSWORD_ROW, PASSWORD_LABEL, rice_i18n::t("Password"), PASSWORD_FIELD, WidgetKind::PasswordField, &dialog.password, IconId::Lock);
-        if dialog.url.starts_with("smb://") {
+        if dialog.scheme() == "smb" {
             field_row(patches, 310_023, 310_024, rice_i18n::t("Domain (optional)"), DOMAIN_FIELD, WidgetKind::TextField, &dialog.domain, IconId::Network);
         }
     }
@@ -644,6 +693,65 @@ fn supported_webdav_location(input: &str) -> Result<ProviderLocation, Connection
 }
 
 #[cfg(test)]
+mod connection_tests {
+    use super::*;
+    use super::super::tests::{app, request};
+
+    #[test]
+    fn nfs_ids_are_hidden_optional_and_default_independently() {
+        let (mut files, _) = RiceFiles::launch_at(app(), &[], request(1)).unwrap();
+        files.remote.open_url("nfs://nas.example/Documents");
+        let mut output = Vec::new();
+        patches(&mut output, &files.remote);
+        assert!(!output.iter().any(|patch| matches!(patch, Patch::Create {widget, ..} if [UID_FIELD,GID_FIELD].contains(&widget.id.get()))));
+        let messages = files.confirm_remote(request(2)).unwrap();
+        assert!(messages.iter().any(|message| matches!(message,
+            Message::DataProviderRequest(DataProviderRequest { operation: DataProviderOperation::MountConnectNetwork {uid:65534, gid:65534, ..}, .. }))));
+        files.remote.dialog_mut().unwrap().pending = None;
+        files.select_remote_protocol(NFS_ADVANCED).unwrap();
+        files.update_remote_field(UID_FIELD, "1000").unwrap();
+        files.update_remote_field(GID_FIELD, " ").unwrap();
+        let messages = files.confirm_remote(request(3)).unwrap();
+        assert!(messages.iter().any(|message| matches!(message,
+            Message::DataProviderRequest(DataProviderRequest { operation: DataProviderOperation::MountConnectNetwork {uid:1000, gid:65534, ..}, .. }))));
+    }
+
+    #[test]
+    fn smb_selection_preserves_address_and_ignores_nfs_identity_fields() {
+        let (mut files, _) = RiceFiles::launch_at(app(), &[], request(1)).unwrap();
+        files.remote.open_url("nfs://nas.example/Documents");
+        files.update_remote_field(UID_FIELD, "invalid").unwrap();
+        files.update_remote_field(GID_FIELD, "").unwrap();
+        files.select_remote_protocol(SMB).unwrap();
+        assert_eq!(files.remote.dialog.as_ref().unwrap().url, "smb://nas.example/Documents");
+        files.update_remote_field(USER_FIELD, "rice").unwrap();
+        files.update_remote_field(PASSWORD_FIELD, "secret").unwrap();
+        // A delayed edit from the old address cannot undo the selected protocol.
+        files.update_remote_field(URL_FIELD, "nfs://nas.example/Documents").unwrap();
+        let messages = files.confirm_remote(request(2)).unwrap();
+        assert!(messages.iter().any(|message| matches!(message,
+            Message::DataProviderRequest(DataProviderRequest { operation: DataProviderOperation::MountConnectNetwork {url, username, password, ..}, .. })
+                if url == "smb://nas.example/Documents" && username == "rice" && password == "secret")));
+    }
+
+    #[test]
+    fn protocol_changes_preserve_host_path_and_validate_only_active_fields() {
+        let (mut files, _) = RiceFiles::launch_at(app(), &[], request(1)).unwrap();
+        files.remote.open_url("smb://[::1]/Documents");
+        files.select_remote_protocol(NFS).unwrap();
+        assert_eq!(files.remote.dialog.as_ref().unwrap().url, "nfs://[::1]/Documents");
+        files.update_remote_field(UID_FIELD, "invalid").unwrap();
+        let messages = files.confirm_remote(request(2)).unwrap();
+        assert!(!messages.iter().any(|message| matches!(message, Message::DataProviderRequest(_))));
+        files.select_remote_protocol(WEBDAV).unwrap();
+        let messages = files.confirm_remote(request(3)).unwrap();
+        assert!(messages.iter().any(|message| matches!(message,
+            Message::DataProviderRequest(DataProviderRequest { operation: DataProviderOperation::MountConnectWebDav {url, ..}, .. })
+                if url == "https://[::1]/Documents")));
+    }
+}
+
+#[cfg(test)]
 mod translation_tests {
     use super::*;
 
@@ -705,9 +813,10 @@ mod translation_tests {
             assert_eq!(remote, original);
         }
         remote.dialog_mut().unwrap().url = "nfs://server/export".into();
+        remote.dialog_mut().unwrap().nfs_advanced = true;
         rice_i18n::with_locale(2, || {
             let mut output = Vec::new(); patches(&mut output, &remote);
-            for label in ["用户 ID", "组 ID"] {
+            for label in ["NFS 高级选项", "留空以使用默认 NFS 身份。", "用户 ID（可选）", "组 ID（可选）"] {
                 assert!(output.iter().any(|p| matches!(p, Patch::Create {widget, ..} if widget.text.as_deref() == Some(label))));
             }
         });

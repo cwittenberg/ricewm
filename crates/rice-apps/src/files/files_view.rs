@@ -84,9 +84,9 @@ const STATUS: u64 = 125;
 pub(super) const ENTRY_BASE: u64 = 1_000;
 pub(super) const SECONDARY_ENTRY_BASE: u64 = 100_000;
 pub(super) const TAB_BASE: u64 = 10_000;
-pub(super) const TAB_ROW_BASE: u64 = 20_000;
-pub(super) const TAB_CLOSE_BASE: u64 = 30_000;
-const TAB_CLOSE_TOOLTIP_BASE: u64 = 32_000;
+pub(super) const TAB_ROW_BASE: u64 = 2_000_000;
+pub(super) const TAB_CLOSE_BASE: u64 = 2_010_000;
+const TAB_CLOSE_TOOLTIP_BASE: u64 = 2_020_000;
 pub(super) const COMPLETION_BASE: u64 = 12_000;
 pub(super) const DETAIL_ROW_BASE: u64 = 40_000;
 pub(super) const DETAIL_META_BASE: u64 = 50_000;
@@ -334,6 +334,7 @@ pub(super) fn location_patches(
     suggestions: &[rice_files::GuestPath],
     selected_suggestion: Option<usize>,
     redmond98: bool,
+    location_edited: bool,
 ) {
     create(
         patches,
@@ -356,17 +357,18 @@ pub(super) fn location_patches(
             None,
         );
     }
-    create(
+    create_with_state(
         patches,
         BREADCRUMB,
         Some(LOCATION_ROW),
         WidgetKind::TextField,
-        Some(if redmond98 && location == "/root" {
+        Some(if redmond98 && !location_edited && location == "/root" {
             "My Computer"
         } else {
             location
         }),
         Some(if redmond98 && location == "/root" { IconId::Computer } else { IconId::FolderOpen }),
+        WidgetState::ENABLED | WidgetState::SELECT_ALL_ON_FOCUS,
     );
     completion_patches(patches, suggestions, selected_suggestion);
 }
@@ -1324,7 +1326,7 @@ fn entry_patches(
 }
 
 fn tag_file_icons(patches:&mut Vec<Patch>,start:usize,entry:&EntryMetadata){
-    if entry.kind!=EntryKind::File{return;}
+    if !matches!(entry.kind,EntryKind::File|EntryKind::Directory){return;}
     let ids=patches[start..].iter().filter_map(|patch|if let Patch::Create {widget,..}=patch {if widget.icon==Some(entry_icon(entry)){Some(widget.id)}else{None}}else{None}).collect::<Vec<_>>();
     for id in ids {patches.push(Patch::IconSelector {id,selector:Some(format!("mime:{}",infer_media_type(entry)))});}
 }
@@ -1394,11 +1396,8 @@ pub(super) fn status_patches(
             Some(IconId::Folder)
         },
     );
-    if let Some(loaded) = loading {
-        create(patches,SELECTION_STATUS,Some(134),WidgetKind::Row,Some("panel:compact"),None);
-        create(patches,310_040,Some(SELECTION_STATUS),WidgetKind::Spinner,None,None);
-        create(patches,310_041,Some(SELECTION_STATUS),WidgetKind::Label,Some(&rice_i18n::format("files.loading-count", &[("count", &loaded.to_string())])),None);
-    } else {
+    // Keep one centered label through loading and completion. The spinner is
+    // an independent accessory, so its appearance never moves this text.
     create_with_state(
         patches,
         SELECTION_STATUS,
@@ -1421,6 +1420,8 @@ pub(super) fn status_patches(
         None,
         WidgetState::ENABLED | WidgetState::CENTER_ALIGNED,
     );
+    if loading.is_some() {
+        create(patches,310_040,Some(134),WidgetKind::Spinner,None,None);
     }
     if redmond98 {
         create(
@@ -1437,22 +1438,21 @@ pub(super) fn status_patches(
             ZOOM_PANEL,
             Some(STATUS),
             WidgetKind::Row,
-            Some("panel:equal-fixed"),
+            Some("panel:actions:padding=0"),
             None,
         );
         create_with_state(
             patches,
             ZOOM_SLIDER,
             Some(ZOOM_PANEL),
-            WidgetKind::ScrollBar,
-            Some(&format!(
-                "{}/{}",
-                zoom_permille.saturating_sub(super::MIN_VIEW_ZOOM_PERMILLE),
-                super::MAX_VIEW_ZOOM_PERMILLE - super::MIN_VIEW_ZOOM_PERMILLE
-            )),
+            WidgetKind::Slider,
+            Some(&super::view_zoom_fraction(zoom_permille)),
             None,
-            WidgetState::ENABLED | WidgetState::FLAT,
+            WidgetState::ENABLED | WidgetState::FLAT | WidgetState::EXPANSIVE,
         );
+        create(patches, 310_041, Some(ZOOM_PANEL), WidgetKind::Label,
+            Some(&format!("{}%", zoom_permille / 10)), None);
+
     }
 }
 

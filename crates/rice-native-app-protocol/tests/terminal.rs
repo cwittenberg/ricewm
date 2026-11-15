@@ -12,6 +12,7 @@ fn native_terminal_transport_roundtrips_without_changing_legacy_tags() {
             rows: 24,
         },
         TerminalAction::OpenXCodex { columns: 80, rows: 24 },
+        TerminalAction::OpenClaude { columns: 80, rows: 24 },
         TerminalAction::OpenGridWithMemory {
             columns: 100, rows: 24, memory_mib: 2048,
         },

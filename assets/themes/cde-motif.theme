@@ -1,36 +1,1888 @@
-# Common Oldfashioned: dense CDE/Motif furniture with split controls and a bottom panel.
-name=Common Oldfashioned
-chrome.profile=familiar
-material=solid
-corner.radius=0
-button.style=chamfered
-window.shape=default
-control.layout=split
-panel.position=bottom
-sidebar.material=solid
-menu.material=solid
-taskbar.bar=688487
-taskbar.ridge=bed0cf
-taskbar.start=cab9ab
-taskbar.task=78969a
-taskbar.tray=526d70
-taskbar.text=ffffff
-accent=d58e56
-icon=243234
-icon.hover=f0a25f
-icon.variant=monochrome
-icon.overrides=
-menu.background=4b7583
-menu.alternate=4b7583
-menu.separator=bed0cf
-menu.hover=335f78
-menu.selected=335f78
-menu.text=ffffff
-frame.active=4b7280
-frame.inactive=8c8079
-frame.border=46595b
-frame.body=cab9ac
-frame.text=ffffff
-frame.control=78969a
-frame.close=9a756b
-frame.pressed=315b69
+{
+  "$schema": "ricewm.theme/v2",
+  "name": "Common Oldfashioned",
+  "description": "A complete Motif/CDE-inspired workstation theme: sculpted slate furniture, diamond radio buttons, recessed gold indicators, square switches, proportional arrow scrollbars, thick resize frames and a full-size regular desktop dock.",
+  "appearance": {
+    "chrome.profile": "familiar",
+    "material": "solid",
+    "corner.radius": "0",
+    "button.style": "default",
+    "window.shape": "default",
+    "control.layout": "split",
+    "panel.position": "bottom",
+    "sidebar.material": "solid",
+    "menu.material": "solid",
+    "taskbar.bar": "9297ab",
+    "taskbar.ridge": "d8dbe5",
+    "taskbar.start": "aeb0c3",
+    "taskbar.task": "aeb0c3",
+    "taskbar.tray": "81869d",
+    "taskbar.text": "161824",
+    "accent": "5b6388",
+    "icon": "202334",
+    "icon.hover": "202334",
+    "icon.variant": "color",
+    "icon.overrides": "",
+    "menu.background": "aeb0c3",
+    "menu.alternate": "b8becb",
+    "menu.separator": "62677f",
+    "menu.hover": "9297ab",
+    "menu.selected": "9297ab",
+    "menu.text": "161824",
+    "frame.active": "584d8b",
+    "frame.inactive": "a0a2b5",
+    "frame.border": "41465d",
+    "frame.body": "aeb0c3",
+    "frame.text": "fff7e8",
+    "frame.control": "584d8b",
+    "frame.close": "584d8b",
+    "frame.pressed": "525a7b"
+  },
+  "version": 1,
+  "background": {
+    "type": "image",
+    "source": "/usr/share/ricewm/wallpapers/common-oldfashioned-embossed.svg",
+    "mode": "Tile"
+  },
+  "wallpapers": [
+    {
+      "id": "common-oldfashioned-embossed",
+      "name": "Embossed RiceWM",
+      "source": "/usr/share/ricewm/wallpapers/common-oldfashioned-embossed.svg",
+      "type": "image",
+      "mode": "Tile",
+      "credit": "Original RiceWM artwork; CC0-1.0"
+    }
+  ],
+  "defaultWallpaper": "common-oldfashioned-embossed",
+  "typography": {
+    "family": "classic",
+    "titleFamily": "classic",
+    "bodyPx": 13,
+    "smallPx": 12,
+    "titlePx": 14,
+    "bodyWeight": 400,
+    "titleWeight": 400
+  },
+  "metrics": {
+    "titlebarHeight": 30,
+    "controlHeight": 26,
+    "menuRowHeight": 26,
+    "scrollbarWidth": 20,
+    "borderWidth": 1,
+    "cornerRadius": 0,
+    "focusWidth": 1,
+    "controlPaddingX": 9,
+    "controlPaddingY": 4,
+    "scrollbarArrowSize": 20,
+    "scrollbarArrowPlacement": 0,
+    "scrollbarThumbMin": 24,
+    "scrollbarInset": 0,
+    "sliderTrackHeight": 8,
+    "sliderThumbWidth": 28,
+    "sliderThumbHeight": 20,
+    "checkboxSize": 18,
+    "radioSize": 20,
+    "choiceGap": 7,
+    "checkboxGlyphInset": 4,
+    "radioGlyphInset": 4,
+    "switchWidth": 42,
+    "switchHeight": 22,
+    "switchThumbWidth": 20,
+    "switchThumbHeight": 18,
+    "switchInset": 2,
+    "switchGap": 7,
+    "tabHeight": 28,
+    "tabPaddingX": 12,
+    "tabGap": 3,
+    "tabRecess": 4
+  },
+  "windowDecorations": {
+    "controlLayout": "split",
+    "controlOrder": [
+      "menu",
+      "minimize",
+      "maximize"
+    ],
+    "frameInsets": [
+      5,
+      5,
+      5,
+      5
+    ],
+    "clientRecess": 0,
+    "resizeGripLength": 30,
+    "resizeGripThickness": 2,
+    "titleAlignment": "center",
+    "showTitleIcon": false,
+    "frameBorderWidth": 1,
+    "captionWidth": 24,
+    "captionHeight": 24,
+    "captionGap": 2,
+    "captionRadius": 0,
+    "controlBoxEdgeInset": 1,
+    "glyphStyle": "beveled",
+    "glyphWidth": 12,
+    "glyphHeight": 12
+  },
+  "surfaceSkins": {
+    "button": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#babed0",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "toolbarButton": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#babed0",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "flatButton": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#babed0",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "tableHeader": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "tab": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#242638",
+        "radius": 0,
+        "border": {
+          "color": "#666c83",
+          "width": 1,
+          "edges": [
+            "top",
+            "left",
+            "right"
+          ]
+        }
+      },
+      "hover": {
+        "background": "#a0a2b5",
+        "foreground": "#242638",
+        "radius": 0,
+        "border": {
+          "color": "#666c83",
+          "width": 1,
+          "edges": [
+            "top",
+            "left",
+            "right"
+          ]
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#f0f0f7",
+          "dark": "#aeb0c3",
+          "width": 2,
+          "inset": 0
+        },
+        "border": {
+          "color": "#656a82",
+          "width": 1,
+          "edges": [
+            "left",
+            "right"
+          ]
+        },
+        "accent": {
+          "edge": "top",
+          "color": "#62547f",
+          "width": 2
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 4,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#aeb0c3",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#f0f0f7",
+          "dark": "#aeb0c3",
+          "width": 2,
+          "inset": 0
+        },
+        "border": {
+          "color": "#656a82",
+          "width": 1,
+          "edges": [
+            "left",
+            "right"
+          ]
+        },
+        "accent": {
+          "edge": "top",
+          "color": "#62547f",
+          "width": 2
+        }
+      }
+    },
+    "startButton": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#babed0",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "listItem": {
+      "normal": {
+        "radius": 0,
+        "foreground": "#161824",
+        "background": "#b8becb"
+      },
+      "hover": {
+        "background": "#c5c8d8",
+        "foreground": "#242638",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 1,
+            "radius": 0
+          }
+        ]
+      },
+      "pressed": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      }
+    },
+    "gridItem": {
+      "normal": {
+        "radius": 0,
+        "foreground": "#161824",
+        "background": "#b8becb"
+      },
+      "hover": {
+        "background": "#c5c8d8",
+        "foreground": "#242638",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 1,
+            "radius": 0
+          }
+        ]
+      },
+      "pressed": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      }
+    },
+    "treeItem": {
+      "normal": {
+        "radius": 0,
+        "foreground": "#161824",
+        "background": "#b8becb"
+      },
+      "hover": {
+        "background": "#c5c8d8",
+        "foreground": "#242638",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 1,
+            "radius": 0
+          }
+        ]
+      },
+      "pressed": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      }
+    },
+    "navigationItem": {
+      "normal": {
+        "radius": 0,
+        "foreground": "#161824",
+        "background": "#b8becb"
+      },
+      "hover": {
+        "background": "#c5c8d8",
+        "foreground": "#242638",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 1,
+            "radius": 0
+          }
+        ]
+      },
+      "pressed": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0
+      }
+    },
+    "input": {
+      "normal": {
+        "background": "#cbd0db",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3
+          }
+        ]
+      },
+      "disabled": {
+        "background": "#aeb0c3",
+        "foreground": "#73788e"
+      }
+    },
+    "menu": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#d6d9e4",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        },
+        "border": {
+          "color": "#565b73",
+          "width": 1
+        },
+        "shadow": {
+          "color": "#66627c",
+          "blur": 2,
+          "x": 2,
+          "y": 2
+        }
+      }
+    },
+    "menuHeader": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "menuFooter": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "dock": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "notification": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "windowFrame": {
+      "normal": {
+        "background": "#a0a2b5",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "selected": {
+        "background": "#584d8b",
+        "foreground": "#fff7e8",
+        "radius": 0,
+        "bevel": {
+          "light": "#a89dc8",
+          "dark": "#39305e",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "windowTitle": {
+      "normal": {
+        "background": "#a0a2b5",
+        "foreground": "#242638",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "background": "#a0a2b5",
+        "foreground": "#111111",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#584d8b",
+        "foreground": "#fff7e8",
+        "radius": 0,
+        "bevel": {
+          "light": "#a89dc8",
+          "dark": "#39305e",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "windowClient": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "windowResizeGrip": {
+      "normal": {
+        "background": "#62677f",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#39305e",
+        "radius": 0
+      }
+    },
+    "caption": {
+      "normal": {
+        "background": "#a0a2b5",
+        "foreground": "#242638",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#6a5c9d",
+        "foreground": "#fff7e8",
+        "radius": 0,
+        "bevel": {
+          "light": "#a89dc8",
+          "dark": "#39305e",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#4a4077",
+        "foreground": "#fff7e8",
+        "radius": 0,
+        "bevel": {
+          "light": "#39305e",
+          "dark": "#a89dc8",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#111111"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ],
+        "foreground": "#fff7e8"
+      },
+      "selected": {
+        "background": "#584d8b",
+        "foreground": "#fff7e8",
+        "radius": 0,
+        "bevel": {
+          "light": "#a89dc8",
+          "dark": "#39305e",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "menuItem": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0
+      },
+      "hover": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#101320",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      }
+    },
+    "separator": {
+      "normal": {
+        "background": "transparent",
+        "foreground": "#242638",
+        "radius": 0,
+        "border": {
+          "color": "#979bb0",
+          "width": 1,
+          "edges": [
+            "bottom"
+          ]
+        }
+      }
+    },
+    "runningIndicator": {
+      "normal": {
+        "background": "#e6d77a",
+        "radius": 0
+      },
+      "selected": {
+        "background": "#ffffff"
+      }
+    },
+    "scrollbarTrackHorizontal": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 1,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarThumbHorizontal": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarDecrementHorizontal": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarIncrementHorizontal": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarGripHorizontal": {
+      "normal": {
+        "background": "transparent",
+        "radius": 0,
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"7\" height=\"7\" shape-rendering=\"crispEdges\" viewBox=\"0 0 7 7\"><path d=\"M2 0v7 M5 0v7\" stroke=\"#62677f\"/><path d=\"M3 0v7 M6 0v7\" stroke=\"#e2e5ef\"/></svg>"
+        }
+      }
+    },
+    "scrollbarTrackVertical": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 1,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarThumbVertical": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarDecrementVertical": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarIncrementVertical": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "scrollbarGripVertical": {
+      "normal": {
+        "background": "transparent",
+        "radius": 0,
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"7\" height=\"7\" shape-rendering=\"crispEdges\" viewBox=\"0 0 7 7\"><path d=\"M0 2h7 M0 5h7\" stroke=\"#62677f\"/><path d=\"M0 3h7 M0 6h7\" stroke=\"#e2e5ef\"/></svg>"
+        }
+      }
+    },
+    "sliderTrack": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 1,
+          "inset": 0
+        }
+      }
+    },
+    "sliderFill": {
+      "normal": {
+        "background": "#9297ab",
+        "radius": 0
+      }
+    },
+    "sliderThumb": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        },
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"28\" height=\"20\" shape-rendering=\"crispEdges\" viewBox=\"0 0 28 20\"><path d=\"M12 5v10 M15 5v10\" stroke=\"#62677f\"/><path d=\"M13 5v10 M16 5v10\" stroke=\"#e2e5ef\"/></svg>"
+        }
+      },
+      "hover": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "foreground": "#73788e"
+      },
+      "focused": {
+        "rims": [
+          {
+            "color": "#292e4a",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      },
+      "selected": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "tabStrip": {
+      "normal": {
+        "background": "#81869d",
+        "foreground": "#242638",
+        "radius": 0,
+        "border": {
+          "color": "#656a82",
+          "width": 1,
+          "edges": [
+            "bottom"
+          ]
+        }
+      }
+    },
+    "checkboxIndicator": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checked": {
+        "background": "#e6d77a",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "indeterminate": {
+        "background": "#e6d77a",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checkedPressed": {
+        "background": "#e6d77a",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "background": "#a2a6b8"
+      },
+      "checkedDisabled": {
+        "background": "#c6bd91",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "checkboxGlyph": {
+      "normal": {
+        "foreground": "#161824"
+      },
+      "checked": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M3 9l5 5 9-10\" fill=\"none\" stroke=\"#292e4a\" stroke-width=\"3\"/></svg>"
+        }
+      },
+      "indeterminate": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M3 10h14\" stroke=\"#292e4a\" stroke-width=\"3\"/></svg>"
+        }
+      }
+    },
+    "radioIndicator": {
+      "normal": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M10 1L19 10 10 19 1 10Z\" fill=\"#aeb0c3\"/><path d=\"M1 10L10 1 19 10\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"2\"/><path d=\"M19 10L10 19 1 10\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"2\"/></svg>"
+        },
+        "radius": 0
+      },
+      "checked": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M10 1L19 10 10 19 1 10Z\" fill=\"#e6d77a\"/><path d=\"M1 10L10 1 19 10\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"2\"/><path d=\"M19 10L10 19 1 10\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"2\"/></svg>"
+        }
+      },
+      "checkedPressed": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M10 1L19 10 10 19 1 10Z\" fill=\"#e6d77a\"/><path d=\"M1 10L10 1 19 10\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"2\"/><path d=\"M19 10L10 19 1 10\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"2\"/></svg>"
+        }
+      }
+    },
+    "radioGlyph": {
+      "normal": {
+        "foreground": "#161824"
+      },
+      "checked": {
+        "artwork": {
+          "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 20 20\"><path d=\"M10 6l4 4-4 4-4-4Z\" fill=\"#292e4a\"/></svg>"
+        }
+      }
+    },
+    "switchTrack": {
+      "normal": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checked": {
+        "background": "#9297ab",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "switchThumb": {
+      "normal": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checked": {
+        "background": "#e6d77a",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "pressed": {
+        "background": "#aeb0c3",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checkedPressed": {
+        "background": "#e6d77a",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#62677f",
+          "dark": "#e2e5ef",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "disabled": {
+        "background": "#a2a6b8",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      },
+      "checkedDisabled": {
+        "background": "#c6bd91",
+        "foreground": "#161824",
+        "radius": 0,
+        "bevel": {
+          "light": "#e2e5ef",
+          "dark": "#62677f",
+          "width": 2,
+          "inset": 0
+        }
+      }
+    },
+    "switchGlyph": {
+      "normal": {
+        "foreground": "#161824"
+      }
+    },
+    "tabClose": {
+      "normal": {
+        "background": "transparent",
+        "foreground": "#242638",
+        "radius": 0,
+        "border": {
+          "color": "transparent",
+          "width": 0
+        }
+      },
+      "hover": {
+        "background": "transparent",
+        "foreground": "#101320",
+        "radius": 0,
+        "border": {
+          "color": "transparent",
+          "width": 0
+        }
+      },
+      "pressed": {
+        "background": "transparent",
+        "foreground": "#62547f",
+        "radius": 0,
+        "border": {
+          "color": "transparent",
+          "width": 0
+        }
+      },
+      "selected": {
+        "background": "transparent",
+        "foreground": "#101320",
+        "radius": 0,
+        "border": {
+          "color": "transparent",
+          "width": 0
+        }
+      },
+      "focused": {
+        "background": "transparent",
+        "foreground": "#101320",
+        "radius": 0,
+        "border": {
+          "color": "transparent",
+          "width": 0
+        },
+        "rims": [
+          {
+            "color": "#62547f",
+            "width": 1,
+            "inset": 3,
+            "radius": 0
+          }
+        ]
+      }
+    }
+  },
+  "shellAppearance": {
+    "launcher": {
+      "width": 128,
+      "fontFamily": "classic",
+      "fontSize": 13,
+      "fontWeight": 700,
+      "iconSize": 20
+    },
+    "menu": {
+      "rootWidth": 260,
+      "cascadeWidth": 240,
+      "rootColumns": 1,
+      "railWidth": 0,
+      "headerHeight": 28,
+      "headerText": "Workspace",
+      "footerHeight": 0,
+      "fontFamily": "classic",
+      "fontSize": 13
+    }
+  },
+  "settings": {
+    "dock.style": "Standard",
+    "dock.position": "Bottom",
+    "dock.height": "Comfortable",
+    "dock.icon_placement": "Center",
+    "dock.magnification": "false",
+    "dock.auto_hide": "false",
+    "dock.translucent": "false",
+    "dock.top_bar.visible": "true",
+    "dock.top_bar.transparent": "false",
+    "dock.launcher.appearance": "Icon and text",
+    "dock.launcher.text": "RiceWM",
+    "dock.quick_launch.visible": "true",
+    "dock.quick_launch.layout": "show-desktop,files,terminal,app:native:bowl",
+    "dock.tray_layout": "workspaces,sound,clock",
+    "menu.structure": "Default",
+    "menu.icon_size": "16 px",
+    "menu.show_workspaces": "true",
+    "appearance.animations": "false",
+    "appearance.animations.window": "None",
+    "appearance.animations.menu": "None",
+    "appearance.animations.elastic": "false",
+    "appearance.windows.active_shadow": "false",
+    "appearance.windows.inactive_translucency": "false",
+    "appearance.menus.shadow": "false",
+    "appearance.frosted_ice.enabled": "false",
+    "appearance.controls.button_style": "Default",
+    "menu.show_themes": "true"
+  },
+  "treeView": {
+    "expander": "plus-minus",
+    "lines": "solid",
+    "indent": 18,
+    "expanderSize": 11,
+    "rootLines": true,
+    "lineColor": "#62677f",
+    "expanderBackground": "#aeb0c3",
+    "expanderBorder": "#62677f",
+    "expanderForeground": "#161824"
+  },
+  "motion": {
+    "window.open": {
+      "preset": "Instant",
+      "duration": 0
+    },
+    "window.close": {
+      "preset": "Instant",
+      "duration": 0
+    },
+    "menu.open": {
+      "preset": "Instant",
+      "duration": 0
+    },
+    "menu.close": {
+      "preset": "Instant",
+      "duration": 0
+    }
+  },
+  "icons": {
+    "folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "documents": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M26.5 23.5h8l3 3v12h-11Z\" fill=\"#fff8e7\" stroke=\"#606576\"/><path d=\"M34.5 24v3h3M29 30.5h6M29 33.5h6M29 36.5h4\" fill=\"none\" stroke=\"#878a94\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "computer": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" shape-rendering=\"crispEdges\"><path d=\"M5 3h23v20H5Z\" fill=\"#414657\"/><path d=\"M3 2h23v20H3Z\" fill=\"#b8bac7\" stroke=\"#414453\"/><path d=\"M4 3h21M4 4v16\" stroke=\"#ffffff\" fill=\"none\"/><path d=\"M6 6h17v12H6Z\" fill=\"#416675\" stroke=\"#636776\"/><path d=\"M7 7h15v2H7Z\" fill=\"#6b929b\"/><path d=\"M8 15h4M13 15h4\" stroke=\"#c6d8ce\"/><path d=\"M12 22h6v3h-6Z\" fill=\"#6c7082\"/><path d=\"M3 25h25v5H3Z\" fill=\"#aeb0c3\" stroke=\"#414453\"/><path d=\"M4 26h22M4 27v2\" stroke=\"#ffffff\" fill=\"none\"/><path d=\"M6 28h9M20 27h4\" stroke=\"#555a6c\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Motif-style artwork."
+    },
+    "terminal": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" shape-rendering=\"crispEdges\"><path d=\"M5 3h23v20H5Z\" fill=\"#414657\"/><path d=\"M3 2h23v20H3Z\" fill=\"#b8bac7\" stroke=\"#414453\"/><path d=\"M4 3h21M4 4v16\" stroke=\"#ffffff\" fill=\"none\"/><path d=\"M6 6h17v12H6Z\" fill=\"#202a30\" stroke=\"#636776\"/><path d=\"M7 7h15v2H7Z\" fill=\"#202a30\"/><path d=\"M8 10l3 2-3 2M13 15h5\" fill=\"none\" stroke=\"#e6eacb\"/><path d=\"M12 22h6v3h-6Z\" fill=\"#6c7082\"/><path d=\"M3 25h25v5H3Z\" fill=\"#aeb0c3\" stroke=\"#414453\"/><path d=\"M4 26h22M4 27v2\" stroke=\"#ffffff\" fill=\"none\"/><path d=\"M6 28h9M20 27h4\" stroke=\"#555a6c\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Motif-style artwork."
+    },
+    "home": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" shape-rendering=\"crispEdges\"><path d=\"M4 16L16 4l13 12-2 2-2-2v13H7V16Z\" fill=\"#434552\"/><path d=\"M7 14l9-8 9 8v14H7Z\" fill=\"#d7c6a1\" stroke=\"#555562\"/><path d=\"M3 15L16 2l13 13-3 2L16 7 6 17Z\" fill=\"#8393aa\" stroke=\"#444a60\"/><path d=\"M4 15L16 3l12 12M8 17v10\" fill=\"none\" stroke=\"#d9e1ed\"/><path d=\"M13 18h7v10h-7Z\" fill=\"#65564c\"/><path d=\"M9 15h3v5H9Z\" fill=\"#a3c2d0\" stroke=\"#777771\"/><path d=\"M18 22h1\" stroke=\"#ead791\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Motif-style artwork."
+    },
+    "trash": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" shape-rendering=\"crispEdges\"><path d=\"M8 9h17l-2 20H10Z\" fill=\"#434555\"/><path d=\"M6 8h18l-2 20H8Z\" fill=\"#9fa5b4\" stroke=\"#454959\"/><path d=\"M7 9h16M8 10l1 16\" fill=\"none\" stroke=\"#e5e7ed\"/><path d=\"M11 11v13M15 11v13M19 11v13\" stroke=\"#656e82\"/><path d=\"M5 5h20v4H5Z\" fill=\"#b5bac6\" stroke=\"#454959\"/><path d=\"M6 6h18\" stroke=\"#f0f0ee\"/><path d=\"M11 2h8v3h-2V4h-4v1h-2Z\" fill=\"#62687c\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Motif-style artwork."
+    },
+    "settings": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 32 32\" shape-rendering=\"crispEdges\"><path d=\"M4 4h25v25H4Z\" fill=\"#393c4c\"/><path d=\"M2 2h26v26H2Z\" fill=\"#b6bac9\" stroke=\"#444858\"/><path d=\"M3 3h24M3 4v23\" fill=\"none\" stroke=\"#f5f5ec\"/><path d=\"M8 6v17M15 6v17M22 6v17\" stroke=\"#595e72\"/><path d=\"M9 6v17M16 6v17M23 6v17\" stroke=\"#e9eaf0\"/><path d=\"M5 10h7v5H5ZM12 17h7v5h-7ZM19 7h7v5h-7Z\" fill=\"#7d90ac\" stroke=\"#444858\"/><path d=\"M6 11h5M13 18h5M20 8h5\" stroke=\"#e8eaf0\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM Motif-style artwork."
+    },
+    "pictures": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M23.5 24.5h15v13h-15Z\" fill=\"#fcf5df\" stroke=\"#5b6274\"/><path d=\"M25 26h12v9H25Z\" fill=\"#7d9dba\"/><path d=\"m25 34 4-5 3 3 2-2 3 5H25Z\" fill=\"#667d5e\"/><path d=\"M34 27h2v2h-2Z\" fill=\"#ede3a4\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "desktop-folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M24.5 24.5h13v10h-13Z\" fill=\"#9b9eb4\" stroke=\"#535a6e\"/><path d=\"M26 26h10v7H26Z\" fill=\"#526f7a\"/><path d=\"M29 35h4v2h-4M26 38h10\" stroke=\"#535a6e\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "folder-home": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"m24 31 7-7 7 7h-2v8H26v-8Z\" fill=\"#d0c8ad\" stroke=\"#616278\"/><path d=\"m24 31 7-7 7 7\" fill=\"none\" stroke=\"#697187\"/><path d=\"M29 33h4v6h-4Z\" fill=\"#68768b\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "folder-pictures": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M23.5 24.5h15v13h-15Z\" fill=\"#fcf5df\" stroke=\"#5b6274\"/><path d=\"M25 26h12v9H25Z\" fill=\"#7d9dba\"/><path d=\"m25 34 4-5 3 3 2-2 3 5H25Z\" fill=\"#667d5e\"/><path d=\"M34 27h2v2h-2Z\" fill=\"#ede3a4\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "folder-documents": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M26.5 23.5h8l3 3v12h-11Z\" fill=\"#fff8e7\" stroke=\"#606576\"/><path d=\"M34.5 24v3h3M29 30.5h6M29 33.5h6M29 36.5h4\" fill=\"none\" stroke=\"#878a94\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "desktop": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M24.5 24.5h13v10h-13Z\" fill=\"#9b9eb4\" stroke=\"#535a6e\"/><path d=\"M26 26h10v7H26Z\" fill=\"#526f7a\"/><path d=\"M29 35h4v2h-4M26 38h10\" stroke=\"#535a6e\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "application": "computer",
+    "desktop-settings": "settings",
+    "home-folder": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"m24 31 7-7 7 7h-2v8H26v-8Z\" fill=\"#d0c8ad\" stroke=\"#616278\"/><path d=\"m24 31 7-7 7 7\" fill=\"none\" stroke=\"#697187\"/><path d=\"M29 33h4v6h-4Z\" fill=\"#68768b\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "file": "documents",
+    "downloads": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 48 48\"><path d=\"M5.5 12.5h13l4 5h20v24h-37Z\" fill=\"#a1a7ba\" stroke=\"#50566a\"/><path d=\"M6.5 13.5h11.5l4 5h19\" fill=\"none\" stroke=\"#e9eaf0\"/><path d=\"M5.5 20.5h37v21h-37Z\" fill=\"#b9bfce\" stroke=\"#50566a\"/><path d=\"M6.5 40V21.5h35\" fill=\"none\" stroke=\"#f2f2f5\"/><path d=\"M7 40.5h34.5v-18\" fill=\"none\" stroke=\"#7a8299\"/><path d=\"M28.5 24.5h5v7h4l-6.5 7-6.5-7h4Z\" fill=\"#526c82\" stroke=\"#394c63\"/><path d=\"M29.5 25.5h3v7h2\" fill=\"none\" stroke=\"#9cbdcb\"/></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM CDE-style folder artwork."
+    },
+    "network-mounts": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"48\" height=\"48\" viewBox=\"0 0 48 48\"><path d=\"M5 21 11 10h26l6 11v19H5Z\" fill=\"#aeb0c3\" stroke=\"#41465d\" stroke-width=\"2\"/><path d=\"m7 20 5-8h24l5 8\" fill=\"#c2c6d5\" stroke=\"#e2e5ef\" stroke-width=\"2\"/><path d=\"M7 22h34v16H7Z\" fill=\"#a0a6bb\"/><path d=\"M7 38V23h34\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"2\"/><path d=\"M41 23v15H7\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"2\"/><path d=\"M12 28h20v3H12Z\" fill=\"#41465d\"/><path d=\"M12 32h20\" stroke=\"#cfd3df\"/><path d=\"M35 32h3v3h-3Z\" fill=\"#728b78\" stroke=\"#41465d\"/></svg>"
+    },
+    "drive": "network-mounts",
+    "submenu-right": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><g><path d=\"M5 3 11 8 5 13Z\" fill=\"#aeb0c3\"/><path d=\"M5 13V3L11 8\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"1.5\"/><path d=\"M11 8 5 13\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"1.5\"/></g></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM raised Motif cascade indicator."
+    },
+    "submenu-left": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><g transform=\"translate(16 0) scale(-1 1)\"><path d=\"M5 3 11 8 5 13Z\" fill=\"#aeb0c3\"/><path d=\"M5 13V3L11 8\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"1.5\"/><path d=\"M11 8 5 13\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"1.5\"/></g></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM raised Motif cascade indicator."
+    },
+    "submenu-right-hover": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><g><path d=\"M5 3 11 8 5 13Z\" fill=\"#9297ab\"/><path d=\"M5 13V3L11 8\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"1.5\"/><path d=\"M11 8 5 13\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"1.5\"/></g></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM pressed Motif cascade indicator."
+    },
+    "submenu-left-hover": {
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 16 16\"><g transform=\"translate(16 0) scale(-1 1)\"><path d=\"M5 3 11 8 5 13Z\" fill=\"#9297ab\"/><path d=\"M5 13V3L11 8\" fill=\"none\" stroke=\"#62677f\" stroke-width=\"1.5\"/><path d=\"M11 8 5 13\" fill=\"none\" stroke=\"#e2e5ef\" stroke-width=\"1.5\"/></g></svg>",
+      "monochrome": false,
+      "notice": "Original RiceWM pressed Motif cascade indicator."
+    }
+  }
+}

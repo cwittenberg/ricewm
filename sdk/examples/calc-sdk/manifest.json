@@ -6,7 +6,19 @@
   "version": "2.0.0",
   "description": "The RiceWM calculator redeveloped with the JavaScript RiceApp SDK.",
   "entry": "app.mjs",
-  "window": { "profile": "calculator" },
-  "categories": ["Utility"],
-  "permissions": { "services": ["clipboard.writeText"], "bus": {} }
+  "window": {
+    "profile": "calculator"
+  },
+  "categories": [
+    "Utility"
+  ],
+  "permissions": {
+    "services": [
+      "clipboard.writeText"
+    ],
+    "bus": {}
+  },
+  "sdk": {
+    "version": "1.0.0"
+  }
 }

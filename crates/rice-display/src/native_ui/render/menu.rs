@@ -7,7 +7,7 @@ use rice_ui::{
 };
 
 use super::super::{DrawCommand, HitTarget, NativeUiError, TextAlign, TextRole};
-use super::helpers::{bounded_radius, push_command, push_redmond_bevel};
+use super::helpers::{bounded_radius, push_command, push_redmond_bevel, push_target};
 
 const POPUP_PADDING: u32 = 6;
 const ROW_HORIZONTAL_PADDING: u32 = 12;
@@ -34,6 +34,15 @@ pub(crate) fn render_menu_popup(
         return Ok(());
     };
     if let Some(popup) = menu_popup_rect(tree, menu.id, geometry, theme) {
+        // The popup owns its padding, separators and grid gaps as well as its
+        // commands. Register its passive background before foreground children
+        // so an enabled scene underneath cannot receive gap pointer/wheel input.
+        push_target(targets, HitTarget {
+            widget: menu.id,
+            rect: popup,
+            focusable: false,
+            activatable: false,
+        })?;
         let popup_radius = bounded_radius(popup, theme.metrics.corner_radius.saturating_add(4));
         if theme.chrome_profile == ChromeProfile::Redmond98 {
             push_command(
@@ -187,7 +196,7 @@ pub(crate) fn render_menu_popup(
             continue;
         }
         super::render_widget(
-            tree, child, geometry, theme, focused, hovered, pressed, None, None, None, clip,
+            tree, child, geometry, theme, focused, hovered, None, pressed, None, None, None, clip,
             commands, targets,
         )?;
     }
@@ -237,13 +246,14 @@ pub(super) fn render_menu_row(
     widget: &Widget,
     rect: Rect,
     theme: &Theme,
-    enabled: bool,
-    selected: bool,
+    visual: super::VisualState,
+    focused: bool,
     submenu_opens_left: bool,
     has_submenu: bool,
     has_leading_column: bool,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<bool, NativeUiError> {
+    let enabled=visual.enabled();let selected=visual.selected()||visual.hovered();
     let Some(raw_text) = widget.text.as_deref() else {
         return Ok(false);
     };
@@ -282,7 +292,7 @@ pub(super) fn render_menu_row(
                 radius: 0,
             },
         )?;
-        if theme.chrome_profile == ChromeProfile::Redmond98 {
+        if matches!(theme.chrome_profile, ChromeProfile::Redmond98 | ChromeProfile::Familiar) {
             push_command(
                 commands,
                 DrawCommand::Fill {
@@ -299,7 +309,11 @@ pub(super) fn render_menu_row(
                             height: 1,
                         },
                     },
-                    color: rice_ui::Color::opaque(255, 255, 255),
+                    color: if theme.chrome_profile == ChromeProfile::Redmond98 {
+                        rice_ui::Color::opaque(255, 255, 255)
+                    } else {
+                        theme.menu_palette.surface_raised
+                    },
                     radius: 0,
                 },
             )?;
@@ -322,6 +336,17 @@ pub(super) fn render_menu_row(
                 radius: u16::try_from(pill.size.height / 2).unwrap_or(u16::MAX),
             },
         )?;
+    }
+
+    // A popup command owns one row surface, including check/radio commands
+    // and cascades. Their indicators retain independent checked states.
+    let state = if !enabled { 4 } else if visual.pressed() { 2 }
+        else if visual.hovered() { 1 } else if visual.selected() { 5 }
+        else if focused { 3 } else { 0 };
+    // Switch controls keep their existing track surface; unlike check/radio
+    // indicators it is painted by the generic background pass.
+    if widget.kind != WidgetKind::Toggle {
+        push_command(commands, DrawCommand::ThemeSurface { rect, role: 3, state })?;
     }
 
     let selected_background = super::semantic::composite_over(
@@ -352,21 +377,25 @@ pub(super) fn render_menu_row(
         top: if redmond98 {
             1
         } else {
-            u32::from(theme.spacing.control_y)
+            u32::from(theme.spacing.control_y.min(4))
         },
         right: row_padding,
         bottom: if redmond98 {
             1
         } else {
-            u32::from(theme.spacing.control_y)
+            u32::from(theme.spacing.control_y.min(4))
         },
         left: row_padding,
     });
-    let leading_size = u32::from(theme.metrics.icon_small).min(inset.size.height);
+    let custom_choice=matches!(widget.kind,WidgetKind::CheckBox|WidgetKind::RadioButton)&&theme.control_chrome.choice(widget.kind);
+    let leading_size = if custom_choice {theme.control_chrome.choice_size(widget.kind,u32::from(theme.metrics.icon_small))}else{u32::from(theme.metrics.icon_small)}.min(inset.size.height);
+    let indicator_gap=if custom_choice {theme.control_chrome.metric(18,indicator_gap)}else{indicator_gap};
     let leading_gutter =
         u32::from(has_leading_column).saturating_mul(leading_size.saturating_add(indicator_gap));
     let label_x = inset.origin.x.saturating_add_unsigned(leading_gutter);
-    if matches!(widget.kind, WidgetKind::CheckBox | WidgetKind::RadioButton) {
+    if custom_choice {
+        super::choice::themed_indicator(widget,inset,theme,visual,focused,commands)?;
+    } else if matches!(widget.kind, WidgetKind::CheckBox | WidgetKind::RadioButton) {
         let indicator = leading_size;
         let indicator_rect = Rect {
             origin: Point {

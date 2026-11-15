@@ -7,10 +7,16 @@ impl DisplayServer {
         self.wm_taskbar_visible && (!self.wm_taskbar_auto_hide || self.wm_taskbar_revealed)
     }
 
+    pub(super) const fn wm_taskbar_thickness(&self) -> u16 {
+        if self.wm_icons_taskbar {
+            match self.wm_dock_height { Some(height) => height as u16, None => 44 }
+        } else { WM_TASKBAR_HEIGHT }
+    }
+
     pub(super) const fn wm_reserved_taskbar_height(&self) -> u16 {
         if self.wm_taskbar_visible && !self.wm_taskbar_auto_hide && !self.wm_taskbar_edge.vertical()
         {
-            if self.wm_dock_style { 0 } else { WM_TASKBAR_HEIGHT }
+            if self.wm_dock_style && !self.wm_icons_taskbar { 0 } else { self.wm_taskbar_thickness() }
         } else {
             0
         }
@@ -19,7 +25,7 @@ impl DisplayServer {
     pub(super) const fn wm_reserved_taskbar_width(&self) -> u16 {
         if self.wm_taskbar_visible && !self.wm_taskbar_auto_hide && self.wm_taskbar_edge.vertical()
         {
-            if self.wm_dock_style { 0 } else { WM_TASKBAR_HEIGHT }
+            if self.wm_dock_style && !self.wm_icons_taskbar { 0 } else { self.wm_taskbar_thickness() }
         } else {
             0
         }
@@ -75,7 +81,7 @@ impl DisplayServer {
     }
 
     pub(super) fn wm_taskbar_local_rect_for(&self, edge: WmTaskbarEdge) -> (i16, i16, u16, u16) {
-        if self.wm_dock_style {
+        if self.wm_dock_style && !self.wm_icons_taskbar {
             let vertical = edge.vertical();
             let panel = if self.wm_topbar_all_monitors || self.wm_dock_output_rect() == self.wm_primary_rect() { self.wm_reserved_gnome_panel_height() } else { 0 };
             let top = if self.wm_gnome_panel_bottom { 0 } else { panel };
@@ -97,8 +103,8 @@ impl DisplayServer {
                 ),
             };
         }
-        let thickness_x = WM_TASKBAR_HEIGHT.min(self.wm_dock_output_rect().2);
-        let thickness_y = WM_TASKBAR_HEIGHT.min(self.wm_dock_output_rect().3);
+        let thickness_x = self.wm_taskbar_thickness().min(self.wm_dock_output_rect().2);
+        let thickness_y = self.wm_taskbar_thickness().min(self.wm_dock_output_rect().3);
         let panel = if self.wm_topbar_all_monitors || self.wm_dock_output_rect() == self.wm_primary_rect() { self.wm_reserved_gnome_panel_height() } else { 0 };
         let top = if self.wm_gnome_panel_bottom { 0 } else { panel };
         let available_height = self.wm_dock_output_rect().3.saturating_sub(panel);
@@ -370,7 +376,7 @@ impl DisplayServer {
             && i32::from(root_x) < i32::from(x).saturating_add(i32::from(width))
             && i32::from(root_y) >= i32::from(y)
             && i32::from(root_y) < i32::from(y).saturating_add(i32::from(height));
-        let floating_gap = self.wm_dock_style && match self.wm_taskbar_edge {
+        let floating_gap = self.wm_dock_style && !self.wm_icons_taskbar && match self.wm_taskbar_edge {
             WmTaskbarEdge::Bottom => {
                     root_x >= x && i32::from(root_x) < i32::from(x) + i32::from(width) && root_y >= y}
                 WmTaskbarEdge::Top => {

@@ -27,7 +27,7 @@ body:
 - type: textarea
   id: environment
   attributes:
-    label: RiceWM version, browser and operating system
+    label: Browser and operating system
   validations:
     required: true
 - type: textarea

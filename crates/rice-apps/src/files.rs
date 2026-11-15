@@ -77,10 +77,10 @@ use rice_ui::{Patch, PatchConversionError, RetainedTree, TreeError, WidgetKind};
 use serde::Deserialize;
 
 pub(crate) const ENTRYPOINT: &str = "rice-files";
-pub(super) const MIN_VIEW_ZOOM_PERMILLE: u16 = 500;
-pub(super) const MAX_VIEW_ZOOM_PERMILLE: u16 = 5_000;
-const DEFAULT_VIEW_ZOOM_PERMILLE: u16 = 1_000;
-const YELLOW_JACKET_VIEW_ZOOM_PERMILLE: u16 = 650;
+pub(super) const MIN_VIEW_ZOOM_PERMILLE: u16 = 750;
+pub(super) const MAX_VIEW_ZOOM_PERMILLE: u16 = 2_000;
+const DEFAULT_VIEW_ZOOM_PERMILLE: u16 = 1_250;
+const YELLOW_JACKET_VIEW_ZOOM_PERMILLE: u16 = 750;
 const MOUNT_REFRESH_TIMER: u64 = 0x5246_4d54;
 const RICE_BUS_DEFERRED_REFRESH_TIMER: u64 = 0x5246_4252;
 const VFS_CHANGED_TOPIC: &str = "org.ricewm.vfs/changed";
@@ -92,6 +92,20 @@ fn valid_theme_profile(profile: &str) -> bool {
         && profile
             .bytes()
             .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
+/// Share the bounded, five-percent zoom scale between both native controls.
+fn view_zoom_fraction(zoom: u16) -> String {
+    format!("{}/{}", zoom.clamp(MIN_VIEW_ZOOM_PERMILLE, MAX_VIEW_ZOOM_PERMILLE) - MIN_VIEW_ZOOM_PERMILLE,
+        MAX_VIEW_ZOOM_PERMILLE - MIN_VIEW_ZOOM_PERMILLE)
+}
+fn view_zoom_from_fraction(value: &str) -> Option<u16> {
+    let (position, total) = value.split(';').next()?.split_once('/')?;
+    let (position, total) = (position.parse::<u64>().ok()?, total.parse::<u64>().ok()?);
+    if total == 0 { return None; }
+    let range = u64::from(MAX_VIEW_ZOOM_PERMILLE - MIN_VIEW_ZOOM_PERMILLE);
+    let offset = position.min(total) * range / total;
+    Some((MIN_VIEW_ZOOM_PERMILLE + ((offset + 25) / 50 * 50) as u16).min(MAX_VIEW_ZOOM_PERMILLE))
 }
 
 fn default_view_zoom_for_theme(profile: &str) -> u16 {
@@ -148,6 +162,8 @@ pub(crate) struct RiceFiles {
     sidebar_visible: bool,
     simplified_view: bool,
     folder_tree: bool,
+    sidebar_view_setting: String,
+    default_view_setting: Option<String>,
     tree_directory_cache: BTreeMap<GuestPath, Vec<EntryMetadata>>,
     pending_folder_tree_probe: Option<PendingFolderTreeProbe>,
     trash_nonempty: bool,
@@ -156,6 +172,7 @@ pub(crate) struct RiceFiles {
     redmond_view_explicit: bool,
     views_before_redmond: Option<(ViewMode, ViewMode)>,
     view_zoom_permille: u16,
+    zoom_setting: Option<String>,
     search_expanded: bool,
     pending_mutation: Option<PendingMutation>,
     download_after_mutation: bool,
@@ -176,6 +193,16 @@ pub(crate) struct RiceFiles {
 }
 
 impl RiceFiles {
+    fn default_file_view(&self) -> Option<ViewMode> {
+        match self.default_view_setting.as_deref()? {
+            "icons" => Some(ViewMode::Icons),
+            "compact" => Some(ViewMode::Compact),
+            "thumbnails" => Some(ViewMode::Thumbnails),
+            "details" => Some(ViewMode::Details),
+            _ => None,
+        }
+    }
+
     pub(crate) fn document_state(&self) -> Option<serde_json::Value> {
         let window = self.model.windows().iter()
             .find(|window| window.id == self.model_window)?;
@@ -308,6 +335,8 @@ impl RiceFiles {
             sidebar_visible: true,
             simplified_view,
             folder_tree,
+            sidebar_view_setting: String::from("auto"),
+            default_view_setting: None,
             tree_directory_cache: BTreeMap::new(),
             pending_folder_tree_probe: None,
             trash_nonempty: false,
@@ -316,6 +345,7 @@ impl RiceFiles {
             redmond_view_explicit: false,
             views_before_redmond: None,
             view_zoom_permille,
+            zoom_setting: None,
             search_expanded: false,
             pending_mutation: None,
             download_after_mutation: false,
@@ -444,6 +474,10 @@ impl RiceFiles {
             }
             if topic == "org.ricewm.settings/changed" {
                 if let Ok(value) = serde_json::from_str::<serde_json::Value>(payload) {
+                    if value.get("values").and_then(|values| values.as_object())
+                        .is_some_and(|values| values.keys().any(|key| key.starts_with("ricefiles."))) {
+                        return Ok(vec![files_preferences::load(self, request)]);
+                    }
                     if let Some(raw) = value.get("values").and_then(|values| values.get("desktop.actions")).and_then(|value| value.as_str()) {
                         self.user_actions = files_user_actions::decode(raw);
                         if let Some(extra) = value.get("values").and_then(|values| values.get("desktop.app-actions")).and_then(|value| value.as_str()) {
@@ -504,6 +538,9 @@ impl RiceFiles {
         }
         self.simplified_view = !self.redmond98;
         self.folder_tree = self.redmond98;
+        // Reapply explicit layout choices after the profile's defaults.
+        self.default_view_setting = None;
+        self.zoom_setting = None;
         Ok(vec![
             self.emit_full()?,
             files_preferences::load(self, request),
@@ -741,6 +778,11 @@ impl RiceFiles {
             Err(error) => return Err(error.into()),
         };
         let target = plan.target().clone();
+        // Repeated primary clicks before a tree double-click must share the
+        // in-flight listing rather than cancelling and restarting its load.
+        if self.runtime_mut()?.pending_directory.as_ref().is_some_and(|pending| pending.target==target) {
+            return Ok(Vec::new());
+        }
         self.cancel_folder_tree_probe();
         self.retire_pending_directory(slot)?;
         self.runtime_mut()?.pending_directory = Some(PendingDirectory::new(
@@ -829,6 +871,11 @@ impl RiceFiles {
             .model
             .window_mut(self.model_window)?
             .open_tab(target.clone());
+        if let Some(view) = self.default_file_view() {
+            let pane = self.model.window_mut(self.model_window)?.active_tab_mut();
+            pane.primary.set_view(view);
+            pane.secondary.set_view(view);
+        }
         let mut runtime = TabRuntime::new(&target);
         self.options.configure(&mut runtime.primary);
         self.options.configure(&mut runtime.secondary);
@@ -1121,6 +1168,7 @@ impl RiceFiles {
             runtime.completion.suggestions(),
             runtime.completion_index,
             self.redmond98,
+            runtime.location_edited,
         );
         toolbar_patches(
             &mut patches,

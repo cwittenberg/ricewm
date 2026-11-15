@@ -32,7 +32,7 @@ impl Default for Options {
             limit_mib: 64,
             show_hidden: false,
             folders_first: true,
-            zoom: 1000,
+            zoom: DEFAULT_VIEW_ZOOM_PERMILLE,
             preview: false,
         }
     }
@@ -120,8 +120,8 @@ pub(super) fn patches(patches: &mut Vec<Patch>, options: &Options) {
         patches,
         ZOOM,
         Some(BODY),
-        WidgetKind::ScrollBar,
-        Some(&format!("{}/4500", options.zoom.saturating_sub(500))),
+        WidgetKind::Slider,
+        Some(&view_zoom_fraction(options.zoom)),
         None,
         WidgetState::ENABLED | WidgetState::FLAT,
     );
@@ -183,7 +183,7 @@ pub(super) fn event(
             if envelope.target.get() == LIMIT {
                 options.limit_mib = (position.min(511) + 1) * 16;
             } else {
-                options.zoom = (position.min(4500) + 500) as u16;
+                options.zoom = view_zoom_from_fraction(value).unwrap_or(options.zoom);
             }
         }
         _ => return Ok(vec![]),
@@ -415,7 +415,7 @@ mod translation_tests {
             assert_eq!(text(CANCEL),Some("取消"));
             assert_eq!(text(SAVE),Some("保存"));
             assert_eq!(text(LIMIT),Some("7/511"));
-            assert_eq!(text(ZOOM),Some("1000/4500"));
+            assert_eq!(text(ZOOM),Some("750/1250"));
             assert_eq!(serde_json::to_string(&options).unwrap(),saved);
         });
     }

@@ -1,18 +1,18 @@
 import {Button,Column,Dialog,Label,Message,Popover,Row,ScrollBar,ScrollView,Stack,TextField,VirtualGrid} from '@ricewm/app';
 
 import {checkedValidationList} from './validation-contract.mjs';
-export {checkedCellValidation,checkedSelectionValidation,checkedValidationList} from './validation-contract.mjs';
+export {checkedCellValidation,checkedTableRenameValidation,checkedSelectionValidation,checkedValidationList} from './validation-contract.mjs';
 
 /** Native decision UI only; all rule evaluation remains in the Wasm engine. */
-export function createValidationDialog({alerts,onDecision}){
+export function createValidationDialog({alerts,onDecision,editLabel='Edit Value',acceptLabel='Keep Value',question='Keep this value anyway?'}){
     if(!alerts.length)throw Error('Validation dialog needs an alert.');
     const blocked=alerts.some(alert=>alert.style==='stop'||alert.style==='unsupported');
     const primary=alerts.find(alert=>alert.style==='stop'||alert.style==='unsupported')||alerts[0];
     let settled=false;
     const finish=decision=>{if(settled)return;settled=true;onDecision(decision);};
-    const edit=new Button({name:'validation-edit',text:'Edit Value',focused:true});
+    const edit=new Button({name:'validation-edit',text:editLabel,focused:true});
     const cancel=new Button({name:'validation-cancel',text:'Cancel'});
-    const accept=new Button({name:'validation-accept',text:'Keep Value'});
+    const accept=new Button({name:'validation-accept',text:acceptLabel});
     const severity=new Label({name:'validation-severity',text:'',icon:blocked?53:primary.style==='warning'?52:51,accessibleName:blocked?'Error':primary.style==='warning'?'Warning':'Information'});
     const messages=alerts.map((alert,index)=>new Label({name:'validation-message-'+index,text:(index&&alert.title?alert.title+'\n':'')+(alert.message||'This value does not meet the cell’s validation rule.')}));
     cancel.on(Message.ACTIVATE,()=>finish('cancel'));
@@ -21,7 +21,7 @@ export function createValidationDialog({alerts,onDecision}){
     const dialog=new Dialog({name:'validation-dialog',text:primary.title||(blocked?'Invalid value':'Check this value'),modal:true},[
         new Column({text:'panel:fixed:flush:width=420'},[
             new Row({text:'panel:fixed:flush'},[new Stack({text:'panel:fixed:width=48:flush'},[severity]),new ScrollView({text:'viewport:104|0/0'},[new Column({text:'panel:flush:tight-stack'},messages)])]),
-            ...(!blocked?[new Label({text:'Keep this value anyway?'})]:[]),
+            ...(!blocked?[new Label({text:question})]:[]),
             new Row({text:'panel:actions'},blocked?[cancel,edit]:[cancel,edit,accept]),
         ]),
     ]);

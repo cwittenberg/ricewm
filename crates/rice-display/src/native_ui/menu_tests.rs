@@ -905,3 +905,22 @@ fn open_menubar_tracks_hover_across_headings_without_another_click() {
 
 #[path = "menu_gallery_tests.rs"]
 mod gallery;
+
+#[test]
+fn popup_commands_share_hover_surfaces_including_checked_choices_and_cascades() {
+    let mut host = NativeUiHost::default();
+    host.apply_patch(&menu_tree()).unwrap();
+    let constraints = Constraints { min: Size { width: 420, height: 360 }, max: Size { width: 420, height: 360 } };
+    let closed = host.render(app(), window(), constraints).unwrap();
+    let heading = closed.hit_targets.iter().find(|t| t.widget == widget(3)).unwrap().rect;
+    let point = Point { x: heading.origin.x + 2, y: heading.origin.y + 2 };
+    host.pointer_event(app(), window(), PointerEventKind::Down, point, 1, 0).unwrap();
+    host.pointer_event(app(), window(), PointerEventKind::Up, point, 1, 0).unwrap();
+    for id in [4, 6, 9] {
+        let opened = host.render(app(), window(), constraints).unwrap();
+        let rect = opened.hit_targets.iter().find(|t| t.widget == widget(id)).unwrap().rect;
+        host.pointer_event(app(), window(), PointerEventKind::Move, Point { x: rect.origin.x + 2, y: rect.origin.y + 2 }, 0, 0).unwrap();
+        let hovered = host.render(app(), window(), constraints).unwrap();
+        assert!(hovered.commands.iter().any(|c| matches!(c, DrawCommand::ThemeSurface { rect: row, role: 3, state: 1 } if *row == rect)), "Menu row {id} uses menu hover rather than its checked indicator state");
+    }
+}

@@ -142,9 +142,38 @@ pub struct GridBorders {
     #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")] pub bottom: Option<GridBorder>,
     #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")] pub left: Option<GridBorder>,
 }
+pub const GRID_DECORATION_SCALE:u32=1_000_000;
+#[derive(Clone,Debug,Eq,PartialEq,Ord,PartialOrd,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GridDataBar{pub value:u32,pub axis:u32,pub positive_color:String,pub negative_color:String,pub gradient:bool,pub show_value:bool}
+#[derive(Clone,Debug,Eq,PartialEq,Ord,PartialOrd,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GridConditionalIcon{pub kind:String,pub color:String,pub show_value:bool}
+#[derive(Clone,Debug,Eq,PartialEq,Ord,PartialOrd,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GridConditionalRating{pub kind:String,pub color:String,pub show_value:bool,pub count:u8,pub total:u8}
+#[derive(Clone,Debug,Default,Eq,PartialEq,Ord,PartialOrd,Serialize,Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GridDecorations{
+    #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")]pub data_bar:Option<GridDataBar>,
+    #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")]pub icon:Option<GridConditionalIcon>,
+    #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")]pub rating:Option<GridConditionalRating>,
+}
+pub fn valid_grid_symbol(value:&str)->bool{matches!(value,"ArrowUp"|"ArrowRight"|"ArrowDown"|"ArrowAngleUp"|"ArrowAngleDown"|"Circle"|"TriangleUp"|"TriangleDown"|"TriangleUpFilled"|"TriangleDownFilled"|"FlatRectangle"|"Rhombus"|"Flag"|"Check"|"Cross"|"Exclamation"|"Star"|"Heart"|"ThumbsUp"|"ThumbsDown")}
+impl GridDecorations{
+    pub fn is_valid(&self)->bool{
+        (self.data_bar.is_some()||self.icon.is_some()||self.rating.is_some())
+        &&self.data_bar.as_ref().is_none_or(|b|b.axis<=GRID_DECORATION_SCALE&&b.value<=GRID_DECORATION_SCALE&&valid_paint_color(&b.positive_color)&&valid_paint_color(&b.negative_color))
+        &&self.icon.as_ref().is_none_or(|i|valid_grid_symbol(&i.kind)&&valid_paint_color(&i.color))
+        &&self.rating.as_ref().is_none_or(|r|valid_grid_symbol(&r.kind)&&valid_paint_color(&r.color)&&(1..=5).contains(&r.total)&&r.count<=r.total)
+    }
+    pub fn show_value(&self)->bool{self.data_bar.as_ref().is_none_or(|b|b.show_value)&&self.icon.as_ref().is_none_or(|i|i.show_value)&&self.rating.as_ref().is_none_or(|r|r.show_value)}
+    pub fn symbol_count(&self)->u32{u32::from(self.icon.is_some())+self.rating.as_ref().map_or(0,|r|u32::from(r.total))}
+}
 #[derive(Clone, Debug, Default, Eq, PartialEq, Ord, PartialOrd, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GridPaint {
+    #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")] pub decorations: Option<GridDecorations>,
     #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_optional")] pub foreground: Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_optional")] pub background: Option<String>,
     #[serde(default,skip_serializing_if="Option::is_none",deserialize_with="non_null_object")] pub borders: Option<GridBorders>,
@@ -162,6 +191,7 @@ impl GridPaint { pub fn is_valid(&self)->bool {
     self.foreground.as_deref().is_none_or(valid_paint_color) && self.background.as_deref().is_none_or(valid_paint_color)
     && self.vertical.as_deref().is_none_or(|v|matches!(v,"top"|"center"|"bottom"))
     && self.borders.as_ref().is_none_or(|b|[&b.top,&b.right,&b.bottom,&b.left].into_iter().all(|v|v.as_ref().is_none_or(GridBorder::is_valid)))
+    && self.decorations.as_ref().is_none_or(GridDecorations::is_valid)
 } }
 
 /// Semantic colors belong to the theme; optional fonts describe document text.
@@ -274,6 +304,10 @@ pub struct GridFrame {
     /// Sparse visible display values, strictly sorted by (row slot, column slot).
     pub cells: Vec<GridCell>,
     pub selection: Option<GridSelection>,
+    /// Ordered disjoint LOGICAL worksheet areas, independent of visible slots.
+    /// Empty retains the legacy visible-slot selection above.
+    #[serde(default,skip_serializing_if="Vec::is_empty")]
+    pub selection_areas: Vec<GridSelection>,
     /// Logical (row, column), including offscreen cells.
     pub active: Option<(u32, u32)>,
     /// Transient formula-editing references. They do not change workbook state.
@@ -436,13 +470,64 @@ impl GridFrame {
         {
             return Err("grid selection");
         }
+        if self.selection_areas.len()>512||self.selection_areas.len()>1&&self.fill_endpoint.is_some(){return Err("grid selection areas");}
+        for (i,a) in self.selection_areas.iter().enumerate(){
+            if a.first_row>a.last_row||a.last_row>=self.row_count||a.first_column>a.last_column||a.last_column>=self.column_count
+                ||self.selection_areas[..i].iter().any(|b|a.first_row<=b.last_row&&b.first_row<=a.last_row&&a.first_column<=b.last_column&&b.first_column<=a.last_column){return Err("grid selection areas");}
+        }
+        if !self.selection_areas.is_empty()&&self.active.is_some_and(|(r,c)|!self.selection_areas.iter().any(|a|a.contains(r,c))){return Err("grid selection active");}
         Ok(())
+    }
+
+    /// Presentation membership; logical areas survive filtered and frozen tracks.
+    #[must_use]
+    pub fn is_selected(&self,row_slot:u32,column_slot:u32)->bool{
+        if self.selection_areas.is_empty(){return self.selection.as_ref().is_some_and(|s|s.contains(row_slot,column_slot));}
+        let (Some(row),Some(column))=(self.rows.get(row_slot as usize),self.columns.get(column_slot as usize)) else{return false;};
+        self.selection_areas.iter().any(|a|a.contains(row.index,column.index))
+    }
+
+    /// Header feedback uses each axis independently: an area can select a row
+    /// whose selected columns are currently offscreen, or the reverse.
+    #[must_use]
+    pub fn row_header_selected(&self, slot: u32) -> bool {
+        let Some(track) = self.rows.get(slot as usize) else { return false; };
+        if self.selection_areas.is_empty() {
+            self.selection.as_ref().is_some_and(|s| (s.first_row..=s.last_row).contains(&slot))
+        } else {
+            self.selection_areas.iter().any(|a| (a.first_row..=a.last_row).contains(&track.index))
+        }
+    }
+
+    #[must_use]
+    pub fn column_header_selected(&self, slot: u32) -> bool {
+        let Some(track) = self.columns.get(slot as usize) else { return false; };
+        if self.selection_areas.is_empty() {
+            self.selection.as_ref().is_some_and(|s| (s.first_column..=s.last_column).contains(&slot))
+        } else {
+            self.selection_areas.iter().any(|a| (a.first_column..=a.last_column).contains(&track.index))
+        }
+    }
+
+    /// Validated logical areas are disjoint, so their total area proves full
+    /// sheet coverage without scanning cells. A viewport-sized box does not.
+    #[must_use]
+    pub fn sheet_header_selected(&self) -> bool {
+        if !self.selection_areas.is_empty() {
+            self.selection_areas.iter().map(|a| u64::from(a.last_row - a.first_row + 1) * u64::from(a.last_column - a.first_column + 1)).sum::<u64>()
+                == u64::from(self.row_count) * u64::from(self.column_count)
+        } else {
+            self.rows.len() == self.row_count as usize && self.columns.len() == self.column_count as usize
+                && self.selection.as_ref().is_some_and(|s| s.first_row == 0 && s.first_column == 0
+                    && s.last_row + 1 == self.row_count && s.last_column + 1 == self.column_count)
+        }
     }
 
     /// Small native fill handle on the complete visible selection endpoint.
     /// A partly clipped endpoint does not move its handle to a false boundary.
     #[must_use]
     pub fn fill_handle(&self) -> Option<(crate::Rect, (u32, u32))> {
+        if self.selection_areas.len()>1{return None;}
         let selection = self.selection.as_ref()?;
         let first_row=self.rows.get(selection.first_row as usize)?.index;let last_row=self.rows.get(selection.last_row as usize)?.index;
         let first_column=self.columns.get(selection.first_column as usize)?.index;let last_column=self.columns.get(selection.last_column as usize)?.index;

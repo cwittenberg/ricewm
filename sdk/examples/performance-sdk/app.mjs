@@ -1,7 +1,9 @@
 import {
-    Button, CheckBox, Column, Container, Dialog, Label, Menu, MenuBar, MenuItem,
-    Message, ProgressBar, Row, ScrollView, State, Table, Tabs, TextField, defineApp,
+    Button, CheckBox, Column, Dialog, Label, Menu, MenuBar, MenuItem,
+    Message, Row, ScrollView, State, Table, Tabs, TextField, defineApp,
 } from "@ricewm/app";
+import { PerformanceDashboard } from "./dashboard.mjs";
+import {recordingView} from "./profiler-report.mjs";
 
 const enabled = State.ENABLED;
 const bytes = value => {
@@ -14,7 +16,6 @@ const bytes = value => {
     }
     return unit === 0 ? `${Math.round(scaled)} B` : `${scaled.toFixed(1)} ${units[unit]}`;
 };
-const percent = (used, total) => total > 0 ? Math.min(100, Math.floor(used * 100 / total)) : 0;
 
 export function parseSnapshot(source) {
     const lines = String(source || "").split("\n").filter(Boolean);
@@ -104,7 +105,7 @@ export function parseSnapshot(source) {
 }
 
 export default defineApp({
-    manifest: { id: "dev.ricewm.performance-sdk", name: "System Monitor", version: "2.0.2" },
+    manifest: { id: "dev.ricewm.performance-sdk", name: "System Monitor", version: "3.0.3" },
     async start({ app, services, log, createWindow }) {
         let snapshot = {
             cpu: 0, memoryUsed: 0, memoryTotal: 1, diskFree: 0, diskTotal: 0,
@@ -113,7 +114,9 @@ export default defineApp({
             gpu: null, gpuBackend: "unavailable", gpuReason: "unavailable",
             storageBreakdown: [], processes: [],
         };
-        let tab = "Processes";
+        let tab = "Overview";
+        let renderedTab = null;
+        const dashboard = new PerformanceDashboard({app, services, log});
         let filter = "";
         let acceleratedOnly = false;
         let searchFocused = false;
@@ -135,13 +138,10 @@ export default defineApp({
         let tabBindings = [];
         let pointerInteractionActive = false;
         let stopped = false;
-        // Match the native monitor's stable 60-sample graph window from the
-        // first frame instead of stretching one sample across a whole chart.
-        const history = {
-            cpu: Array(60).fill(0), memory: Array(60).fill(0),
-            gpu: Array(60).fill(0), network: Array(60).fill(0),
-        };
+        let timer;
         let window;
+        let recordingPanel = null;
+        let recordingLoad = 0;
         const activate = (control, action) => {
             // A telemetry refresh must never replace an armed control between
             // its physical press and release. The retained host quite rightly
@@ -159,28 +159,27 @@ export default defineApp({
             });
             return control;
         };
-        const pushHistory = (name, value) => {
-            history[name].push(Math.max(0, Math.min(100, Math.round(value))));
-            if (history[name].length > 60) history[name].shift();
-        };
+        let refreshing = false;
         const refresh = async () => {
-            if (stopped) return;
+            if (stopped || refreshing || recordingPanel) return;
+            refreshing = true;
             try {
                 snapshot = parseSnapshot(await services.system.performance());
-                pushHistory("cpu", snapshot.cpu);
-                pushHistory("memory", percent(snapshot.memoryUsed, snapshot.memoryTotal));
-                pushHistory("gpu", snapshot.gpu || 0);
-                pushHistory("network", Math.min(100, Math.log2(snapshot.received + snapshot.sent + 1) * 5));
+                if (stopped || recordingPanel) return;
+                dashboard.record(snapshot);
                 if (!snapshot.processes.some(process => process.pid === selectedPid)) selectedPid = null;
                 if (!searchFocused && !pointerInteractionActive) render();
             } catch (error) {
+                dashboard.failed();
                 log.warn("refresh failed", { error: String(error?.message || error) });
-            }
+            } finally { refreshing = false; }
         };
         const tabButton = (name, icon) => {
             const selected = tab === name;
             const button = activate(new Button({
-                text: name, icon,
+                name: `monitor-tab-${name.toLowerCase()}`, text: name, icon,
+                documentFont: {family: 'sans-serif', size_pt: 11, weight: 400, italic: false, underline: false},
+                documentPaint: {foreground: dashboard.palette.foreground, background: dashboard.palette.panel},
                 state: enabled | State.FLAT | (selected ? State.SELECTED : 0),
                 selected,
             }), () => {
@@ -191,17 +190,10 @@ export default defineApp({
                 state: enabled | (selected ? State.SELECTED : 0),
                 selected,
             }, [button]);
+            button.monitorIcon = icon;
             tabBindings.push([composite, button]);
             return composite;
         };
-        const metricHeading = (title, value, detail) => new Container({ text: "panel:height:108" }, [
-            new Row({ text: "split:420" }, [
-                new Label({ text: title, state: enabled | State.EMPHASIZED | State.START_ALIGNED }),
-                new Label({ text: value, state: enabled | State.DISPLAY | State.END_ALIGNED }),
-            ]),
-            new Label({ text: detail, state: enabled | State.MUTED | State.START_ALIGNED }),
-        ]);
-        const graph = name => new Container({ text: `graph:${name}:${history[name].join(",")}` });
         const selectProcess = (process, rebuild = true) => {
             selectedPid = process.pid;
             if (rebuild) {
@@ -404,78 +396,18 @@ export default defineApp({
             ]));
             return content;
         };
-        const resourceContent = () => [
-            metricHeading("CPU", `${snapshot.cpu}% overall`, `Busiest process ${Math.max(0, ...snapshot.processes.map(process => process.cpu))}%`),
-            new Label({ text: snapshot.cpuScope || 'Guest process CPU', state: enabled | State.MUTED | State.START_ALIGNED }),
-            graph("cpu"),
-            metricHeading(
-                "GPU",
-                snapshot.gpu === null ? "Unavailable" : `${snapshot.gpu}%`,
-                snapshot.gpu === null
-                    ? `GPU timer queries unavailable · ${snapshot.gpuBackend}`
-                    : `RiceWM renderer timing · ${snapshot.gpuBackend}`,
-            ),
-            ...(snapshot.gpu === null ? [] : [graph("gpu")]),
-            metricHeading("Memory", `${percent(snapshot.memoryUsed, snapshot.memoryTotal)}%`, `${bytes(snapshot.memoryUsed)} used of ${bytes(snapshot.memoryTotal)}`),
-            graph("memory"),
-            new Label({ text: `Load average  ${snapshot.load}    ·    ${snapshot.processes.length} active processes`, state: enabled | State.MUTED }),
-        ];
-        const networkContent = () => [
-            metricHeading("Network", `↓ ${bytes(snapshot.received)}/s  ↑ ${bytes(snapshot.sent)}/s`, "Current aggregate throughput"),
-            graph("network"),
-            new Container({ text: "panel:fixed" }, [
-                new Label({ text: "Assigned address", state: enabled | State.MUTED }),
-                new Label({ text: snapshot.ipv4, state: enabled | State.DISPLAY }),
-                new Label({ text: `${snapshot.networkMode} mode  ·  ${snapshot.sockets} open sockets  ·  ↓ ${bytes(snapshot.receivedTotal)} total  ↑ ${bytes(snapshot.sentTotal)} total` }),
-            ]),
-        ];
-        const storageContent = () => {
-            if (!snapshot.diskTotal) return [
-                metricHeading("RiceWM storage", "Unavailable", "RiceWM could not read Chromium's storage quota"),
-                new Label({ text: "No fallback estimate is shown because it would not describe this RiceWM workspace.", state: enabled | State.MUTED | State.START_ALIGNED }),
-            ];
-            const used = snapshot.diskTotal - snapshot.diskFree;
-            const categoryName = value => ({
-                fileSystem: "Files", caches: "Cache storage", cacheStorage: "Cache storage",
-                indexedDB: "IndexedDB", serviceWorkerRegistrations: "Service workers",
-                serviceWorkers: "Service workers", other: "Other",
-            })[value] || value;
-            const breakdown = [...snapshot.storageBreakdown]
-                .sort((left, right) => right[1] - left[1]);
-            const measured = breakdown.reduce((total, entry) => total + entry[1], 0);
-            if (used > measured) breakdown.push(["other", used - measured]);
-            return [
-                metricHeading("RiceWM storage", `${bytes(used)} used`, `${bytes(snapshot.diskFree)} available to RiceWM  ·  ${bytes(snapshot.diskTotal)} quota`),
-                new ProgressBar({ text: `${used}/${snapshot.diskTotal}`, value: used / snapshot.diskTotal }),
-                new Container({ text: "panel:fixed" }, [
-                    new Label({ text: `${percent(used, snapshot.diskTotal)}% used`, state: enabled | State.EMPHASIZED }),
-                    new Label({ text: "Chromium adjusts this quota as device storage changes; websites cannot read the physical disk size", state: enabled | State.MUTED }),
-                ]),
-                new Container({ text: "panel:fixed" }, [
-                    new Label({ text: "Storage breakdown", state: enabled | State.EMPHASIZED | State.START_ALIGNED }),
-                    ...(breakdown.length ? breakdown.slice(0, 8).map(([kind, value]) => new Row({ text: "split:760" }, [
-                        new Label({ text: categoryName(kind), state: enabled | State.START_ALIGNED }),
-                        new Label({ text: bytes(value), state: enabled | State.END_ALIGNED }),
-                    ])) : [new Label({ text: "A category breakdown is unavailable in this browser", state: enabled | State.MUTED | State.START_ALIGNED })]),
-                ]),
-            ];
-        };
         const build = () => {
             tabBindings = [];
-            const byTab = {
-                Processes: processContent,
-                Resources: resourceContent,
-                Network: networkContent,
-                Storage: storageContent,
-            };
             const tabs = [
+                tabButton("Overview", 40),
                 tabButton("Processes", 79),
                 tabButton("Resources", 40),
                 tabButton("Network", 65),
                 tabButton("Storage", 64),
                 new Column({
-                    text: `panel:tab-page${["Resources", "Network"].includes(tab) ? ":distribute" : ""}`,
-                }, byTab[tab]()),
+                    text: "panel:tab-page",
+                    state: enabled | State.EXPANSIVE,
+                }, tab === "Processes" ? processContent() : [dashboard.page(tab)]),
             ];
             const children = [new Tabs({ text: "panel:tabs:integrated" }, tabs)];
             const process = snapshot.processes.find(candidate => candidate.pid === confirmationPid);
@@ -513,10 +445,20 @@ export default defineApp({
                 render();
             }
         }
+        function syncTabIcons() {
+            const compact = (window?.state?.contentWidth || 1100) < 900;
+            for (const [, button] of tabBindings) button.icon = compact ? null : button.monitorIcon;
+        }
         function render() {
+            if (tab !== "Processes" && renderedTab === tab) return;
+            dashboard.detach();
+            const previous = window.root;
             processRowBindings = [];
             processActionBindings = [];
             window.setRoot(build());
+            renderedTab = tab;
+            syncTabIcons();
+            previous.destroy();
             // `control-for` is a renderer-level composite-control contract. It
             // turns the Row into a full-width proxy for the primary selector.
             for (const { row, selector } of processRowBindings) {
@@ -529,6 +471,49 @@ export default defineApp({
         processRowBindings = [];
         processActionBindings = [];
         window = createWindow({ title: "System Monitor", root: build() });
+        renderedTab = tab;
+        window.onState(syncTabIcons);
+        window.onState(state => recordingPanel?.resize?.(state.contentWidth || 1100));
+        app.on(Message.APP_OPEN, async ({paths = []} = {}) => {
+            const path=paths.find(value=>String(value).endsWith('.riceprofile'));
+            if(!path)return;
+            const load=++recordingLoad;
+            recordingPanel?.destroy?.();
+            recordingPanel={destroy(){}};
+            dashboard.detach();
+            const old=window.root;
+            window.title='Recording overview';
+            window.setRoot(new Column({text:'panel:padding=24:gap=12'},[
+                new Label({text:'Opening recording…',state:State.EMPHASIZED})]));
+            old.destroy();
+            const returnToLive=()=>{
+                ++recordingLoad;recordingPanel?.destroy?.();recordingPanel=null;
+                window.title='System Monitor';renderedTab=null;render();void refresh();
+            };
+            try{
+                const bytes=await services.files.read({path});
+                if(bytes.byteLength>4*1024*1024)throw Error('Recording exceeds the supported size.');
+                const report=JSON.parse(new TextDecoder().decode(bytes));
+                const panel=await recordingView({report,app,services,onLive:returnToLive});
+                if(stopped||load!==recordingLoad){panel.destroy();return;}
+                recordingPanel=panel;
+                const loading=window.root;window.setRoot(panel.root);loading.destroy();
+                panel.resize(window.state.contentWidth||1100);
+            }catch(error){
+                if(stopped||load!==recordingLoad)return;
+                const back=new Button({text:'Live monitor'});back.on(Message.ACTIVATE,returnToLive);
+                const loading=window.root;
+                window.setRoot(new Column({text:'panel:padding=24:gap=12'},[
+                    new Label({text:'Could not open recording',state:State.EMPHASIZED}),
+                    new Label({text:String(error?.message||error)}),back]));loading.destroy();
+                log.error('Recording could not open',{error:String(error)});
+            }
+        });
+        app.on(Message.THEME_CHANGED, () => {
+            for (const [, button] of tabBindings) button.setProperty('documentPaint', {
+                foreground: dashboard.palette.foreground, background: dashboard.palette.panel,
+            });
+        });
         for (const { row, selector } of processRowBindings) {
             row.text = `panel:file-detail-row:control-for=${selector.id}`;
         }
@@ -539,8 +524,11 @@ export default defineApp({
             stopped = true;
             clearTimeout(deferredSearchRender);
             clearInterval(timer);
+            recordingPanel?.destroy?.();
+            dashboard.destroy();
         });
+        await Promise.all([...dashboard.charts].map(chart => chart.ready));
         await refresh();
-        const timer = setInterval(refresh, 2_000);
+        if (!stopped) timer = setInterval(refresh, 2_000);
     },
 });

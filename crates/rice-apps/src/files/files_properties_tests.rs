@@ -156,7 +156,6 @@ fn rendered_metadata_includes_mime_timestamp_count_and_link_target() {
     ));
     let values = rows(&state);
     for expected in [
-        ("Selected", "1 item"),
         ("Type", "Symbolic link"),
         ("Path", "/root/current.png"),
         ("MIME type", "image/png"),
@@ -254,7 +253,7 @@ fn directory_properties_open_before_recursive_totals_finish() {
     assert!(
         values
             .iter()
-            .any(|(label, value)| { *label == "Contents size" && value == "300 B (300 bytes)" })
+            .any(|(label, value)| { *label == "Size" && value == "300 B (300 bytes)" })
     );
 }
 
@@ -280,7 +279,7 @@ fn script_permissions_render_friendly_access_and_executable_controls() {
     assert!(rendered.iter().any(|patch| matches!(
         patch,
         Patch::Create { widget, .. }
-            if widget.id.get() == DETAILS && widget.text.is_none()
+            if widget.id.get() == DETAILS && widget.text.as_deref() == Some("panel:tight-stack:padding=0:gap=2")
     )));
     assert!(rendered.iter().any(|patch| matches!(
         patch,
@@ -533,4 +532,49 @@ fn invalid_rename_path_details_refresh_without_changing_input_or_metadata() {
             });
         }
     }
+}
+
+#[test]
+fn folder_summary_reports_scanned_contents_instead_of_the_directory_inode_size() {
+    let mut state = PropertiesState::new(
+        vec![entry("/root/Empty", EntryKind::Directory, 0o755)], request(1),
+    );
+    state.accept(&response(1, VfsResult::Metadata(metadata(FileKind::Directory, 0o755))));
+    let loading = rows(&state);
+    assert!(loading.iter().any(|(label, value)| *label == "Size" && value.contains("0 B") && value.contains("Calculating")));
+    state.accept(&response(1, VfsResult::Directory { entries: vec![], next_cursor: None }));
+    let values = rows(&state);
+    assert!(values.iter().any(|(label, value)| *label == "Size" && value == "0 B (0 bytes)"));
+    assert_eq!(values.iter().filter(|(label, _)| *label == "Size").count(), 1);
+    assert!(!values.iter().any(|(label, _)| ["Selected", "MIME type", "Contents size"].contains(label)));
+}
+
+#[test]
+fn symbolic_mode_previews_the_draft_without_claiming_it_was_applied() {
+    let mut state = PropertiesState::new(
+        vec![entry("/root/script.sh", EntryKind::File, 0o644)], request(1),
+    );
+    state.accept(&response(1, VfsResult::Metadata(metadata(FileKind::File, 0o644))));
+    state.mode_input = "0750".into();
+    let mut rendered = Vec::new();
+    patches(&mut rendered, &state, false);
+    assert!(rendered.iter().any(|patch| matches!(patch, Patch::Create { widget, .. }
+        if widget.id.get() == PERMISSION_SYMBOLIC
+            && widget.text.as_deref() == Some("-rwxr-x---")
+            && !widget.state.contains(WidgetState::MUTED))));
+    assert!(rendered.iter().any(|patch| matches!(patch, Patch::Create { widget, .. }
+        if widget.id.get() == EXECUTABLE && widget.state.contains(WidgetState::CHECKED))));
+    assert_eq!(state.metadata.as_ref().unwrap().mode, 0o644);
+    assert!(state.apply_enabled());
+}
+
+#[test]
+fn multiple_selection_does_not_report_folder_inode_bytes_as_content_size() {
+    let state = PropertiesState::new(vec![
+        entry("/root/file.txt", EntryKind::File, 0o644),
+        entry("/root/Folder", EntryKind::Directory, 0o755),
+    ], request(1));
+    let values = rows(&state);
+    assert!(values.iter().any(|(label, value)| *label == "Selected file size"
+        && value.contains("1536 bytes") && value.contains("folder contents not included")));
 }

@@ -38,6 +38,12 @@ const PERMISSION_SYMBOLIC: u64 = 300_058;
 const PERMISSION_HEADING: u64 = 300_059;
 const MODE_HEADING: u64 = 300_052;
 const ROW_BASE: u64 = 300_060;
+const VALUE_BASE: u64 = 300_400;
+const VALUE_TOOLTIP_BASE: u64 = 300_450;
+const GENERAL_HEADING: u64 = 300_500;
+const MODE_CONTROL: u64 = 300_501;
+const MODE_TOOLTIP: u64 = 300_502;
+pub(super) const DETAILS_SCROLL: u64 = 300_503;
 pub(super) const NAME_FIELD: u64 = 300_032;
 const FILE_HEADER: u64 = 300_034;
 pub(super) const HIDDEN_ATTRIBUTE: u64 = 300_037;
@@ -109,6 +115,7 @@ pub(super) struct PropertiesState {
     metadata: Option<FileMetadata>,
     name_input: String,
     mode_input: String,
+    scroll: u32,
     request: Option<RequestId>,
     requested_mode: Option<u32>,
     requested_path: Option<GuestPath>,
@@ -167,6 +174,7 @@ impl PropertiesState {
             mode_input: entries
                 .first()
                 .map_or_else(String::new, |entry| format!("{:04o}", entry.mode)),
+            scroll: 0,
             entries,
             metadata: None,
             request: single.then_some(request),
@@ -480,6 +488,18 @@ impl PropertiesState {
 }
 
 impl RiceFiles {
+    pub(super) fn scroll_properties(&mut self, value: &str) -> Result<Vec<Message>, FilesActorError> {
+        let Some(Dialog::Properties(state)) = self.dialog.as_mut() else {
+            return Ok(Vec::new());
+        };
+        if let Some((position, _)) = value.split_once('/')
+            && let Ok(position) = position.parse::<u32>()
+        {
+            state.scroll = position;
+        }
+        self.emit_full().map(|message| vec![message])
+    }
+
     pub(super) fn show_properties(
         &mut self,
         request: RequestId,
@@ -861,12 +881,26 @@ pub(super) fn patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
             );
         }
     }
+    if !redmond98 {
+        create_with_state(
+            patches, GENERAL_HEADING, Some(DIALOG_CONTENT), WidgetKind::Label,
+            Some(rice_i18n::t("General")), None,
+            WidgetState::ENABLED | WidgetState::EMPHASIZED | WidgetState::START_ALIGNED,
+        );
+    }
+    let multiple = state.entries.len() > 1;
+    if multiple {
+        create(
+            patches, DETAILS_SCROLL, Some(DIALOG_CONTENT), WidgetKind::ScrollView,
+            Some(&format!("viewport:240|{}/0", state.scroll)), None,
+        );
+    }
     create(
         patches,
         DETAILS,
-        Some(DIALOG_CONTENT),
+        Some(if multiple { DETAILS_SCROLL } else { DIALOG_CONTENT }),
         WidgetKind::Column,
-        None,
+        Some("panel:tight-stack:padding=0:gap=2"),
         None,
     );
     let property_rows = if redmond98 {
@@ -905,13 +939,13 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
         }
         return;
     };
-    let symbolic = symbolic_mode(metadata.mode, state.entries[0].kind);
+    let symbolic = symbolic_mode(state.parsed_mode().unwrap_or(metadata.mode), state.entries[0].kind);
     create(
         patches,
         PERMISSIONS,
         Some(DIALOG_CONTENT),
         WidgetKind::Column,
-        None,
+        Some("panel:tight-stack:padding=0:gap=6"),
         None,
     );
     if redmond98 {
@@ -988,6 +1022,10 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
             WidgetState::ENABLED | WidgetState::START_ALIGNED,
         );
     } else {
+        create(
+            patches, PROPERTY_SEPARATOR, Some(PERMISSIONS), WidgetKind::Row,
+            Some("panel:separator"), None,
+        );
         create_with_state(
             patches,
             PERMISSION_HEADING,
@@ -998,15 +1036,17 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
             WidgetState::ENABLED | WidgetState::EMPHASIZED | WidgetState::START_ALIGNED,
         );
     }
-    create_with_state(
+    if redmond98 || state.entries[0].kind == EntryKind::Symlink {
+        create_with_state(
         patches,
         PERMISSION_SYMBOLIC,
         Some(PERMISSIONS),
         WidgetKind::Label,
         Some(&symbolic),
         None,
-        WidgetState::ENABLED | WidgetState::MUTED | WidgetState::START_ALIGNED,
-    );
+        WidgetState::ENABLED | WidgetState::START_ALIGNED,
+        );
+    }
     if state.entries[0].kind == EntryKind::Symlink {
         create(
             patches,
@@ -1023,7 +1063,7 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
         PERMISSION_ACCESS,
         Some(PERMISSIONS),
         WidgetKind::Row,
-        Some("split:300"),
+        Some("split:360:min-width=120:padding=0"),
         None,
     );
     create_with_state(
@@ -1031,9 +1071,9 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
         PERMISSION_ACCESS + 100,
         Some(PERMISSION_ACCESS),
         WidgetKind::Label,
-        Some(rice_i18n::t("Access")),
+        Some(rice_i18n::t(if redmond98 { "Access" } else { "Owner access" })),
         None,
-        WidgetState::ENABLED | WidgetState::MUTED,
+        WidgetState::ENABLED | WidgetState::START_ALIGNED,
     );
     create(
         patches,
@@ -1079,9 +1119,20 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
         MODE_ROW,
         Some(PERMISSIONS),
         WidgetKind::Row,
-        Some("panel:actions"),
+        Some(if redmond98 { "panel:actions" } else { "split:360:min-width=120:padding=0" }),
         None,
     );
+    if !redmond98 {
+        create_with_state(
+            patches, MODE_HEADING, Some(MODE_ROW), WidgetKind::Label,
+            Some(rice_i18n::t("Mode (octal)")), None,
+            WidgetState::ENABLED | WidgetState::START_ALIGNED,
+        );
+        create(
+            patches, MODE_CONTROL, Some(MODE_ROW), WidgetKind::Row,
+            Some("split:300:min-width=72:max-width=96:padding=0"), None,
+        );
+    }
     let mut field_state = if state.stage == Stage::Ready {
         WidgetState::ENABLED
     } else {
@@ -1093,7 +1144,7 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
     create_with_state(
         patches,
         MODE_FIELD,
-        Some(MODE_ROW),
+        Some(if redmond98 { MODE_ROW } else { MODE_CONTROL }),
         WidgetKind::TextField,
         Some(&state.mode_input),
         None,
@@ -1102,16 +1153,16 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
     if !redmond98 {
         create_with_state(
             patches,
-            APPLY_MODE,
-            Some(MODE_ROW),
-            WidgetKind::Button,
-            Some(rice_i18n::t("Apply")),
+            PERMISSION_SYMBOLIC,
+            Some(MODE_CONTROL),
+            WidgetKind::Label,
+            Some(&symbolic),
             None,
-            if state.apply_enabled() {
-                WidgetState::ENABLED | WidgetState::ACCENT
-            } else {
-                WidgetState::empty()
-            },
+            WidgetState::ENABLED | WidgetState::START_ALIGNED,
+        );
+        create(
+            patches, MODE_TOOLTIP, Some(MODE_FIELD), WidgetKind::Tooltip,
+            Some(rice_i18n::t("Octal mode controls owner, group, and other permissions.")), None,
         );
     }
     if !redmond98 && shows_executable(state, false) {
@@ -1124,7 +1175,7 @@ fn permission_patches(patches: &mut Vec<Patch>, state: &PropertiesState, redmond
             Some(IconId::Program),
             if state.stage == Stage::Ready {
                 WidgetState::ENABLED
-                    | if metadata.mode & 0o111 != 0 {
+                    | if state.parsed_mode().unwrap_or(metadata.mode) & 0o111 != 0 {
                         WidgetState::CHECKED
                     } else {
                         WidgetState::empty()
@@ -1167,6 +1218,12 @@ fn shows_executable(state: &PropertiesState, all_files: bool) -> bool {
 
 fn rows(state: &PropertiesState) -> Vec<(&'static str, String)> {
     if state.entries.len() != 1 {
+        let has_folders = state.entries.iter().any(|entry| entry.kind == EntryKind::Directory);
+        let bytes = state.entries.iter().filter(|entry| entry.kind != EntryKind::Directory)
+            .map(|entry| entry.size).sum::<u64>();
+        let size = rice_i18n::format("files.count.size", &[
+            ("size", &total_size_label(bytes)), ("bytes", &bytes.to_string()),
+        ]);
         let paths = state
             .entries
             .iter()
@@ -1177,28 +1234,30 @@ fn rows(state: &PropertiesState) -> Vec<(&'static str, String)> {
             ("Selected", rice_i18n::format("files.count.items", &[("count", &state.entries.len().to_string())])),
             ("Paths", paths),
             (
-                "Combined size",
-                rice_i18n::format("files.count.bytes", &[("count", &state.entries.iter().map(|entry| entry.size).sum::<u64>().to_string())]),
+                if has_folders { "Selected file size" } else { "Combined size" },
+                if has_folders {
+                    rice_i18n::format("{size} (folder contents not included)", &[("size", &size)])
+                } else { size },
             ),
         ];
     }
     let entry = &state.entries[0];
     let mut rows = vec![
-        ("Selected", rice_i18n::t("files.count.item").to_owned()),
         ("Type", if entry.kind == EntryKind::File { super::files_details::type_label(entry) } else { type_label(entry.kind).to_owned() }),
         ("Path", entry.path.as_str().to_owned()),
-        ("MIME type", infer_media_type(entry).to_owned()),
-        (
-            "Size",
-            rice_i18n::format("files.count.size", &[("size", &size_label(entry)), ("bytes", &entry.size.to_string())]),
-        ),
-        ("Modified", modified_timestamp_label(entry.modified_unix_ms)),
     ];
     if entry.kind == EntryKind::Directory {
         let (contents, size) = folder_rows(state);
+        rows.push(("Size", size));
         rows.push(("Contents", contents));
-        rows.push(("Contents size", size));
+    } else {
+        rows.push(("MIME type", infer_media_type(entry).to_owned()));
+        rows.push((
+            "Size",
+            rice_i18n::format("files.count.size", &[("size", &size_label(entry)), ("bytes", &entry.size.to_string())]),
+        ));
     }
+    rows.push(("Modified", modified_timestamp_label(entry.modified_unix_ms)));
     if let Some(target) = &entry.symlink_target {
         rows.push(("Link target", target.as_str().to_owned()));
     }
@@ -1246,7 +1305,7 @@ fn redmond_rows(state: &PropertiesState) -> Vec<(&'static str, String)> {
     values
 }
 
-fn property_row(patches: &mut Vec<Patch>, index: usize, label: &str, value: &str, redmond98: bool) {
+fn property_row(patches: &mut Vec<Patch>, index: usize, label: &str, value: &str, _redmond98: bool) {
     let Ok(index) = u64::try_from(index) else {
         return;
     };
@@ -1256,7 +1315,7 @@ fn property_row(patches: &mut Vec<Patch>, index: usize, label: &str, value: &str
         row,
         Some(DETAILS),
         WidgetKind::Row,
-        Some("split:300"),
+        Some("split:360:min-width=120:padding=0"),
         None,
     );
     create_with_state(
@@ -1266,26 +1325,32 @@ fn property_row(patches: &mut Vec<Patch>, index: usize, label: &str, value: &str
         WidgetKind::Label,
         Some(rice_i18n::t(label)),
         None,
-        WidgetState::ENABLED
-            | if redmond98 {
-                WidgetState::empty()
-            } else {
-                WidgetState::MUTED
-            },
+        WidgetState::ENABLED | WidgetState::START_ALIGNED,
     );
+    let path = label == "Path" || label == "Location:";
+    if path {
+        create(
+            patches, VALUE_BASE + index, Some(row), WidgetKind::Row,
+            Some("split:100:trailing:min-width=28:max-width=28:padding=0"), None,
+        );
+    }
     create(
         patches,
         row + 2,
-        Some(row),
+        Some(if path { VALUE_BASE + index } else { row }),
         WidgetKind::Label,
         Some(value),
         None,
     );
-    if label == "Path" || label == "Location:" {
+    if path {
+        create(
+            patches, VALUE_TOOLTIP_BASE + index, Some(row + 2), WidgetKind::Tooltip,
+            Some(value), None,
+        );
         create_with_state(
             patches,
             COPY_LOCATION,
-            Some(row),
+            Some(VALUE_BASE + index),
             WidgetKind::Button,
             Some(""),
             Some(IconId::EditCopy),

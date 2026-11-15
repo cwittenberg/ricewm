@@ -32,6 +32,8 @@ mod layout_partition;
 mod layout_tokens;
 mod render;
 mod scroll;
+mod control_chrome;
+mod visual_control;
 mod text_menu;
 
 pub use error::NativeUiError;
@@ -52,6 +54,8 @@ pub const MAX_HIT_TARGETS: usize = rice_ui::MAX_WIDGETS;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum DrawCommand {
+    /// One bounded resolved conditional decoration record per visible cell.
+    GridDecorations{rect:Rect,decorations:rice_ui::grid_frame::GridDecorations,zoom_percent:u16,background:Color},
     IconOverride {rect:Rect,selector:String},
     ThemeSurface { rect: Rect, role: u8, state: u8 },
     Fill {
@@ -263,6 +267,8 @@ pub enum TextRole {
     Label,
     Editor,
     Markdown,
+    /// Strong label typography, carried by the spare two-bit text role value.
+    Emphasized,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -357,6 +363,7 @@ struct NativeWindow {
     popup_anchor: Option<Point>,
     popup_context_target: Option<WidgetId>,
     scroll_drag: Option<WidgetId>,
+    slider_grab_offset: i32,
     geometry: BTreeMap<WidgetId, Rect>,
     dialog_work_area: Option<Rect>,
     hit_targets: Vec<HitTarget>,
@@ -383,6 +390,7 @@ pub(crate) struct PointerVisualState {
     text_drag: Option<TextDragState>,
     popup_anchor: Option<Point>,
     scroll_drag: Option<WidgetId>,
+    slider_grab_offset: i32,
     tree_expansion: BTreeMap<WidgetId, TreeExpansionOverride>,
 }
 
@@ -418,6 +426,7 @@ impl NativeWindow {
             popup_anchor: self.popup_anchor,
             popup_context_target: self.popup_context_target,
             scroll_drag: self.scroll_drag,
+            slider_grab_offset: self.slider_grab_offset,
             geometry: BTreeMap::new(),
             dialog_work_area: self.dialog_work_area,
             hit_targets: Vec::new(),
@@ -691,6 +700,7 @@ impl NativeUiHost {
             text_drag: native_window.text_drag,
             popup_anchor: native_window.popup_anchor,
             scroll_drag: native_window.scroll_drag,
+            slider_grab_offset: native_window.slider_grab_offset,
             tree_expansion: native_window.tree_expansion.clone(),
         })
     }
@@ -923,14 +933,18 @@ impl NativeUiHost {
         // field here makes each actor echo of ValueChanged select the entire
         // value again, so the next typed character replaces the previous one.
         // An unrelated patch must not undo focus moved by a click or Tab.
-        // Recreating a focused widget or explicitly positioning its caret
-        // reasserts focus. Formula point selection temporarily focuses the grid;
+        // Recreating a focused widget in an incremental patch or explicitly
+        // positioning its caret reasserts focus. A full snapshot recreates all
+        // widgets, so an unchanged semantic focus must preserve the user's
+        // current focus (including a text field's caret and selection).
+        // Formula point selection temporarily focuses the grid;
         // its response restores the editor without recreating that control.
         // Selection requests on fields without FOCUSED never steal focus.
         let adopt_requested_focus = requested_focus.is_some()
             && (requested_focus != semantic_focus_before || candidate.focused.is_none()
                 || patches.iter().any(|patch| match patch {
                     Patch::Create { widget, .. } => Some(widget.id) == requested_focus
+                        && !full_snapshot
                         && widget.state.contains(WidgetState::FOCUSED),
                     Patch::EditSelection { id, .. } => Some(*id) == requested_focus,
                     _ => false,
@@ -1333,6 +1347,7 @@ impl NativeUiHost {
                 &theme,
                 native_window.focused,
                 native_window.hovered,
+                native_window.hover_point,
                 native_window.pressed,
                 native_window.opened_menu,
                 native_window.text_selection_all,
@@ -1418,6 +1433,7 @@ impl NativeUiHost {
                 &theme,
                 native_window.focused,
                 native_window.hovered,
+                native_window.hover_point,
                 native_window.pressed,
                 None,
                 native_window.text_selection_all,
@@ -1480,6 +1496,7 @@ impl NativeUiHost {
                 tooltip,
                 &native_window.geometry,
                 &theme,
+                None,
                 None,
                 None,
                 None,
@@ -1632,12 +1649,14 @@ impl NativeUiHost {
 
     #[must_use]
     pub fn hit_test(&self, app: AppId, window: WindowId, point: Point) -> Option<HitTarget> {
-        self.windows
-            .get(&(app, window))?
+        let native_window = self.windows.get(&(app, window))?;
+        native_window
             .hit_targets
             .iter()
             .rev()
-            .find(|target| target.rect.contains(point))
+            .find(|target| target.rect.contains(point) && native_window.tree.get(target.widget)
+                .and_then(|widget| visual_control::chip(widget.text.as_deref()))
+                .is_none_or(|chip| visual_control::contains(native_window.geometry.get(&target.widget).copied().unwrap_or(target.rect),point,chip.radius)))
             .copied()
     }
 

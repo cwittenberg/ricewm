@@ -162,6 +162,7 @@ impl DisplayServer {
                 {
                 grab.is_none_or(|grab| grab.0 == id) && client.event_masks.get(&current.0)
                     .is_some_and(|mask| mask & core_mask != 0)}) { return BTreeSet::new(); }
+            if !pointer && grab.is_none() && current == self.focus_window { break; }
             let Some(window) = self.windows.get(&current.0) else { break; };
             if current == ROOT_WINDOW || window.parent == current { break; }
             child = current;

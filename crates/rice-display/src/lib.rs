@@ -450,8 +450,33 @@ pub extern "C" fn rice_wm_shell_style_set(style: u32) -> u32 {
 
 #[unsafe(no_mangle)]
 pub extern "C" fn rice_wm_dock_style_set(style: u32) -> u32 {
-    if style > 1 { return 0; }
-    with_server(|server| u32::from(server.set_dock_style(style == 1))).unwrap_or(0)
+    if style > 2 { return 0; }
+    with_server(|server| u32::from(server.set_taskbar_style(style))).unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rice_wm_taskbar_opacity_set(enabled: u32, opacity: u32) -> u32 {
+    if enabled > 1 || opacity > 100 { return 0; }
+    with_server(|server| u32::from(server.set_taskbar_opacity((enabled == 1).then_some(opacity as u8)))).unwrap_or(0)
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn rice_wm_dock_icon_placement_set(placement: u32) -> u32 {
+    if placement > 2 { return 0; }
+    with_server(|server| u32::from(server.set_dock_icon_placement(placement as u8))).unwrap_or(0)
+}
+
+/// Apply data-only theme geometry to painting, cascades and pointer targets.
+#[unsafe(no_mangle)]
+pub extern "C" fn rice_wm_theme_shell_layout_set(launcher:u32,root:u32,cascade:u32,rail:u32,header:u32,footer:u32,columns:u32)->u32 {
+    with_server(|server|u32::from(server.set_theme_shell_layout([launcher as usize,root as usize,cascade as usize,rail as usize,header as usize,footer as usize,columns as usize]))).unwrap_or(0)
+}
+
+/// Apply the same data-only frame geometry used by SDK-native windows.
+#[unsafe(no_mangle)]
+#[allow(clippy::too_many_arguments)]
+pub extern "C" fn rice_wm_window_chrome_set(top:u32,right:u32,bottom:u32,left:u32,title:u32,caption_width:u32,caption_height:u32,gap:u32,edge:u32,split:u32,leading:u32,icon:u32,grip:u32,count:u32,order:u32)->u32 {
+    with_server(|server|u32::from(server.set_window_chrome([top,right,bottom,left,title,caption_width,caption_height,gap,edge,split,leading,icon,grip,count,order]))).unwrap_or(0)
 }
 
 /// Change both shell menu painting and pointer row geometry.
@@ -764,7 +789,36 @@ pub unsafe extern "C" fn rice_wm_gnome_menu_replace(input_ptr: *const u8, input_
         });
         cursor = end;
     }
-    with_server(|server| u32::from(server.update_gnome_menu(items))).unwrap_or(0)
+    with_server(|server| {
+        server.clear_gnome_menu_scene();
+        u32::from(server.update_gnome_menu(items))
+    }).unwrap_or(0)
+}
+
+/// Upload a bounded ARGB popup scene and spatial GJS action rectangles.
+///
+/// # Safety
+/// The pointer must address `input_len` readable bytes. The frame contains
+/// width, height, hit count, reserved (u16 LE), then ARGB u32 pixels and
+/// (index, reserved, x, y, width, height) hit records (12 bytes each).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn rice_wm_gnome_menu_scene_update(input_ptr: *const u8, input_len: u32) -> u32 {
+    if input_ptr.is_null() || input_len < 8 || input_len > 8 + 1024 * 2048 * 4 + 64 * 12 { return 0; }
+    // SAFETY: upheld by the exported function's caller contract.
+    let bytes = unsafe { slice::from_raw_parts(input_ptr, input_len as usize) };
+    let word = |offset| u16::from_le_bytes([bytes[offset], bytes[offset + 1]]);
+    let (width, height, count) = (word(0), word(2), usize::from(word(4)));
+    let pixels_len = usize::from(width) * usize::from(height);
+    if width == 0 || width > 1024 || height == 0 || height > 2048 || count > 64
+        || word(6) != 0 || 8 + pixels_len * 4 + count * 12 != bytes.len() { return 0; }
+    let pixels = bytes[8..8 + pixels_len * 4].chunks_exact(4)
+        .map(|chunk| u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]])).collect();
+    let mut hits = Vec::with_capacity(count);
+    for offset in (8 + pixels_len * 4..bytes.len()).step_by(12) {
+        if bytes[offset + 1] != 0 || word(offset + 10) != 0 { return 0; }
+        hits.push((bytes[offset], word(offset + 2), word(offset + 4), word(offset + 6), word(offset + 8)));
+    }
+    with_server(|server| u32::from(server.update_gnome_menu_scene(width, height, pixels, hits))).unwrap_or(0)
 }
 
 /// Remember which extension owns the open popup menu so it anchors to the
@@ -2714,3 +2768,4 @@ pub extern "C" fn rice_locale_catalog_begin(locale: u32, bytes: u32) -> *mut u8 
 pub extern "C" fn rice_locale_catalog_finish(locale: u32, bytes: u32) -> u32 {
     rice_i18n::browser_catalog::finish(locale, bytes) as u32
 }
+

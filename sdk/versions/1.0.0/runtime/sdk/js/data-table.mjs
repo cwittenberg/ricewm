@@ -1,3 +1,4 @@
+import {expandCellRange} from './cell-range.mjs';
 import {Column, Row, Stack, Container, ScrollBar, VirtualGrid, Table as LegacyTable} from './controls.mjs';
 import {State, oneOf, numberInRange} from './control.mjs';
 import {Message} from './messages.mjs';
@@ -186,8 +187,8 @@ export class Table extends Column {
     getSelectedRows(){return this.selection&&this.view?this.view.slice(this.selection.firstRow,this.selection.lastRow+1):[];}
     selectRange({firstRow,lastRow=firstRow,firstColumn,lastColumn=firstColumn},kind='cell') {
         if(this.values.selectionMode==='none')return this;
-        if(![firstRow,lastRow,firstColumn,lastColumn].every(Number.isInteger)||firstRow<0||lastRow<firstRow||lastRow>=this.view.length||firstColumn<0||lastColumn<firstColumn||lastColumn>=this.values.columns.length)throw RangeError('Table selection is outside displayed rows/columns');
-        this.selection={kind,firstRow,lastRow,firstColumn,lastColumn};
+        const range=expandCellRange({firstRow,lastRow,firstColumn,lastColumn},{rows:this.view.length,columns:this.values.columns.length});
+        this.selection={kind,...range};
         this.cursor={row:lastRow,column:lastColumn};
         this.anchor??={row:firstRow,column:firstColumn};
         this.render();this.publishSelection();return this;

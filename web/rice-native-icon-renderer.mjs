@@ -16,13 +16,6 @@ function matchesMailIcon(name) {
     return name === "mail-unread" || name === "mail-read";
 }
 
-const RICE_OT_SVG_COLOR_SEMANTICS = new Set([
-    "audio", "binary", "bowl", "css", "csv", "doc", "docker", "documents",
-    "downloads", "env", "file-zip", "home-folder", "html", "js",
-    "manifest", "markdown", "pdf", "pictures", "ppt", "program", "secret",
-    "text", "video", "xls", "yaml", "network-mounts", "trash",
-    "desktop-folder", "system-monitor", "windows", "linux", "snap",
-]);
 const RICE_FORCED_MONOCHROME_SEMANTICS = new Set([
     "bowl",
     "calendar",
@@ -835,6 +828,7 @@ export class RiceNativeIconRenderer {
         this.tintedIcons = new Map();
         this.notifiedFallbacks = new Set();
         this.colorGlyphImages = new Map();
+        this.colorGlyphInk = new Set();
         this.colorGlyphUrls = new Set();
         this.applicationIconImages = new Map();
         this.applicationIconUrls = new Set();
@@ -1002,7 +996,7 @@ export class RiceNativeIconRenderer {
         if(command.applicationId&&this.renderOverride('app:'+command.applicationId,command))return true;
         const semantic = riceNativeIconName(command.icon);
         if (semantic && this.#renderCustomThemeIcon(semantic,command))return true;
-        if ((command.monochrome || (this.monochrome && !command.colorArtwork)) && semantic) {
+        if ((command.monochrome || (this.monochrome && this.themeIconVariant !== "color" && !command.colorArtwork)) && semantic) {
             return this.#renderMonochrome(semantic, { ...command, monochrome: true });
         }
         if (semantic && this.#renderApplicationIcon(semantic, command)) return true;
@@ -1034,7 +1028,7 @@ export class RiceNativeIconRenderer {
         if(this.customThemeIcons.has(command.icon)&&this.#renderCustomThemeIcon(command.icon,command))return true;
         const semantic = riceIconName(command.icon);
         if (semantic && this.#renderCustomThemeIcon(semantic,command))return true;
-        if ((command.monochrome || (this.monochrome && !command.colorArtwork)) && semantic) {
+        if ((command.monochrome || (this.monochrome && this.themeIconVariant !== "color" && !command.colorArtwork)) && semantic) {
             return this.#renderMonochrome(semantic, { ...command, monochrome: true });
         }
         if (semantic && this.#renderApplicationIcon(semantic, command)) return true;
@@ -1128,7 +1122,7 @@ export class RiceNativeIconRenderer {
     }
 
     dispose() {
-        this.customThemeGeneration++;this.customThemeIcons.clear();
+        this.customThemeGeneration++;this.customThemeIcons.clear();this.installedAppIcons?.clear();this.installedAppIconGeneration=null;this.installedAppIconSignature=null;this.immutableInstalledAppIconInput=null;this.installedAppIconRevision=null;
         this.fontReady = false;
         this.themeColor = null;
         this.themeHoverColor = null;
@@ -1152,6 +1146,7 @@ export class RiceNativeIconRenderer {
         this.tintedIcons.clear();
         for (const url of this.colorGlyphUrls) globalThis.URL?.revokeObjectURL?.(url);
         this.colorGlyphImages.clear();
+        this.colorGlyphInk.clear();
         this.colorGlyphUrls.clear();
         for (const url of this.applicationIconUrls) {
             globalThis.URL?.revokeObjectURL?.(url);
@@ -1230,6 +1225,9 @@ export class RiceNativeIconRenderer {
         if (image?.complete && image.naturalWidth > 0) {
             return this.#renderRawImage(image, command);
         }
+        // An OT-SVG image must finish decoding before it is painted. Falling
+        // through to its font glyph uses Apple's different SVG baseline.
+        if (image) return false;
         const glyph = this.themeGlyphs.get(name);
         if (!glyph || !this.themeFontReady || !this.themeFontFamily) return false;
         const { context } = this;
@@ -1337,6 +1335,37 @@ export class RiceNativeIconRenderer {
         return true;
     }
 
+    setInstalledAppIcons(icons={},revision=null){
+        if(revision!==null&&revision!==undefined&&(typeof revision!=='string'||revision.length>128||!revision.length))throw Error('Invalid installed app icon revision');
+        if(revision&&revision===this.installedAppIconRevision)return;
+        if(icons===this.immutableInstalledAppIconInput)return;
+        if(!icons||typeof icons!=='object'||Array.isArray(icons)||Object.keys(icons).length>256)throw Error('Installed app icon inventory exceeds its budget');
+        const signature=JSON.stringify(icons);if(signature.length>4*1024*1024)throw Error('Installed app icon inventory exceeds its budget');
+        // Cache identity only for deeply immutable PNG records with data fields.
+        // Mutable caller maps still use content comparison on every update.
+        const immutable=Object.isFrozen(icons)&&Object.values(Object.getOwnPropertyDescriptors(icons)).every(property=>
+            Object.hasOwn(property,'value')&&property.value&&Object.isFrozen(property.value)&&
+            Object.entries(Object.getOwnPropertyDescriptors(property.value)).every(([key,field])=>
+                ['png','monochrome'].includes(key)&&Object.hasOwn(field,'value')&&
+                (key==='png'?typeof field.value==='string':typeof field.value==='boolean')));
+        if(signature===this.installedAppIconSignature){this.immutableInstalledAppIconInput=immutable?icons:null;this.installedAppIconRevision=revision||null;return;}
+        const accepted=new Map();
+        for(const [name,value]of Object.entries(icons)){
+            if(!name.startsWith('app:')||typeof value?.png!=='string')throw Error('Installed app icon needs app-owned PNG artwork');
+            validateThemeIcons({[name]:value});
+            const bytes=Uint8Array.from(atob(value.png),c=>c.charCodeAt(0)),view=new DataView(bytes.buffer);
+            if(bytes.length>12*1024||view.getUint32(16)!==view.getUint32(20)||view.getUint32(16)>128)throw Error('Installed app icon dimensions exceed their budget');
+            accepted.set(name,value);
+        }
+        this.installedAppIconSignature=signature;this.installedAppIcons=new Map();this.tintedIcons.clear();const generation=Symbol();this.installedAppIconGeneration=generation;
+        this.immutableInstalledAppIconInput=immutable?icons:null;
+        this.installedAppIconRevision=revision||null;
+        for(const [name,value]of accepted){
+            if(typeof Image==='undefined')continue;
+            const image=new Image();image.onload=()=>{if(this.installedAppIconGeneration===generation)this.onDamage();};
+            image.src='data:image/png;base64,'+value.png;this.installedAppIcons.set(name,{image,monochrome:value.monochrome===true});
+        }
+    }
     setApplicationSelectorAliases(entries=[]){
         this.applicationSelectorAliases=new Map();
         for(const entry of entries){
@@ -1345,18 +1374,32 @@ export class RiceNativeIconRenderer {
         }
     }
     hasOverride(value){const name=typeof value==='number'?riceNativeIconName(value):value;return this.customThemeIcons.has(name)||(name==='trash'&&this.customThemeIcons.has('trash-empty'));}
+    registerSiteIcon(app,selector,rgba){
+        if(typeof app!=='string'||typeof selector!=='string'||!(rgba instanceof Uint8Array)||rgba.length!==4096)throw Error('Invalid owned site icon');
+        this.siteIcons ||= new Map();let icons=this.siteIcons.get(app);if(!icons){icons=new Map();this.siteIcons.set(app,icons);}if(!icons.has(selector)&&icons.size>=512)throw Error('Site icon limit reached');
+        const canvas=typeof OffscreenCanvas==='function'?new OffscreenCanvas(32,32):this.context.canvas.ownerDocument.createElement('canvas');canvas.width=canvas.height=32;canvas.getContext('2d').putImageData(new ImageData(new Uint8ClampedArray(rgba),32,32),0,0);icons.set(selector,canvas);
+    }
+    releaseSiteIcon(app,selector){const icons=this.siteIcons?.get(app);icons?.delete(selector);if(icons?.size===0)this.siteIcons.delete(app);}
     renderOverride(selector,command){
+        const siteIcon=this.siteIcons?.get(command.iconApplication)?.get(selector);if(siteIcon){const {x,y,width,height}=command.rect;this.context.drawImage(siteIcon,x,y,width,height);return true;}
+
         const choices=[selector];if(selector?.startsWith('app:')){for(const alias of this.applicationSelectorAliases?.get(selector.slice(4))||[])choices.push('app:'+alias);const id=selector.slice(4);if(id.endsWith('.desktop'))choices.push('app:'+id.slice(0,-8));if(id.startsWith('dev.')||id.startsWith('org.ricewm.'))choices.push('app:riceapp:'+id);if(!id.includes(':'))choices.push('app:desktop:'+id);}if(selector?.startsWith('mime:'))choices.push(selector.split('/')[0]+'/*');
+        for(const key of choices)if(this.customThemeIcons.has(key)&&this.#renderCustomThemeIcon(key,command))return true;
         for(const key of choices)if(this.#renderCustomThemeIcon(key,command))return true;
+        if(selector==='view:tree')return this.#renderNavigationOverride('view-tree',command);
         return false;
     }
     #renderCustomThemeIcon(name,command,seen=new Set()) {
+        // Cascade relief follows the native row's interaction state. Themes
+        // opt in with a hover variant; other icon artwork keeps its usual path.
+        if (command.hovered && (name === 'submenu-left' || name === 'submenu-right') &&
+            this.customThemeIcons.has(name + '-hover')) name += '-hover';
         if(seen.has(name))return false;seen.add(name);
-        const entry=this.customThemeIcons.get(name)||this.customThemeIcons.get(name.replace(/-color$/,''))||(name==='trash'?this.customThemeIcons.get('trash-empty'):null);
+        const entry=this.customThemeIcons.get(name)||this.customThemeIcons.get(name.replace(/-color$/,''))||this.installedAppIcons?.get(name)||(name==='trash'?this.customThemeIcons.get('trash-empty'):null);
         if(!entry)return false;
         if(entry.alias)return this.#renderCustomThemeIcon(entry.alias,command,seen)||this.#renderGlyph(entry.alias,command)||this.#renderBuiltInVector(entry.alias,command);
         if(!entry.image?.complete||!entry.image.naturalWidth)return false;
-        if(entry.monochrome||command.monochrome)return this.#renderTintedImage('custom:'+this.customThemeGeneration+':'+name,entry.image,command);
+        if(entry.monochrome||command.monochrome&&!this.installedAppIcons?.has(name))return this.#renderTintedImage('custom:'+this.customThemeGeneration+':'+name,entry.image,command);
         const {x,y,width,height}=command.rect;
         const scale=Math.min(width/entry.image.naturalWidth,height/entry.image.naturalHeight),w=entry.image.naturalWidth*scale,h=entry.image.naturalHeight*scale;
         this.context.drawImage(entry.image,x+(width-w)/2,y+(height-h)/2,w,h);return true;
@@ -1380,6 +1423,9 @@ export class RiceNativeIconRenderer {
     }
 
     #renderGlyph(name, command) {
+        // Color artwork is positioned by #renderColorGlyph, never by the
+        // platform text renderer. Use the outline while its image is loading.
+        if (name?.endsWith("-color")) name = name.slice(0, -6);
         if (name === "clock") return this.#renderBuiltInVector(name, command);
         if (name === "inbox") {
             return this.#renderFallback("rice-box", command) ||
@@ -1419,6 +1465,7 @@ export class RiceNativeIconRenderer {
         if (this.#renderNavigationOverride(name, command)) return true;
         const image = this.colorGlyphImages.get(name);
         if (!image?.complete || image.naturalWidth <= 0) return false;
+        if (this.colorGlyphInk.has(name)) return this.#renderTintedImage(name, image, command);
         const width = Math.max(1, command.rect.width);
         const height = Math.max(1, command.rect.height);
         const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
@@ -1473,7 +1520,7 @@ export class RiceNativeIconRenderer {
     // theme artwork still wins; these vectors use the current toolbar ink.
     #renderNavigationOverride(name, command) {
         const semantic = name?.replace(/-color$/, "");
-        if (semantic !== "navigate-up" && semantic !== "view-refresh") return false;
+        if (semantic !== "navigate-up" && semantic !== "view-refresh" && semantic !== "view-tree") return false;
         const { context: c } = this;
         const { rect } = command;
         const size = Math.max(1, Math.min(rect.width, rect.height));
@@ -1486,7 +1533,15 @@ export class RiceNativeIconRenderer {
             c.lineCap = "round";
             c.lineJoin = "round";
             c.beginPath();
-            if (semantic === "view-refresh") {
+            if (semantic === "view-tree") {
+                // A directory spine with two indented children remains clear
+                // at small sizes and follows the theme's control ink.
+                c.rect(3, 2, 8, 5);
+                c.moveTo(6, 7); c.lineTo(6, 20);
+                c.moveTo(6, 12); c.lineTo(13, 12);
+                c.moveTo(6, 20); c.lineTo(13, 20);
+                c.rect(13, 9.5, 8, 5); c.rect(13, 17.5, 8, 5);
+            } else if (semantic === "view-refresh") {
                 // One open clockwise sweep, with an unambiguous arrowhead.
                 c.arc(12, 12, 7.5, Math.PI * .2, Math.PI * 1.85);
                 const tipX = 12 + 7.5 * Math.cos(Math.PI * 1.85);
@@ -1907,9 +1962,18 @@ export class RiceNativeIconRenderer {
         for (const [name, source] of svgGlyphDocuments(
             decompressed,
             glyphs,
-            candidate => candidate.endsWith("-color") &&
-                RICE_OT_SVG_COLOR_SEMANTICS.has(candidate.slice(0, -6)),
+            // Shell/menu artwork needs the same explicit image rectangle as
+            // document icons; a partial allowlist leaves iOS using font SVGs.
+            candidate => candidate.endsWith("-color"),
         )) {
+            // Standalone SVG images do not inherit the Canvas text ink. Keep
+            // symbolic currentColor/black artwork readable on themed surfaces.
+            const paints = [...source.matchAll(/(?:fill|stroke)\s*=\s*["']([^"']+)["']/gi)]
+                .map(match => match[1].toLowerCase());
+            if (paints.some(paint => paint !== "none") && paints.every(paint =>
+                ["none", "currentcolor", "black", "#000", "#000000"].includes(paint))) {
+                this.colorGlyphInk.add(name);
+            }
             const blob = new Blob([source], { type: "image/svg+xml" });
             const url = globalThis.URL.createObjectURL(blob);
             const image = new globalThis.Image();

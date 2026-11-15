@@ -1,4 +1,5 @@
 import { BACKGROUND_IMAGE_KEY } from './background-contract.mjs';
+import { paintBackgroundFill,pictureFillTiles,paintPictureFill } from '@ricewm/app';
 
 /** Resource planning only: backgrounds never enter the editable object list. */
 export function backgroundImageTarget(scene) {
@@ -16,28 +17,20 @@ export function backgroundImageTarget(scene) {
 export function backgroundRectangles(scene) {
     const target = backgroundImageTarget(scene);
     if (!target) return [];
-    const { width, height } = scene.size, picture = scene.backgroundPicture;
-    if (picture.mode === 'stretch') return [[0, 0, width, height]];
-    const w = target.bounds.width, h = target.bounds.height;
-    const start = (offset, span) => { const value = ((offset % span) + span) % span; return value === 0 ? 0 : value - span; };
-    const x = start(picture.offsetX, w), y = start(picture.offsetY, h);
-    const columns = Math.ceil((width - x) / w), rows = Math.ceil((height - y) / h);
-    if (columns * rows > 4096) throw new RangeError('Background texture needs a larger tile scale');
-    return Array.from({ length: columns * rows }, (_, i) => [x + i % columns * w, y + Math.floor(i / columns) * h, w, h]);
+    return pictureFillTiles(scene.size,scene.backgroundPicture.image,scene.backgroundPicture).map(tile=>tile.rect);
 }
 
 export function paintBackgroundPicture(builder, scene, frames, textures) {
     const picture = scene.backgroundPicture, resource = frames.get(BACKGROUND_IMAGE_KEY);
     if (!picture || !resource || picture.opacity === 0) return;
     const { left, top, right, bottom } = picture.image.crop;
-    builder.pushClip([0, 0, scene.size.width, scene.size.height]);
-    for (const rect of backgroundRectangles(scene)) {
-        builder.image(textures.get(resource.key), rect, { uv: [left, top, 1 - right, 1 - bottom], opacity: picture.opacity });
-    }
-    builder.popClip();
+    paintPictureFill(builder,textures.get(resource.key),scene.size,picture.image,picture,{uv:[left,top,1-right,1-bottom]});
 }
 
 export function paintBackgroundGradient(builder, scene, packed) {
+    if(['gradient','pattern'].includes(scene.backgroundFill?.kind)) {
+        paintBackgroundFill(builder,scene.backgroundFill,[0,0,scene.size.width,scene.size.height]);return;
+    }
     const gradient = scene.backgroundGradient;
     if (!gradient) return;
     const stops = gradient.stops.map(stop => ({ offset: stop.offset, color: packed(stop) }));

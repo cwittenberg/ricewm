@@ -910,6 +910,89 @@ fn select_all_tracks_an_address_value_expanded_by_the_focus_patch() {
 }
 
 #[test]
+fn full_snapshot_preserves_user_text_focus_selection_and_caret() {
+    let mut host = NativeUiHost::default();
+    let snapshot = |sequence, text: &str| UiPatchEnvelope {
+        app: app(),
+        window: window(),
+        sequence,
+        patches: vec![
+            UiPatch::Clear,
+            UiPatch::Create {
+                id: widget(1),
+                parent: None,
+                index: 0,
+                kind: WidgetKind::Row as u16,
+                state: WidgetState::ENABLED.bits(),
+                text: None,
+                icon: None,
+            },
+            UiPatch::Create {
+                id: widget(2),
+                parent: Some(widget(1)),
+                index: 0,
+                kind: WidgetKind::TextField as u16,
+                state: (WidgetState::ENABLED | WidgetState::SELECT_ALL_ON_FOCUS).bits(),
+                text: Some(text.into()),
+                icon: None,
+            },
+            UiPatch::Create {
+                id: widget(3),
+                parent: Some(widget(1)),
+                index: 1,
+                kind: WidgetKind::Button as u16,
+                state: (WidgetState::ENABLED | WidgetState::FOCUSED).bits(),
+                text: Some("Files".into()),
+                icon: None,
+            },
+        ],
+    };
+    host.apply_patch(&snapshot(1, "/root/Documents")).unwrap();
+    let size = Size {
+        width: 420,
+        height: 40,
+    };
+    let constraints = Constraints::new(size, size).unwrap();
+    let output = host.render(app(), window(), constraints).unwrap();
+    let point = output
+        .hit_targets
+        .iter()
+        .find(|target| target.widget == widget(2))
+        .unwrap()
+        .rect
+        .origin;
+    host.pointer_event(app(), window(), PointerEventKind::Down, point, 1, 0)
+        .unwrap();
+    host.pointer_event(app(), window(), PointerEventKind::Up, point, 1, 0)
+        .unwrap();
+    assert_eq!(
+        host.selected_text(app(), window()).as_deref(),
+        Some("/root/Documents")
+    );
+    host.apply_patch(&snapshot(2, "/root/Documents")).unwrap();
+    assert_eq!(
+        host.selected_text(app(), window()).as_deref(),
+        Some("/root/Documents")
+    );
+    let first = host
+        .key_event(app(), window(), true, 0, 0, Some("/root/Doc".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(first.target, widget(2));
+    assert_eq!(first.event, UiEvent::ValueChanged("/root/Doc".into()));
+    host.apply_patch(&snapshot(3, "/root/Doc")).unwrap();
+    let second = host
+        .key_event(app(), window(), true, 0, 0, Some("uments".into()))
+        .unwrap()
+        .unwrap();
+    assert_eq!(second.target, widget(2));
+    assert_eq!(
+        second.event,
+        UiEvent::ValueChanged("/root/Documents".into())
+    );
+}
+
+#[test]
 fn retained_programmatic_focus_does_not_reselect_after_value_echo() {
     let mut host = NativeUiHost::default();
     host.apply_patch(&UiPatchEnvelope {
@@ -3032,6 +3115,69 @@ fn progress_bar_click_and_drag_emit_seek_positions() {
 }
 
 #[test]
+fn slim_seek_bar_click_and_drag_emit_seek_positions() {
+    let mut host = NativeUiHost::default();
+    host.apply_patch(&UiPatchEnvelope {
+        app: app(),
+        window: window(),
+        sequence: 1,
+        patches: vec![UiPatch::Create {
+            id: widget(1),
+            parent: None,
+            index: 0,
+            kind: WidgetKind::ProgressBar as u16,
+            state: WidgetState::ENABLED.bits(),
+            text: Some("slim:seek:25/100".into()),
+            icon: None,
+        }],
+    })
+    .expect("progress patch");
+    let constraints = Constraints::new(
+        Size {
+            width: 200,
+            height: 20,
+        },
+        Size {
+            width: 200,
+            height: 20,
+        },
+    )
+    .expect("fixed constraints");
+    let target = host
+        .render(app(), window(), constraints)
+        .expect("render")
+        .hit_targets[0];
+    let three_quarters = Point {
+        x: target.rect.origin.x + 150,
+        y: target.rect.origin.y + 2,
+    };
+    let down = host
+        .pointer_event(
+            app(),
+            window(),
+            PointerEventKind::Down,
+            three_quarters,
+            1,
+            0,
+        )
+        .expect("down")
+        .expect("seek value");
+    assert_eq!(down.event, UiEvent::ValueChanged("75/100".into()));
+    let end = Point {
+        x: target.rect.origin.x + 250,
+        y: three_quarters.y,
+    };
+    let drag = host
+        .pointer_event(app(), window(), PointerEventKind::Move, end, 0, 0)
+        .expect("captured move")
+        .expect("seek value");
+    assert_eq!(drag.event, UiEvent::ValueChanged("100/100".into()));
+    host.pointer_event(app(), window(), PointerEventKind::Up, end, 1, 0)
+        .expect("captured up")
+        .expect("seek value");
+}
+
+#[test]
 fn hovering_an_enabled_button_exports_the_pointer_cursor() {
     let mut host = NativeUiHost::default();
     host.apply_patch(&UiPatchEnvelope {
@@ -3823,4 +3969,50 @@ fn sdk_plain_multiline_control_copies_scalar_selection_and_tabs_to_actions() {
     let previous = host.key_event(app(), window(), true, 23, 1, None).unwrap().unwrap();
     assert_eq!(previous.target, widget(2));
     assert!(matches!(previous.event, UiEvent::Focus { focused: true }));
+}
+
+#[test]
+fn video_stage_paints_opaque_black_letterboxing_without_a_panel_border() {
+    let mut host = NativeUiHost::default();
+    host.apply_patch(&UiPatchEnvelope { app: app(), window: window(), sequence: 1,
+        patches: vec![UiPatch::Create { id: widget(1), parent: None, index: 0,
+            kind: WidgetKind::Stack as u16, state: WidgetState::ENABLED.bits(),
+            text: Some("panel:video-stage:flush:gap=0".into()), icon: None }],
+    }).unwrap();
+    let size = Size { width: 640, height: 360 };
+    let output = host.render(app(), window(), Constraints::new(size, size).unwrap()).unwrap();
+    assert!(output.commands.iter().any(|command| matches!(command,
+        super::DrawCommand::Fill { rect, color, radius: 0 }
+            if rect.size == size && *color == rice_ui::Color::opaque(0,0,0))));
+    assert!(!output.commands.iter().any(|command| matches!(command, super::DrawCommand::Border { .. })));
+}
+
+#[test]
+fn wheel_in_a_modal_gap_uses_the_top_dialog_scroll_view() {
+    let mut host = NativeUiHost::default();
+    let create = |id, parent: Option<u64>, index, kind: WidgetKind, text: &str| UiPatch::Create {
+        id: widget(id), parent: parent.map(widget), index, kind: kind as u16,
+        state: WidgetState::ENABLED.bits(), text: Some(text.into()), icon: None,
+    };
+    host.apply_patch(&UiPatchEnvelope {app: app(), window: window(), sequence: 1, patches: vec![
+        create(1, None, 0, WidgetKind::Column, ""),
+        create(2, Some(1), 0, WidgetKind::Dialog, "panel:side-sheet:Decorations"),
+        create(3, Some(2), 0, WidgetKind::ScrollView, "0/800"),
+        create(4, Some(3), 0, WidgetKind::Column, ""),
+        create(5, Some(2), 1, WidgetKind::Dialog, "panel:window-editor:title=Glow"),
+        create(6, Some(5), 0, WidgetKind::ScrollView, "0/800"),
+        create(7, Some(6), 0, WidgetKind::Column, ""),
+    ]}).unwrap();
+    let size = Size {width: 960, height: 640};
+    host.render(app(), window(), Constraints::new(size,size).unwrap()).unwrap();
+    let gap = Point {x: 600,y: 400};
+    assert!(host.hit_test(app(),window(),gap).is_none());
+    assert_eq!(host.scroll_owner_at_point(app(),window(),gap),Some(widget(6)));
+    let event = host.pointer_event(app(),window(),PointerEventKind::Wheel,gap,5,0).unwrap().unwrap();
+    assert_eq!(event.target,widget(6));
+    assert!(matches!(event.event,UiEvent::ValueChanged(value) if value.starts_with("96/")));
+    host.apply_patch(&UiPatchEnvelope {app:app(),window:window(),sequence:2,patches:vec![UiPatch::Remove{id:widget(5)}]}).unwrap();
+    host.render(app(),window(),Constraints::new(size,size).unwrap()).unwrap();
+    let event = host.pointer_event(app(),window(),PointerEventKind::Wheel,gap,5,0).unwrap().unwrap();
+    assert_eq!(event.target,widget(3));
 }

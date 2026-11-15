@@ -4,32 +4,36 @@ import { canReorderObjects, objectOrderingActions } from './object-ordering.mjs'
 import { tableCellAt } from './table-render.mjs';
 import { tableDividerAt, resizedTableTracks, tableWithTracks, tableLocalPoint } from './table-geometry.mjs';
 import { cellKey } from './table-values.mjs';
-import { FormatPainterSession, Message } from '@ricewm/app';
+import { FormatPainterSession, Message, ObjectGestureController, cellRangeBetween } from '@ricewm/app';
 import { captureObjectFormat, paintObjectFormat } from './format-painter.mjs';
 import { geometryFrame } from './scene-preview.mjs';
-import { alignmentCommands, objectAt, objectCorners, resizedBox, linePoints, translatedCommand, rotationHandle, draggedRotation, normalizedDegrees, normalizedSelection, canResize } from './canvas-geometry.mjs';
+import { alignmentCommands, objectAt, objectCorners, resizedBox, linePoints, translatedCommand, rotationHandle, normalizedDegrees, normalizedSelection, canResize } from './canvas-geometry.mjs';
+import {objectResizeHandles} from './selection-chrome.mjs';
 
 import { createFreeformDrawing } from './freeform-drawing.mjs';
 import { drawingPoints, drawingBox, drawingCommand, drawingPreview } from './drawing-geometry.mjs';
 
 /** Selection/gesture state is disposable. The injected command port remains
  * the only owner of document state, history, and persistence. */
-export function createCanvasEditor({ surface, apply, changed, editText, notice, beforePointer, renderPreview, beginTableInput, tableInputKey, openHyperlink }) {
+export function createCanvasEditor({ surface, apply, changed, editText, editTextStyle, editParagraphFormat, notice, beforePointer, renderPreview, beginTableInput, tableInputKey, openHyperlink, selectionTheme=()=>null }) {
     let locked = false, tool = null, drawing = null, freeform = null, tableCell = null;
     const painter = new FormatPainterSession();
     let painterEpoch = 0;
     let pendingTextInput = null, textHandoff = null, pendingTextCreation = null;
     let scene = null, selected = [], drag = null, busy = false, ratio = 1, textFrames = new Map(), imageFrames = new Map();
-    let editingCell = null, viewScale = 1, hoverCursor = 'default', previewWork = null, previewRequest = null, previewFrames = null;
-    let pointerGate = null, pendingPointers = [], linkPress = null;
+    let editingCell = null, editingTextObject = null, lastTextClick = null, viewScale = 1, hoverCursor = 'default', previewWork = null, previewRequest = null, previewFrames = null;
+    let cellRangeDrag=null;
+    let pointerGate = null, pendingPointers = [], linkPress = null, handleOverlay=null, overlayGesture=false;
+    const editingPointerStarts=new WeakSet();
     const linkAt = point => hyperlinkAt({ scene, frame: scene.size, point: { x: point[0], y: point[1] }, textFrames });
     const objects = () => scene?.objects.filter(object => selected.includes(object.id)) || [];
     function repaint(boxes = new Map(), lines = new Map(), rotations = new Map()) {
         surface.setProperty('cursor', tool || painter.active ? 'crosshair' : hoverCursor);
         if (!scene?.size) return;
         const shown = drag?.table && drag.tracks ? {...scene,objects:scene.objects.map(o=>o.id===drag.table.id?tableWithTracks(drag.table,drag.tracks):o)} : scene;
-        const frame = geometryFrame(shown, { selected, boxes, lines, rotations, textFrames: previewFrames || textFrames, imageFrames, placeholderGuides: true, editingCell, selectedCell: selectedTableCell(), preview: freeform?.preview() || (drawing ? drawingPreview(tool, drawing.points) : null) });
+        const frame = geometryFrame(shown, { selected, boxes, lines, rotations, textFrames: previewFrames || textFrames, imageFrames, placeholderGuides: true, editingCell, editingTextObject, selectedCell: selectedTableCell(), preview: freeform?.preview() || (drawing ? drawingPreview(tool, drawing.points) : null),viewScale,selectionTheme:selectionTheme() });
         ratio = frame.ratio; surface.submit(frame.frame);
+        if(handleOverlay){handleOverlay.setScale(viewScale);handleOverlay.setHandles((overlayGesture||!locked&&(editingCell!==null||editingTextObject!==null))?frame.handles:[]);}
     }
     function reflowPreview() {
         if(!renderPreview || !drag?.table || !drag.tracks) return;
@@ -56,17 +60,25 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         const object = objects()[0];
         if (!object?.table || object.id !== tableCell.object) return null;
         const cell = object.table.cells?.find(cell => cell.row === tableCell.row && cell.column === tableCell.column && !cell.covered);
-        return cell ? { object, row: cell.row, column: cell.column, cell } : null;
+        if(!cell)return null;
+        const merges=object.table.cells.filter(c=>!c.covered&&(c.rowSpan>1||c.columnSpan>1)).map(c=>({firstRow:c.row,lastRow:c.row+c.rowSpan-1,firstColumn:c.column,lastColumn:c.column+c.columnSpan-1}));
+        let range;
+        try{range=cellRangeBetween(tableCell.anchor||{row:cell.row,column:cell.column},{row:cell.row,column:cell.column},{rows:object.table.rows,columns:object.table.columns,merges});}
+        catch{return null;}
+        const cells=object.table.cells.filter(c=>!c.covered&&c.row>=range.firstRow&&c.row<=range.lastRow&&c.column>=range.firstColumn&&c.column<=range.lastColumn);
+        return {object,row:cell.row,column:cell.column,cell,range,cells,multiple:cells.length>1};
     }
-    function selectCell(object, cell) {
-        selected = [object.id]; tableCell = { object: object.id, row: cell.row, column: cell.column };
+    function selectCell(object, cell, extend=false) {
+        const anchor=extend&&tableCell?.object===object.id?tableCell.anchor||{row:tableCell.row,column:tableCell.column}:{row:cell.row,column:cell.column};
+        selected = [object.id]; tableCell = { object: object.id, row: cell.row, column: cell.column,anchor };
         repaint(); changed?.(objects());
     }
     function cellText(keys = [], pointer = null) {
-        const active = selectedTableCell();
+        let active = selectedTableCell();
         if (!active?.cell.editable) return;
+        if(active.multiple){selectCell(active.object,active.cell);active=selectedTableCell();}
         textHandoff = { ...active.object, id: cellKey(active.object.id, active.row, active.column), tableCell: active };
-        editText?.(textHandoff, keys, pointer);
+        return editText?.(textHandoff, keys, pointer);
     }
     function nextTableCell(backwards = false) {
             const active = selectedTableCell(); if (!active) return;
@@ -119,6 +131,14 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         if (!tool && !painter.active && detail.kind === 'down' && [0,1].includes(detail.button) && (detail.modifiers & 4) && !(detail.modifiers & 8)) {
             const link = linkAt(point);
             if (link && openHyperlink) { linkPress = { x: detail.x, y: detail.y, link }; event.preventDefault(); return; }
+        }
+        if(cellRangeDrag){
+            const object=scene.objects.find(o=>o.id===cellRangeDrag.object);
+            if(detail.kind==='cancel'||detail.kind==='up'){if(detail.kind==='cancel'){tableCell=cellRangeDrag.initial;repaint();changed?.(objects());}cellRangeDrag=null;event.preventDefault();return;}
+            if(detail.kind==='move'&&(detail.modifiers&0x100)){
+                const cell=object&&tableCellAt(object,point);if(cell)selectCell(object,cell,true);
+                event.preventDefault();return;
+            }
         }
         // Focus can move into the native cell editor before the originating
         // release reaches this surface. An unheld hover must end that handoff
@@ -207,37 +227,74 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             return;
         }
         if (detail.kind === 'down' && [0, 1].includes(detail.button)) {
-            const existing = objects();
-            const rotate = existing.length === 1 ? rotationHandle(existing[0], ratio) : null;
-            if (rotate && Math.hypot(rotate.point[0]-point[0], rotate.point[1]-point[1])*ratio < 10) {
-                drag = { point, values: existing, rotating: true, rotations: new Map() }; return;
+            surface.setProperty('focused',true);
+            const existing = selected.map(id => scene.objects.find(object => object.id === id)).filter(Boolean);
+            let handleTarget = null, handle = -1, rotate = null;
+            // Selected handles own the hit before the overlapping object body.
+            // Later selections take priority, as in the reference engine.
+            for (const candidate of existing.slice().reverse()) {
+                if (!candidate.edit?.canTransform && !candidate.line?.editable) continue;
+                const rotation = !editingPointerStarts.has(event) ? rotationHandle(candidate) : null;
+                if (rotation && Math.hypot(rotation.point[0]-point[0], rotation.point[1]-point[1])*ratio*viewScale < 8) {
+                    handleTarget = candidate; rotate = rotation; break;
+                }
+                const index = canResize(candidate) ? objectResizeHandles(candidate).findIndex(corner => Math.hypot(corner[0]-point[0],corner[1]-point[1])*ratio*viewScale < 8) : -1;
+                if (index >= 0) { handleTarget = candidate; handle = index; break; }
             }
-            const handle = existing.length === 1 && canResize(existing[0])
-                ? objectCorners(existing[0]).findIndex(corner => Math.hypot(corner[0] - point[0], corner[1] - point[1]) * ratio < 10) : -1;
-            const object = handle >= 0 ? existing[0] : objectAt(scene, ...point, 6 / ratio), additive = Boolean(detail.modifiers & 5);
+            if (rotate) {
+                const values = existing.filter(object => object.edit?.canTransform || object.line?.editable);
+                const sources = values.map(object => {
+                    if (object.geometry === 'line') {
+                        const [a,b] = linePoints(object);
+                        return { id: object.id, x: (a[0]+b[0])/2-.5, y: (a[1]+b[1])/2-.5, width: 1, height: 1, rotation: object.edit?.rotationDegrees || 0 };
+                    }
+                    return { id: object.id, ...object.edit.box, rotation: object.edit.rotationDegrees || 0 };
+                });
+                const controller = new ObjectGestureController({ threshold: 0 });
+                controller.begin({ point: {x:point[0],y:point[1]}, objects: sources, mode: 'rotate', pivot: {x:rotate.center[0],y:rotate.center[1]} });
+                drag = { point, values, sources, controller, rotating: true, boxes: new Map(), lines: new Map(), rotations: new Map() }; return;
+            }
+            const object = handle >= 0 ? handleTarget : objectAt(scene, ...point, 6 / (ratio*viewScale)), additive = Boolean(detail.modifiers & 5);
             if (!object) { selection([]); drag = null; return; }
-            if (additive) { selection(selected.includes(object.id) ? selected.filter(id => id !== object.id) : [...selected, object.id]); return; }
-            if (!selected.includes(object.id)) selection([object.id]);
+            const rangeCell=handle<0&&(detail.modifiers&1)&&!(detail.modifiers&12)&&tableCell?.object===object.id?tableCellAt(object,point,4/(ratio*viewScale)):null;
+            if(rangeCell){const initial=tableCell;textHandoff=null;editingCell=null;selectCell(object,rangeCell,true);cellRangeDrag={object:object.id,initial};drag=null;event.preventDefault();return;}
+            if (additive && handle < 0) { selection(selected.includes(object.id) ? selected.filter(id => id !== object.id) : [...selected, object.id]); return; }
+            const wasSelected=selected.includes(object.id);
+            if (!wasSelected) selection([object.id]);
             const divider=handle<0?tableDividerAt(object,point,5/(ratio*viewScale)):null;
             if(divider) {
                 editingCell=null;previewFrames=null;
                 drag={table:object,divider,tracks:null};hoverCursor=divider.axis==='column'?'col-resize':'row-resize';
                 surface.setProperty('focused',true);repaint();return;
             }
-            const cell = handle < 0 ? tableCellAt(object, point, 4 / ratio) : null;
+            const cell = handle < 0 ? tableCellAt(object, point, 4 / (ratio*viewScale)) : null;
             if (cell) {
                 selectCell(object, cell);cellText([], {point:tableLocalPoint(object,point),phase:'down',extend:Boolean(detail.modifiers&1)});drag = null;return;
             }
             tableCell = null;
-            const values = objects();
-            if (values.some(item => !item.edit?.canTransform)) return;
+            const values = handle >= 0 ? [object] : objects().filter(item => item.edit?.canTransform || item.line?.editable);
+            if (!values.length) return;
             const resize = handle;
-            drag = { point, values, resize, boxes: new Map(), lines: new Map() };
+            const local=tableLocalPoint(object,point);
+            const textHit=local&&textFrames.get(object.id)?.glyphs?.some(g=>local[0]>=Math.min(g.x,g.x+g.advance)&&local[0]<=Math.max(g.x,g.x+g.advance)&&local[1]>=g.y-g.fontSize&&local[1]<=g.y+g.fontSize*.25);
+            const enterText=handle<0&&object.text?.editable&&(object.kind==='text'||object.placeholder||wasSelected&&textHit);
+            drag = { point, values, resize, enterText, boxes: new Map(), lines: new Map() };
         } else if (detail.kind === 'move' && drag) {
             if(drag.table) {drag.tracks=resizedTableTracks(drag.table,drag.divider,point);repaint();reflowPreview();return;}
             if (drag.rotating) {
-                drag.rotations.set(drag.values[0].id, draggedRotation(drag.values[0], drag.point, point, Boolean(detail.modifiers & 1)));
-                repaint(new Map(), new Map(), drag.rotations); return;
+                const preview = drag.controller.update({x:point[0],y:point[1]}, {scale:ratio*viewScale,constrain:Boolean(detail.modifiers&1)});
+                for (const next of preview || []) {
+                    const object = drag.values.find(object => object.id === next.id), source = drag.sources.find(object => object.id === next.id);
+                    if (object.geometry === 'line') {
+                        const angle=(next.rotation-source.rotation)*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
+                        const points=linePoints(object).map(([x,y])=>({x:next.x+next.width/2+cos*(x-source.x-source.width/2)-sin*(y-source.y-source.height/2),y:next.y+next.height/2+sin*(x-source.x-source.width/2)+cos*(y-source.y-source.height/2)}));
+                        drag.lines.set(object.id,{start:points[0],end:points[1],editable:true});
+                    } else {
+                        drag.boxes.set(object.id,{...object.edit.box,x:next.x,y:next.y});
+                        drag.rotations.set(object.id, normalizedDegrees(next.rotation));
+                    }
+                }
+                repaint(drag.boxes, drag.lines, drag.rotations); return;
             }
             const dx = point[0] - drag.point[0], dy = point[1] - drag.point[1];
             for (const object of drag.values) {
@@ -261,11 +318,7 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
                 return;
             }
             if (transaction.rotating) {
-                const degrees = transaction.rotations.get(transaction.values[0].id);
-                if (degrees !== undefined && Math.abs(degrees - (transaction.values[0].edit.rotationDegrees || 0)) > 0.001) {
-                    void commit([{ type: 'set-object-rotation', slide: scene.slideId, object: transaction.values[0].id, degrees }]);
-                } else repaint();
-                return;
+                transaction.controller.finish();
             }
             const commands = [...transaction.boxes].filter(([id, box]) => {
                 const before = transaction.values.find(object => object.id === id).edit.box;
@@ -278,7 +331,25 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
                     commands.push({ type: 'set-line-points', slide: scene.slideId, object, start: points.start, end: points.end });
                 }
             }
-            if (commands.length) void commit(commands); else repaint();
+            for (const [object, degrees] of transaction.rotations || []) {
+                const before = transaction.values.find(value => value.id === object).edit.rotationDegrees || 0;
+                if (Math.abs(degrees-before)>.001) commands.push({type:'set-object-rotation',slide:scene.slideId,object,degrees});
+            }
+            if (commands.length) {lastTextClick=null;void commit(commands);}
+            else {
+                repaint();
+                const object=transaction.resize<0&&transaction.values.length===1?transaction.values[0]:null;
+                const now=Date.now(),previous=lastTextClick;
+                const double=object&&previous?.id===object.id&&now-previous.time<500&&Math.hypot(point[0]-previous.point[0],point[1]-previous.point[1])*ratio*viewScale<=5;
+                lastTextClick=object?{id:object.id,time:now,point}:null;
+                const click=object&&Math.hypot(point[0]-transaction.point[0],point[1]-transaction.point[1])*ratio*viewScale<=5;
+                if((double||click&&transaction.enterText)&&(object.text?.editable||object.edit?.canAddText)) {
+                    lastTextClick=null;
+                    const local=tableLocalPoint(object,point),b=object.bounds;
+                    const pointer=local&&b?.width>0&&b?.height>0?{x:(local[0]-(b.x||0))/b.width,y:(local[1]-(b.y||0))/b.height,phase:'click',...(double?{select:'word'}:{})}:null;
+                    void beginText([],pointer);
+                }
+            }
         } else if(detail.kind==='move') {
             const object=objectAt(scene,...point,6/(ratio*viewScale));
             const divider=tableDividerAt(object,point,5/(ratio*viewScale));
@@ -289,8 +360,9 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             surface.setProperty('tooltip', link ? `Ctrl+click to open ${link.target.kind === 'slide' ? `slide ${link.slideIndex + 1}` : link.target.value}` : '');
         }
     }
-    surface.on(Message.POINTER,event=>{
-        if(pointerGate) {pendingPointers.push(event);return;}
+    function dispatchPointer(event){
+        if(event.detail?.kind==='down'&&(editingCell!==null||editingTextObject!==null))editingPointerStarts.add(event);
+        if(pointerGate) {pendingPointers.push(event);return pointerGate;}
         const prerequisite=event.detail?.kind==='down'?beforePointer?.(event.detail):null;
         if(prerequisite?.then) {
             pendingPointers.push(event);
@@ -298,8 +370,10 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
                 const events=pendingPointers;pendingPointers=[];pointerGate=null;
                 if(ok!==false) for(const queued of events)handlePointer(queued);
             }).catch(error=>{pendingPointers=[];pointerGate=null;notice?.(error.message);});
-        } else handlePointer(event);
-    });
+            return pointerGate;
+        } else return handlePointer(event);
+    }
+    surface.on(Message.POINTER,dispatchPointer);
     // Menu activation and the canvas focus patch cross different native turns.
     // The owning shell forwards keys still addressed to the menu while an
     // insertion is pending, so typing cannot lose its initial characters.
@@ -319,6 +393,7 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
     surface.on(Message.KEY, event => {
         const key = event.detail;
         if (!key?.pressed) return;
+        if(cellRangeDrag&&(key.key==='Escape'||key.keyCode===9)){tableCell=cellRangeDrag.initial;cellRangeDrag=null;repaint();changed?.(objects());event.preventDefault();return;}
         if(drag?.table && (key.key==='Escape'||key.keyCode===9)) {
             drag=null;previewRequest=null;previewFrames=null;hoverCursor='default';repaint();event.preventDefault();return;
         }
@@ -336,6 +411,13 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             else if (key.key === 'Enter' || key.keyCode === 36) finishFreeform(freeform.finish());
             event.preventDefault(); return;
         }
+        const rangeCell=selectedTableCell(),rangeDirection={111:[-1,0],113:[0,-1],114:[0,1],116:[1,0]}[key.keyCode];
+        if(rangeCell&&rangeDirection&&(key.modifiers&1)&&!(key.modifiers&12)){
+            const row=Math.max(0,Math.min(rangeCell.object.table.rows-1,rangeCell.row+rangeDirection[0]*(rangeDirection[0]>0?rangeCell.cell.rowSpan:1))),column=Math.max(0,Math.min(rangeCell.object.table.columns-1,rangeCell.column+rangeDirection[1]*(rangeDirection[1]>0?rangeCell.cell.columnSpan:1)));
+            const target=rangeCell.object.table.cells.find(c=>!c.covered&&row>=c.row&&row<c.row+c.rowSpan&&column>=c.column&&column<c.column+c.columnSpan);
+            if(target)selectCell(rangeCell.object,target,true);event.preventDefault();return;
+        }
+        if(rangeCell?.multiple&&(key.key==='Escape'||key.keyCode===9)){selectCell(rangeCell.object,rangeCell.cell);event.preventDefault();return;}
         if (selectedTableCell() && (key.key === 'Tab' || key.keyCode === 23)) {
             nextTableCell(Boolean(key.modifiers & 1)); event.preventDefault(); return;
         }
@@ -347,7 +429,7 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         }
         if (key.key === 'Escape' || key.keyCode === 9) { drag = null; tool = null; drawing = null; freeform = null; selection([]); event.preventDefault(); }
         if (key.key === 'Delete' || key.keyCode === 119) { void remove(); event.preventDefault(); }
-        if (key.key === 'Enter' || key.keyCode === 36) { void beginText(); event.preventDefault(); }
+        if (key.key === 'Enter' || key.keyCode === 36 || key.key === 'F2' || key.keyCode === 68) { void beginText(); event.preventDefault(); }
         const arrows = { 111: [0, -1], 113: [-1, 0], 114: [1, 0], 116: [0, 1] };
         const delta = arrows[key.keyCode];
         if (delta && objects().every(object => object.edit?.canTransform)) {
@@ -357,12 +439,12 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         }
     });
     surface.on(Message.BLUR, () => { textHandoff = null; });
-    async function beginText(keys = []) {
-        if (selectedTableCell()) { cellText(keys); return; }
+    async function beginText(keys = [],pointer = null) {
+        if (selectedTableCell()) return cellText(keys,pointer);
         if (busy || locked || objects().length !== 1) return;
         const object = objects()[0];
         if (object.text?.editable) {
-            textHandoff = object; editText?.(object, keys); return;
+            textHandoff = object; return editText?.(object, keys,pointer);
         }
         if (!object.edit?.canAddText) return;
         const input = { keys: [...keys], bytes: keys.reduce((sum, key) => sum + new TextEncoder().encode(key.text || '').length, 0), cancelled: false };
@@ -370,7 +452,7 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         const creation = commit([{ type: 'set-object-text', slide: scene.slideId, object: object.id, text: '' }]).then(() => {
             const target = objects().find(item => item.id === object.id);
             if (!input.cancelled && target?.text?.editable) {
-                textHandoff = target; editText?.(target, input.keys);
+                textHandoff = target; return editText?.(target, input.keys,pointer);
             }
         }).catch(error => notice?.(`Cannot add text: ${error.message}`)).finally(() => {
             if (pendingTextInput === input) pendingTextInput = null;
@@ -384,8 +466,16 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         return commit(objects().map(object => ({ type: 'delete-object', slide: scene.slideId, object: object.id })));
     }
     return Object.freeze({
+        setHandleOverlay(overlay){handleOverlay=overlay;repaint();},
+        handleOverlayPointer(event){
+            if(event.detail?.kind==='down')overlayGesture=true;
+            const pending=dispatchPointer(event);
+            if(['up','cancel'].includes(event.detail?.kind))Promise.resolve(pending).finally(()=>{overlayGesture=false;repaint();});
+            return pending;
+        },
         setEditingCell(id) { if(editingCell!==id) {editingCell=id;repaint();} },
-        setViewScale(value) {if(Number.isFinite(value)&&value>0)viewScale=value;},
+        setEditingTextObject(id) {if(editingTextObject!==id){editingTextObject=id;repaint();}},
+        setViewScale(value) {if(Number.isFinite(value)&&value>0&&Math.abs(value-viewScale)>1e-9){viewScale=value;repaint();}},
         capturePendingText,
         async flushPendingTextInput() { if (pendingTextCreation) await pendingTextCreation; },
         get formatPainter() { return { active: painter.active, persistent: painter.persistent }; },
@@ -401,10 +491,11 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             } catch (error) { notice?.(error.message); }
         },
         get selectedTableCell() { return selectedTableCell(); },
-        selectTableCell(objectId, row, column) {
+        selectTableCell(objectId, row, column, {extend=false}={}) {
             const object = scene?.objects.find(object => object.id === objectId);
             const cell = object?.table?.cells?.find(cell => cell.row === row && cell.column === column && !cell.covered);
-            if (cell) selectCell(object, cell);
+            if (cell) {selectCell(object, cell,extend);return true;}
+            return false;
         },
         nextTableCell,
         insertTable({ rows, columns }) {
@@ -432,16 +523,44 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             return creation;
         },
         tableCellStyle(style) {
-            const active = selectedTableCell(); if (!active?.cell.editable) return;
+            const active = selectedTableCell(); if (!active?.cell.editable||active.cells.some(c=>!c.editable)) return;
+            if(active.multiple)return commit([{type:'set-table-range-style',slide:scene.slideId,object:active.object.id,from:{row:active.range.firstRow,column:active.range.firstColumn},to:{row:active.range.lastRow,column:active.range.lastColumn},style}]);
             return commit([{ type: 'set-table-cell-style', slide: scene.slideId, object: active.object.id, row: active.row, column: active.column, style }]);
+        },
+        async mergeTableCells(){
+            const active=selectedTableCell();if(!active?.multiple||!active.object.table.canMergeCells)return;
+            const previous=tableCell,{range}=active;
+            tableCell={object:active.object.id,row:range.firstRow,column:range.firstColumn};
+            try{return await commit([{type:'merge-table-cells',slide:scene.slideId,object:active.object.id,from:{row:range.firstRow,column:range.firstColumn},to:{row:range.lastRow,column:range.lastColumn}}]);}
+            catch(error){tableCell=previous;repaint();changed?.(objects());throw error;}
+        },
+        splitTableCell(){
+            const active=selectedTableCell();if(!active||active.multiple||!active.object.table.canMergeCells||active.cell.rowSpan===1&&active.cell.columnSpan===1)return;
+            return commit([{type:'split-table-cell',slide:scene.slideId,object:active.object.id,row:active.row,column:active.column}]);
         },
         tableStyle(style) {
             const object = objects().length === 1 ? objects()[0] : null; if (!object?.table?.canEditCells) return;
             return commit([{ type: 'set-table-style', slide: scene.slideId, object: object.id, style }]);
         },
+        tableDesign(style){
+            const object=objects().length===1?objects()[0]:null;if(!object?.table?.canSetDesign)return;
+            return commit([{type:'set-table-design',slide:scene.slideId,object:object.id,style}]);
+        },
+        tableOptions(options){
+            const object=objects().length===1?objects()[0]:null;if(!object?.table?.canSetDesign)return;
+            return commit([{type:'set-table-options',slide:scene.slideId,object:object.id,options}]);
+        },
         tableStructure(type, at, count) {
             const object = objects().length === 1 ? objects()[0] : null; if (!object?.table?.canEditStructure) return;
             return commit([{ type, slide: scene.slideId, object: object.id, at, count }]);
+        },
+        tableTracks(columnWidths, rowHeights) {
+            const object = objects().length === 1 ? objects()[0] : null; if (!object?.table?.canEditStructure) return;
+            if (columnWidths.length === object.table.columnWidths.length && rowHeights.length === object.table.rowHeights.length &&
+                columnWidths.every((value, index) => value === object.table.columnWidths[index]) &&
+                rowHeights.every((value, index) => value === object.table.rowHeights[index])) return;
+            return commit([{ type: 'resize-table', slide: scene.slideId, object: object.id,
+                columnWidths: [...columnWidths], rowHeights: [...rowHeights] }]);
         },
         get selected() { return objects(); }, get drawingTool() { return tool; }, get busy() { return busy; },
         repaint() { repaint(); },
@@ -449,7 +568,8 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
         select: selection, beginText,
         selectRun(id) { const object = scene?.objects.find(object => object.textRunIds.includes(id)); if (object) selection([object.id]); },
         setScene(next, frames = new Map(), pictures = new Map()) {
-            linkPress = null; scene = next; textFrames = frames; imageFrames = pictures; drag = null; drawing = null; freeform = null; tool = null;
+            if(scene?.slideId!==next.slideId)lastTextClick=null;
+            cellRangeDrag=null;linkPress = null; scene = next; textFrames = frames; imageFrames = pictures; drag = null; drawing = null; freeform = null; tool = null;
             selected = normalizedSelection(next, selected);
             if (selected.length === 1) {
                 const object = objects()[0];
@@ -490,7 +610,38 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             return commit([{ type: 'ungroup-object', slide: scene.slideId, object: targets[0].id }]);
         },
         align(direction, reference) { return commit(alignmentCommands(scene, objects(), direction, reference)); },
-        fill(fill) { return commit(objects().filter(object => object.edit?.canStyle && object.geometry !== 'line').map(object => ({ type: 'set-object-fill', slide: scene.slideId, object: object.id, fill }))); },
+        setProperties({ ids, values }) {
+            const targets = objects();
+            if (!Array.isArray(ids) || targets.length !== ids.length || targets.some(object => !ids.includes(object.id))) throw Error('Selection changed. Apply properties again.');
+            if (!values || Object.keys(values).some(key => !['x', 'y', 'width', 'height', 'rotation'].includes(key)) || !Object.values(values).every(Number.isFinite)) throw Error('Invalid geometry properties');
+            const commands = [];
+            for (const object of targets) {
+                const boxKeys = ['x', 'y', 'width', 'height'].filter(key => Object.hasOwn(values, key));
+                if (boxKeys.length) {
+                    if (!object.edit?.canTransform || object.geometry === 'line') throw Error('This object cannot be resized or positioned');
+                    const box = { ...object.edit.box };
+                    for (const key of boxKeys) box[key] = values[key];
+                    if (!(box.width > 0 && box.height > 0)) throw Error('Width and height must be positive');
+                    commands.push({ type: 'set-object-box', slide: scene.slideId, object: object.id, box });
+                }
+                if (Object.hasOwn(values, 'rotation')) {
+                    if (!object.edit?.canRotate) throw Error('This object cannot be rotated');
+                    commands.push({ type: 'set-object-rotation', slide: scene.slideId, object: object.id, degrees: values.rotation });
+                }
+            }
+            if (commands.length > 32) throw Error('Select fewer objects to apply these properties atomically');
+            return commands.length ? commit(commands) : false;
+        },
+        fill(fill) {
+            const targets=objects().filter(object=>object.edit?.canStyle&&object.geometry!=='line'),commands=[];
+            for(const object of targets){
+                if(fill!==null&&object.fill?.opacity<1&&!object.edit?.canSetFillOpacity)throw Error('This fill transparency cannot be preserved while changing color');
+                commands.push({type:'set-object-fill',slide:scene.slideId,object:object.id,fill});
+                if(fill!==null&&object.fill?.opacity<1)commands.push({type:'set-object-fill-opacity',slide:scene.slideId,object:object.id,opacity:object.fill.opacity});
+            }
+            if(commands.length>32)throw Error('Select fewer objects to edit fills atomically');
+            return commit(commands);
+        },
         stroke(stroke) { return commit(objects().filter(object => object.edit?.canStyle).map(object => ({ type: 'set-object-stroke', slide: scene.slideId, object: object.id, stroke }))); },
         shadow(shadow) {
             const targets = objects();
@@ -498,17 +649,41 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             return commit(targets.map(object => ({ type: 'set-object-shadow', slide: scene.slideId, object: object.id,
                 shadow: typeof shadow === 'function' ? shadow(object) : shadow })));
         },
+        fillOpacity(opacity) {
+            const targets=objects();
+            if(!targets.length||targets.some(object=>!object.edit?.canSetFillOpacity))return false;
+            return commit(targets.map(object=>({type:'set-object-fill-opacity',slide:scene.slideId,object:object.id,opacity})));
+        },
+        lineOpacity(opacity) {
+            const targets=objects();
+            if(!targets.length||targets.some(object=>!object.edit?.canSetLineOpacity))return false;
+            return commit(targets.map(object=>({type:'set-object-line-opacity',slide:scene.slideId,object:object.id,opacity})));
+        },
         strokeColor(color) {
-            return commit(objects().filter(object => object.edit?.canStyle).map(object => ({ type: 'set-object-stroke', slide: scene.slideId, object: object.id,
-                stroke: color === null ? null : { color, width: object.stroke?.width ?? 2 } })));
+            const targets=objects().filter(object=>object.edit?.canStyle),commands=[];
+            for(const object of targets){
+                if(color!==null&&object.stroke?.opacity<1&&!object.edit?.canSetLineOpacity)throw Error('This outline transparency cannot be preserved while changing color');
+                commands.push({type:'set-object-stroke',slide:scene.slideId,object:object.id,stroke:color===null?null:{color,width:object.stroke?.width??2}});
+                if(color!==null&&object.stroke?.opacity<1)commands.push({type:'set-object-line-opacity',slide:scene.slideId,object:object.id,opacity:object.stroke.opacity});
+            }
+            if(commands.length>32)throw Error('Select fewer objects to edit outlines atomically');
+            return commit(commands);
         },
         strokeWidth(width) {
-            return commit(objects().filter(object => object.edit?.canStyle).map(object => ({ type: 'set-object-stroke', slide: scene.slideId, object: object.id,
-                stroke: { color: object.stroke?.color ?? '#287AC7', width } })));
+            const targets=objects().filter(object=>object.edit?.canStyle),commands=[];
+            for(const object of targets){
+                if(object.stroke?.opacity<1&&!object.edit?.canSetLineOpacity)throw Error('This outline transparency cannot be preserved while changing width');
+                commands.push({type:'set-object-stroke',slide:scene.slideId,object:object.id,stroke:{color:object.stroke?.color??'#287AC7',width}});
+                if(object.stroke?.opacity<1)commands.push({type:'set-object-line-opacity',slide:scene.slideId,object:object.id,opacity:object.stroke.opacity});
+            }
+            if(commands.length>32)throw Error('Select fewer objects to edit outlines atomically');
+            return commit(commands);
         },
-        style(style) {
+        style(style,options) {
+            const sourceRange=editTextStyle?.(style,options);
+            if(sourceRange!=null)return sourceRange;
             const active = selectedTableCell();
-            if (active?.cell.editable) return commit([{ type: 'set-table-cell-style', slide: scene.slideId, object: active.object.id, row: active.row, column: active.column, style: { text: style } }]);
+            if (active?.cell.editable) return this.tableCellStyle({text:style});
             const targets = objects().filter(object => object.text != null);
             if (!targets.length) { notice?.('Select a text box to format its text.'); return; }
             return commit(targets.map(object => ({ type: 'set-text-style', slide: scene.slideId, object: object.id, style })));
@@ -521,6 +696,13 @@ export function createCanvasEditor({ surface, apply, changed, editText, notice, 
             const targets = objects();
             if (!targets.length || targets.some(object => !object.text?.editable)) return;
             return commit(targets.map(object => ({ type: 'set-paragraph-spacing', slide: scene.slideId, object: object.id, spacing })));
+        },
+        paragraphFormat(format){
+            const sourceRange=editParagraphFormat?.(format);if(sourceRange!=null)return sourceRange;
+            const cell=selectedTableCell();
+            const targets=cell?(cell.cells||[cell.cell]).filter(c=>c.text?.paragraphFormatEditable).map(c=>({object:cell.object.id,cell:{row:c.row,column:c.column},text:c.text})):objects().filter(o=>o.text?.paragraphFormatEditable).map(o=>({object:o.id,text:o.text}));
+            if(!targets.length)return;
+            return commit(targets.map(({object,cell,text})=>({type:'set-paragraph-format',slide:scene.slideId,object,...(cell?{cell}:{}),range:{start:0,end:new TextEncoder().encode(text.text).length},format})));
         },
         crop(crop) {
             const object = objects()[0];

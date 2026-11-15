@@ -140,6 +140,10 @@ impl HostCapabilities {
     pub const ZOOM_ICONS: Self = Self(1 << 23);
     /// Scoped typography and ink on native labels/actions.
     pub const CONTROL_TYPOGRAPHY: Self = Self(1 << 29);
+    /// Resolved conditional bars, vector icons and icon ratings in grids.
+    pub const GRID_DECORATIONS:Self=Self(1<<30);
+    /// Exact ordered logical multi-area spreadsheet selection.
+    pub const GRID_MULTI_SELECTION:Self=Self(1<<31);
 
     #[must_use]
     pub const fn empty() -> Self {
@@ -355,6 +359,8 @@ pub enum DataProviderOperation {
     DocumentInfo {
         path: String,
     },
+    /// Bounded PDF editor command. All parsing and editing belongs to the admitted native engine.
+    DocumentEdit { path: String, command: String },
     /// Searches extracted PDF page text without moving document bytes into Wasm.
     DocumentSearch {
         path: String,
@@ -416,6 +422,7 @@ pub enum DataProviderResult {
         page_count: u32,
         outline: Vec<DocumentOutlineEntry>,
     },
+    DocumentEdit { json: String },
     DocumentSearch {
         query: String,
         hits: Vec<DocumentSearchHit>,

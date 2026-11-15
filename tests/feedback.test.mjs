@@ -46,14 +46,22 @@ for (const kind of ['bug', 'feature']) {
         assert.equal(window.title, issueForms[kind].name);
         assert.equal(calls.length, 0);
         await root.find('report-on-github').emit(Message.ACTIVATE);
+        await root.find('report-on-github-host').emit(Message.ACTIVATE);
         assert.equal(calls.length, 0);
         assert.match(root.find('status').text, /summary/);
+        assert.equal(root.find('summary').getProperty('focused'), true);
+        assert.equal(root.find('optional-details').visible, false);
+        await root.find('more-details').emit(Message.ACTIVATE);
+        assert.equal(root.find('optional-details').visible, true);
         const values = valuesFor(kind);
         for (const [id, value] of Object.entries(values)) root.find(id).setProperty('value', value);
         await root.find('report-on-github').emit(Message.ACTIVATE);
         assert.match(root.find('status').text, /Bowl could not/);
         assert(root.find('report-on-github').enabled);
         assert.equal(root.find('summary').getProperty('value'), values.summary);
+        await root.find('more-details').emit(Message.ACTIVATE);
+        assert.equal(root.find('optional-details').visible, false);
+        assert.equal(root.find('extra').getProperty('value'), values.extra);
         fail = false;
         await root.find('report-on-github').emit(Message.ACTIVATE);
         assert.equal(calls.length, 2);
@@ -61,9 +69,22 @@ for (const kind of ['bug', 'feature']) {
         assert.equal(calls[1].operation, 'openExternal');
         assert.equal(calls[1].parameters.url, issueUrl(kind, values));
         assert.match(root.find('status').text, /submit it there/);
+        await root.find('report-on-github-host').emit(Message.ACTIVATE);
+        assert.deepEqual(calls.at(-1).parameters, { url: issueUrl(kind, values), target: 'host' });
+        assert.match(root.find('status').text, /host browser/);
+        assert.equal(root.find('summary').getProperty('value'), values.summary);
+        fail = true;
+        await root.find('report-on-github-host').emit(Message.ACTIVATE);
+        assert.match(root.find('status').text, /Bowl could not/);
+        assert(root.find('report-on-github').enabled);
+        assert(root.find('report-on-github-host').enabled);
         assert.equal(app.windows.size, 1);
         root.find('cancel').emit(Message.ACTIVATE);
         assert(window.hostRequests.some(request => request.operation === 'close'));
         app.close();
     });
 }
+
+test('bug environment asks only for the browser and operating system', () => {
+    assert.equal(issueForms.bug.fields.find(field => field.id === 'environment').label, 'Browser and operating system');
+});

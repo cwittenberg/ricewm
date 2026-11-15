@@ -12,17 +12,17 @@ const rgba=(color,opacity=1)=>{const n=parseInt(color.slice(1),16);return ((Math
  * All geometry uses the same scene coordinate system. No DOM or compute grant. */
 export class Workspace extends Stack {
     static family='composite';
-    static constructorOptions=Object.freeze(['width','height','colors','render']);
+    static constructorOptions=Object.freeze(['width','height','colors','render','transparent']);
     static authoring=Object.freeze({
-        constructor:'new Workspace({width:1040,height:680,render(view){...}}). Surfaces follow the active theme; native controls keep host typography, input chrome, focus and editing behavior. References specify composition, not a replacement theme. Override surface colors only when explicitly requested. Workspace never skins native inputs or buttons with document fonts/paint. Import Workspace, State, Message and native inputs from @ricewm/app. No extra permissions, fonts, assets or npm.',
+        constructor:'new Workspace({width:1040,height:680,render(view){...}}). Surfaces follow the active theme; native controls keep host typography, input chrome, focus and editing behavior. References specify composition, not a replacement theme. Override surface colors only when explicitly requested. transparent:true retains the parent native surface while keeping the scene viewport and interactive overlays. Workspace never skins native inputs or buttons with document fonts/paint. Import Workspace, State, Message and native inputs from @ricewm/app. No extra permissions, fonts, assets or npm.',
         rendering:'render(view) runs at startup, native resize and theme change. view.width/height and view.colors are current. Paint via panel([x,y,w,h],color,opacity), rule([x,y],[x,y]), then label(key,text,bounds,{emphasized,muted,display}), action(key,text,bounds,handler,{icon,title,selected}), place(key,nativeControl,bounds). Decorative circle() is not an input; use native CheckBox/Toggle for state choices. Call view.refresh() after model changes. Bounds are pixels, not CSS; keep targets at least 32px high. render is synchronous. Keys are unique, stable across renders. Omitted keys are hidden while preserving their drafts. Do not replace a focused editor.',
         layout:'For task/mail/catalog products allocate a 200–240px navigation rail, flexible central list and 280–320px inspector at wide widths. At narrow widths show one focused pane with named navigation/back actions; never shrink all panes. Place scrolling lists using a native ScrollView in place(). Preserve drafts/selection; contextual titles identify the selected list or record. Flat actions have actual native tooltips and focus/activation. A Workspace is presentation, not a task model or persistence layer.',
         methods:'refresh(), destroy(). SIZE_CHANGED updates actual width/height. All actions/inputs remain visible to sdk.inspect, sdk.interact and keyboard navigation. Test empty/populated, selection, resize, invalid input and save/reopen. Exact custom type or illustrations may still use scene/typography engines.',
     });
-    constructor({width=1040,height=680,colors={},render,...properties}={}) {
-        if(![width,height].every(v=>Number.isInteger(v)&&v>=32&&v<=4096)||typeof render!=='function')throw TypeError('Workspace needs bounded dimensions and a render function');
+    constructor({width=1040,height=680,colors={},render,transparent=false,...properties}={}) {
+        if(![width,height].every(v=>Number.isInteger(v)&&v>=32&&v<=4096)||typeof render!=='function'||typeof transparent!=='boolean')throw TypeError('Workspace needs bounded dimensions and a render function');
         super({text:'panel:flush',state:State.ENABLED|State.FLAT|State.EXPANSIVE,...properties});
-        this.width=width;this.height=height;this.overrides=colors;this.colors=resolveChartTheme({},colors);this.renderer=render;this.slots=new Map();
+        this.width=width;this.height=height;this.overrides=colors;this.colors=resolveChartTheme({},colors);this.renderer=render;this.slots=new Map();this.transparent=transparent;
         this.surface=new SceneSurface({name:'workspace-surface',state:State.ENABLED|State.FLAT|State.EXPANSIVE});this.append(this.surface);
         this.surface.on(Message.SIZE_CHANGED,event=>{const {width,height}=event.detail||{};if(width>0&&height>0&&(width!==this.width||height!==this.height)){this.width=width;this.height=height;this.refresh();}});
         this.on(Message.CREATED,event=>{if(event.target!==this)return;this.setTheme(this.application.theme||{});this.stopTheme=this.application.on(Message.THEME_CHANGED,palette=>this.setTheme(palette));});
@@ -33,7 +33,7 @@ export class Workspace extends Stack {
         if(this.destroyed||this.rendering)return;
         this.rendering=true;
         try{
-            this.used=new Set();this.builder=new SceneBuilder(this.width,this.height);this.panel([0,0,this.width,this.height],this.colors.background);this.renderer(this);
+            this.used=new Set();this.builder=new SceneBuilder(this.width,this.height);if(this.transparent)this.builder.rect([0,0,this.width,this.height],0);else this.panel([0,0,this.width,this.height],this.colors.background);this.renderer(this);
             this.surface.submit(this.builder.finish());
             for(const [key,slot]of this.slots)if(!this.used.has(key)){slot.overlay.visible=false;}
             if(this.slots.size>512)throw RangeError('Workspace has too many retained slots');

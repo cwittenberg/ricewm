@@ -240,7 +240,7 @@ use super::*;
         let exit_y = server.windows[&WM_MENU.0].y.saturating_add(
             i16::try_from(
                 server.wm_menu_column_offsets()[0]
-                    + exit_row * WM_MENU_ROW_HEIGHT
+                    + wm_menu_row_top(&server.wm_root_rows(), exit_row)
                     + WM_MENU_ROW_HEIGHT / 2,
             )
             .unwrap(),
@@ -267,7 +267,7 @@ use super::*;
         let run_y = server.windows[&WM_MENU.0].y.saturating_add(
             i16::try_from(
                 server.wm_menu_column_offsets()[0]
-                    + run_row * WM_MENU_ROW_HEIGHT
+                    + wm_menu_row_top(&server.wm_root_rows(), run_row)
                     + WM_MENU_ROW_HEIGHT / 2,
             )
             .unwrap(),
@@ -377,6 +377,7 @@ use super::*;
                 WmMenuRow::Themes,
                 WmMenuRow::WorkspaceNavigation,
                 WmMenuRow::Run,
+                WmMenuRow::Divider,
                 WmMenuRow::Exit,
             ],
             "filesystem applications belong only in the Applications cascade",
@@ -540,3 +541,49 @@ use super::*;
         server.set_wm_snap_preview(Some(WmSnapTarget::Right));
         assert_eq!(server.windows[&WM_SNAP_PREVIEW.0].x,640);
     }
+
+#[test]
+fn keyboard_focus_follows_pointer_descendants_and_stops_at_focus() {
+    for managed in [false, true] {
+        let order = ClientByteOrder::LittleEndian;
+        let mut server = DisplayServer::new(DisplayConfig {
+            native_window_manager: managed, ..DisplayConfig::default()
+        });
+        let owner = server.open_client().unwrap();
+        server.feed(owner, &setup_request(order, &[], &[])).unwrap();
+        let top = ResourceId(0x0020_019b);
+        let child = ResourceId(0x0020_019c);
+        let mask = KEY_PRESS_MASK | KEY_RELEASE_MASK;
+        server.feed(owner, &create_window_request(order, top.0, mask)).unwrap();
+        server.feed(owner, &request(order, 8, 0, &top.0.to_le_bytes())).unwrap();
+        server.feed(owner, &create_child_window_request(order, child.0, top.0,
+            20, 20, 100, 80, mask)).unwrap();
+        server.feed(owner, &request(order, 8, 0, &child.0.to_le_bytes())).unwrap();
+        server.set_focus(top);
+        let (x, y) = server.window_origin(child);
+        server.inject_pointer_motion((x + 10) as i16, (y + 10) as i16, 0);
+        let _ = drain_all(&mut server, owner);
+        server.inject_key(true, 65, 0);
+        server.inject_key(false, 65, 0);
+        let events = drain_all(&mut server, owner);
+        let keys: Vec<_> = events.chunks_exact(32).filter(|e| e[0] == 2 || e[0] == 3).collect();
+        assert_eq!(keys.len(), 2);
+        assert!(keys.iter().all(|e| read_u32_le(&e[12..16]) == child.0),
+            "keys over an embedded video must reach that inferior, managed={managed}");
+        server.inject_pointer_motion(799, 599, 0);
+        let _ = drain_all(&mut server, owner);
+        server.inject_key(true, 65, 0);
+        let events = drain_all(&mut server, owner);
+        assert_eq!(read_u32_le(&events[12..16]), top.0,
+            "pointer outside the focused tree must retain keyboard focus");
+        server.inject_key(false, 65, 0);
+        server.inject_pointer_motion((x + 10) as i16, (y + 10) as i16, 0);
+        let _ = drain_all(&mut server, owner);
+        server.clients.get_mut(&owner.0).unwrap().event_masks.insert(child.0, 0);
+        server.clients.get_mut(&owner.0).unwrap().event_masks.insert(top.0, 0);
+        server.clients.get_mut(&owner.0).unwrap().event_masks.insert(ROOT_WINDOW.0, mask);
+        server.inject_key(true, 65, 0);
+        assert!(drain_all(&mut server, owner).is_empty(),
+            "unselected keyboard input must stop at the focus window");
+    }
+}

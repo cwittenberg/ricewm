@@ -799,9 +799,9 @@ impl IconId {
 pub fn folder_icon(path_or_name: &str) -> IconId {
     let trimmed = path_or_name.trim_end_matches(['/', '\\']);
     if trimmed == "/mnt/local"
-        || trimmed.starts_with("/mnt/local/")
         || trimmed == "/run/ricewm/mounts"
-        || trimmed.starts_with("/run/ricewm/mounts/")
+        || trimmed.strip_prefix("/run/ricewm/mounts/")
+            .is_some_and(|mount| !mount.is_empty() && !mount.contains('/'))
     {
         return IconId::NetworkMounts;
     }
@@ -1152,6 +1152,8 @@ impl WidgetState {
     pub const START_ALIGNED: Self = Self(1 << 16);
     /// Leaves Enter/Space available to the owning collection for conventional
     /// keyboard navigation instead of treating both keys as button clicks.
+    /// On a dialog, forwards Enter from any child as a key event to the dialog
+    /// so the owning application can submit its default action.
     pub const KEY_NAVIGATION: Self = Self(1 << 17);
     /// Selects the complete value when a single-line text control receives
     /// primary pointer focus. Typing replaces it; a navigation key first

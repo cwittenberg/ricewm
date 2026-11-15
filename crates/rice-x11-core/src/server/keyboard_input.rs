@@ -61,10 +61,18 @@ impl DisplayServer {
         if pressed && self.config.native_window_manager && self.handle_wm_shortcut(keycode, state) {
             return;
         }
-        let source = if self.map_state(self.focus_window) == 2 {
+        let focus = if self.map_state(self.focus_window) == 2 {
             self.focus_window
         } else {
             ROOT_WINDOW
+        };
+        // X11 delivers keys normally to an inferior under the pointer. Always
+        // starting at the top-level focus skips embedded video/input windows.
+        let pointer = self.hit_test(self.pointer_x, self.pointer_y);
+        let source = if pointer == focus || self.is_descendant(pointer, focus) {
+            pointer
+        } else {
+            focus
         };
         if !self.emit_xinput_device_event(
             source,
@@ -133,6 +141,9 @@ impl DisplayServer {
         ) else {
             return;
         };
+        if event_window != focus && !self.is_descendant(event_window, focus) {
+            return;
+        }
         let (origin_x, origin_y) = self.window_origin(event_window);
         let root_x = self.pointer_x;
         let root_y = self.pointer_y;

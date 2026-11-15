@@ -96,8 +96,8 @@ const DESKTOP_EXECUTABLES: &[DesktopExecutable] = &[
         entrypoint: "rice-profiler",
     },
     DesktopExecutable {
-        aliases: &["rice-setup"],
-        entrypoint: "rice-setup",
+        aliases: &["rice-store", "rice-setup"],
+        entrypoint: "rice-store",
     },
     DesktopExecutable {
         aliases: &["rice-extensions"],
@@ -439,6 +439,9 @@ fn expand_desktop_argument(
 
 #[must_use]
 pub fn infer_media_type(entry: &EntryMetadata) -> &str {
+    if entry.kind == EntryKind::Directory {
+        return "inode/directory";
+    }
     let name_type = media_type_from_name(&entry.name);
     // Dedicated executable/package handlers validate actual bytes themselves.
     // A backend's generic MIME must not divert a recognized suffix into a
@@ -691,6 +694,16 @@ mod tests {
     }
 
     #[test]
+    fn directories_have_a_directory_mime_type_even_with_a_media_suffix() {
+        for name in ["/run/ricewm/mounts/smb-test/nas/Archive", "/mnt/local/movie.mp4"] {
+            let mut entry = file(name).with_media_type("application/octet-stream");
+            entry.kind = EntryKind::Directory;
+            assert_eq!(infer_media_type(&entry), "inode/directory");
+            assert!(!crate::supports_thumbnail(infer_media_type(&entry)));
+        }
+    }
+
+    #[test]
     fn chosen_launch_is_allowlisted_and_keeps_the_guest_path() {
         let registry = AssociationRegistry::first_party();
         let entry = file("/Pictures/photo.png");
@@ -777,7 +790,7 @@ mod tests {
             "rice-calc",
             "rice-settings",
             "rice-performance",
-            "rice-setup",
+            "rice-store",
             "rice-profiler",
             "rice-extensions",
             "rice-term",

@@ -109,6 +109,7 @@ function normalizeDescriptor(name, descriptor) {
 }
 
 export class Control {
+    static acceptsChildren = true;
     static controlAvailability = 'app control';
     static kind = 1;
     static family = "control";
@@ -128,6 +129,10 @@ export class Control {
             validate: value => optionalString(value, "accessibleName"),
             reflect: false,
         },
+        accessibleRole:{default:null,reflect:false,validate:value=>{if(value===null)return null;if(!['text','img','button','checkbox','radio','textbox','menu','menubar','toolbar','menuitem','list','listitem','tree','treeitem','dialog','group','tab','tablist','tabpanel','status','heading','table','row','cell','slider','progressbar'].includes(value))throw TypeError('Unsupported native accessible role');return value;}},
+        accessibleDescription:{default:null,reflect:false,validate:value=>optionalString(value,'accessibleDescription')},
+        accessibleLive:{default:null,reflect:false,validate:value=>{if(value!==null&&!['polite','assertive','off'].includes(value))throw TypeError('Invalid accessible live mode');return value;}},
+        required:{default:false,reflect:false,validate:boolean},
         tooltip: {
             default: null,
             validate: value => optionalString(value, "tooltip"),
@@ -236,6 +241,10 @@ export class Control {
         if (!descriptor) throw new TypeError(`${this.type} has no ${name} property`);
         if (descriptor.stateBit !== null) this.stateOverrides.add(name);
         const normalized = descriptor.validate(value);
+        // Explicit requests share the host's one-focus-owner-per-window rule.
+        // Leaving an earlier control's retained bit set can make native focus
+        // choose that stale owner instead of the requested control.
+        if (name === 'focused' && normalized) this.application?.claimControlFocus(this, { notify, render });
         const previous = this.values[name];
         if (Object.is(previous, normalized)) return false;
         this.values[name] = normalized;
@@ -248,6 +257,7 @@ export class Control {
     }
 
     append(child, { notify = true } = {}) {
+        if (!this.constructor.acceptsChildren) throw TypeError('Destination is a leaf control');
         if (!(child instanceof Control)) throw new TypeError("child must be a Control");
         if (child === this || child.contains(this)) throw new TypeError("control cycle rejected");
         if (child.parent) throw new TypeError("control already has a parent");
@@ -274,6 +284,30 @@ export class Control {
         this.notifyParent(Notification.CHILD_REMOVED, { child });
         this.application?.invalidate(this);
         return true;
+    }
+
+    /** Relocate a retained control within one window without detaching its subtree. */
+    moveTo(parent, { index = parent?.children?.length, notify = true } = {}) {
+        if (!(parent instanceof Control) || !parent.constructor.acceptsChildren || this.destroyed || parent.destroyed || parent === this || this.contains(parent)) throw TypeError('Invalid control destination');
+        if (!Number.isSafeInteger(index) || index < 0 || index > parent.children.length) throw RangeError('Invalid control insertion index');
+        if (this.application !== parent.application || this.application && (!this.parent || this.application.controlWindows.get(this.id) !== this.application.controlWindows.get(parent.id))) throw TypeError('Controls must belong to the same window');
+        const previous = this.parent, oldIndex = previous?.children.indexOf(this) ?? -1;
+        if (parent !== previous && parent.children.length >= MAX_CHILDREN) throw RangeError('control child limit exceeded');
+        const destination = parent === previous ? Math.min(index, parent.children.length - 1) : index;
+        if (parent === previous && oldIndex === destination) return this;
+        if (previous) previous.children.splice(oldIndex, 1);
+        this.parent = parent; parent.children.splice(destination, 0, this);
+        if (notify) {
+            if (previous) {
+                previous.sendMessage(message(Message.CHILD_REMOVED, previous, { child: this }));
+                previous.notifyParent(Notification.CHILD_REMOVED, { child: this });
+            }
+            parent.sendMessage(message(Message.CHILD_ADDED, parent, { child: this }));
+            parent.notifyParent(Notification.CHILD_ADDED, { child: this });
+        }
+        if (previous) this.application?.invalidate(previous);
+        this.application?.invalidate(parent);
+        return this;
     }
 
     contains(candidate) {
@@ -543,5 +577,5 @@ export function describeControlLibrary(namespace) {
     const factories = Object.fromEntries(Object.entries(namespace.CONTROL_CLASSES || {}).map(([name, type]) =>
         [name, { constructor: type.name, ui: name[0].toLowerCase() + name.slice(1), availability: type.controlAvailability }]));
     return { schemas, constructors, factories, helpers,
-        contract: 'Import constructors from @ricewm/app. schemas lists inherited setProperty fields; constructorOptions lists additional constructor-only options, including those inherited by aliases. Primitive controls accept (properties, children). ui factory names and createControl names are separate from exported constructor names. Consult guidance and the SDK reference for values, events and methods. Base classes support custom composites. Host-owned controls require trusted integration and do not grant generated apps additional authority.' };
+        contract: 'Import constructors from @ricewm/app. schemas lists inherited setProperty fields; constructorOptions lists additional constructor-only options, including those inherited by aliases. Primitive controls accept (properties, children). control.moveTo(parent,{index}) relocates its retained subtree within the same window without losing IDs, focus, input drafts or scenes; omit index to append. Leaf destinations, cycles, cross-window moves and moving a window root are rejected. ui factory names and createControl names are separate from exported constructor names. Consult guidance and the SDK reference for values, events and methods. Base classes support custom composites. Host-owned controls require trusted integration and do not grant generated apps additional authority.' };
 }

@@ -2,12 +2,45 @@
 // licensed release assets, not system-font assumptions or downloaded fonts.
 const specs = [
     { key: 'mono', family: 'RiceWM Editor Mono', file: 'ricewm-mono.woff2', match: () => true },
-    { key: 'cjk', family: 'RiceWM Document CJK', file: 'locales/jp.ttf',
+    { key: 'cjk', family: 'RiceWM Document CJK', file: 'locales/jp.ttf', weight: '100 900',
+        range: 'U+2E80-9FFF,U+F900-FAFF,U+FF00-FFEF,U+20000-3FFFF',
         match: text => /[\u2e80-\u9fff\uf900-\ufaff\uff00-\uffef\u{20000}-\u{3ffff}]/u.test(text) },
-    { key: 'emoji', family: 'RiceWM Document Emoji', file: 'NotoEmoji.ttf',
+    { key: 'emoji', family: 'RiceWM Document Emoji', file: 'NotoEmoji.ttf', weight: '300 700',
+        range: 'U+2000-2BFF,U+1F000-1FAFF,U+FE0F,U+20E3',
         match: text => /\p{Extended_Pictographic}|\p{Regional_Indicator}|\u20e3/u.test(text) },
 ];
 const documents = new WeakMap();
+const embedded = new Map();
+
+// Proportional document renderers append coverage after the authored family.
+// Keep this catalogue shared with native editors, including SVG image exports
+// which cannot inherit FontFace registrations from their containing document.
+export const documentFontFallback = specs.filter(spec => spec.key !== 'mono')
+    .map(spec => `"${spec.family}"`).join(', ');
+export async function editorContentFontCss(text, { embed = false } = {}) {
+    return (await Promise.all(specs.filter(spec => spec.key !== 'mono' && spec.match(text)).map(async spec => {
+        const url = new URL(`./assets/fonts/${spec.file}`, import.meta.url).href;
+        let source = url;
+        if (embed) {
+            let loading = embedded.get(spec.key);
+            if (!loading) {
+                loading = fetch(url).then(response => {
+                    if (!response.ok) throw Error(`Document font unavailable: ${spec.family}`);
+                    return response.blob();
+                }).then(blob => new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = () => reject(reader.error);
+                    reader.readAsDataURL(blob);
+                }));
+                embedded.set(spec.key, loading);
+                loading.catch(() => embedded.delete(spec.key));
+            }
+            source = await loading;
+        }
+        return `@font-face{font-family:"${spec.family}";src:url("${source}");font-weight:${spec.weight};unicode-range:${spec.range}}`;
+    }))).join('\n');
+}
 
 export const plainEditorFont = size =>
     `400 ${size}px "RiceWM Editor Mono", "RiceWM Document CJK", "RiceWM Document Emoji", "RiceWM Mono", monospace`;
@@ -25,7 +58,8 @@ export function ensureEditorContentFonts(text, document = globalThis.document ||
         if (!load) {
             load = { ready: false };
             const face = new Font(spec.family,
-                `url(${new URL(`./assets/fonts/${spec.file}`, import.meta.url).href})`);
+                `url(${new URL(`./assets/fonts/${spec.file}`, import.meta.url).href})`,
+                { ...(spec.weight ? { weight: spec.weight } : {}), ...(spec.range ? { unicodeRange: spec.range } : {}) });
             load.promise = face.load().then(() => {
                 document.fonts.add(face); load.ready = true;
             });

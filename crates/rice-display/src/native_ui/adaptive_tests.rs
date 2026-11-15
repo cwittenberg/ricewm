@@ -51,6 +51,64 @@ fn render(patches: Vec<UiPatch>, width: u32, height: u32) -> RenderOutput {
 }
 
 #[test]
+fn embedded_timeline_scrollbar_keeps_theme_width_at_the_right_edge() {
+    // Paddy's Matrix and WhatsApp rows used a percentage split. Check narrow
+    // windows and widths beyond the old document cap with and without skins.
+    for (scrollbar_width, skinned) in [(14, false), (17, false), (20, true)] {
+        for width in [240, 760, 1_500, 2_400] {
+            for minimum in [80, 320] {
+                let mut host = NativeUiHost::default();
+                host.theme.metrics.scrollbar_width = scrollbar_width;
+                if skinned {
+                    host.theme.control_chrome.parts = 0x3ff;
+                    host.theme.control_chrome.metrics_mask = 1;
+                    host.theme.control_chrome.metrics[0] = 20;
+                }
+                let layout = format!("split:985:min-width={minimum}:max-width=1800");
+                let mut bar = create(3, Some(1), 1, WidgetKind::ScrollBar,
+                    Some("0/1200;viewport=400"));
+                if let UiPatch::Create { state, .. } = &mut bar {
+                    *state |= WidgetState::FLAT.bits();
+                }
+                host.apply_patch(&UiPatchEnvelope {
+                    app: app(), window: window(), sequence: 1,
+                    patches: vec![
+                        create(1, None, 0, WidgetKind::Row, Some(&layout)),
+                        create(2, Some(1), 0, WidgetKind::WebSurface, None),
+                        bar,
+                    ],
+                }).unwrap();
+                let size = Size { width, height: 440 };
+                let output = host.render(app(), window(), Constraints::new(size, size).unwrap()).unwrap();
+                let geometry = &host.windows[&(app(), window())].geometry;
+                let document = geometry[&widget(2)];
+                let bar = geometry[&widget(3)];
+                let inset = u32::from(host.theme.spacing.control_y);
+                assert_eq!(bar.size.width, u32::from(scrollbar_width));
+                assert_eq!(bar.origin.x + bar.size.width as i32, (width - inset) as i32);
+                assert_eq!(document.origin.x, inset as i32);
+                assert_eq!(document.origin.y, bar.origin.y);
+                assert_eq!(document.size.height, bar.size.height);
+                assert!(document.origin.x + document.size.width as i32 <= bar.origin.x);
+                assert!(output.hit_targets.iter().any(|target| target.widget == widget(3) && target.rect == bar));
+                if skinned {
+                    // All Motif parts, including arrows, share the narrow
+                    // layout and pointer rectangle rather than the old gutter.
+                    assert!(output.commands.iter().any(|command| matches!(command,
+                        DrawCommand::ThemeSurface { role: 22, rect, .. }
+                        if rect.origin.x == bar.origin.x && rect.size.width == bar.size.width)));
+                    let event = host.pointer_event(app(), window(), PointerEventKind::Down,
+                        Point { x: bar.origin.x + 10, y: bar.origin.y + bar.size.height as i32 - 10 }, 1, 0)
+                        .unwrap().unwrap();
+                    assert_eq!(event.target, widget(3));
+                    assert_eq!(event.event, rice_native_app_protocol::UiEvent::ValueChanged("40/1200".into()));
+                }
+            }
+        }
+    }
+}
+
+#[test]
 fn compact_navigation_reflows_to_two_columns_and_scroll_content_stays_clipped() {
     let mut patches = vec![
         create(1, None, 0, WidgetKind::SplitPane, Some("split:280")),

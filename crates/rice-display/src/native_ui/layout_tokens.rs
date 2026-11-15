@@ -623,6 +623,13 @@ pub(super) fn preferred_text_size(widget: &Widget, theme: &Theme) -> u16 {
         theme.typography.title_px.saturating_add(4)
     } else if widget.state.contains(WidgetState::BRAND_TYPE) {
         theme.typography.body_px.saturating_add(5)
+    } else if widget.kind == WidgetKind::Label
+        && widget.state.contains(WidgetState::DISPLAY)
+        && widget.state.contains(WidgetState::EMPHASIZED)
+    {
+        // Section headings remain proportional to the theme's UI type,
+        // rather than taking the much larger numeric/readout display size.
+        theme.typography.title_px.saturating_add(2)
     } else if widget.state.contains(WidgetState::DISPLAY) {
         theme.typography.display_px
     } else if widget.state.contains(WidgetState::EMPHASIZED) {

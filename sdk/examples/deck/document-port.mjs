@@ -6,6 +6,9 @@ import { installLayoutCatalog } from './layout-catalog.mjs';
 import { openWasmDeckBackend } from './wasm-engine.mjs';
 import { connectDeckEnginePort } from './bus-engine-port.mjs';
 import { BUFFER_BYTES, FILE_BYTES, FORMATS, failure } from './engine-contract.mjs';
+import {Clipboard} from '../../versions/1.0.0/runtime/sdk/js/clipboard.mjs';
+import {FileStore} from '../../versions/1.0.0/runtime/sdk/js/file-store.mjs';
+import {SLIDE_CLIPBOARD_MIME,SLIDE_CLIPBOARD_BYTES,slideClipboardArguments} from '../../versions/1.0.0/runtime/sdk/js/presentation/slide-transfer-contract.mjs';
 
 import { IMAGE_BYTES } from './image-contract.mjs';
 import { checkedBackgroundPictureRequest } from './background-contract.mjs';
@@ -31,13 +34,42 @@ const idle = () => ({ ok: true, revision: '0', result: { loaded: false, slide: n
 
 /** Owns a native window's document resources. A replacement opens in a spare
  * compute worker and is projected successfully before the old worker closes.
- * Whole-file writes are the current shared SDK limit; ranged writes and conflict
- * tokens remain joint Office work. Never acknowledge an export as a saved file.
+ * FileStore owns bounded atomic writes and version comparisons. The native
+ * engine still imposes its 8 MiB format limit. Legacy clients retain their
+ * existing 4 MiB whole-file path; a failed atomic save never falls back to it.
  */
 export function createDeckDocumentPort({ app, services, bus, log, createTextLayout, createImageLayout, lifetime = new AbortController() } = {}) {
     const typography = createTextLayout?.({ services, signal: lifetime.signal });
     const pictures = createImageLayout?.({ services, signal: lifetime.signal });
+    const slideClipboard=typeof services.clipboard?.readFormats==='function'&&typeof services.clipboard?.writeFormats==='function'?new Clipboard({services}):null;
+    const transactionalFiles=['version','releaseVersion','beginWrite','writeChunk','commitWrite','abortWrite']
+        .every(name=>typeof services.files?.[name]==='function'&&services.files[name].granted!==false);
+    const fileStore=transactionalFiles?new FileStore({services,maximumBytes:FILE_BYTES}):null;
     let current = null, closed = false, busy = false, destination = null;
+    let typographyWork = Promise.resolve(), typographyPending = 0, typographyBytes = 0;
+    function renderText(scene, options) {
+        alive();
+        if (typographyPending >= 8) throw failure('BUSY', 'Text layout queue is full');
+        if (!Array.isArray(scene?.objects) || scene.objects.length > 8192) throw failure('INVALID_REQUEST', 'Invalid text scene');
+        // Typography owns a separate worker from the source document. Retain a
+        // bounded immutable projection so typing, previews and a source read
+        // share one font lane without rejecting each other's document work.
+        const source = tableTextScene(scene);
+        const snapshot = structuredClone({ slideId: source.slideId, designTheme: source.designTheme,
+            objects: source.objects.map(({id,bounds,text,placeholder}) => ({id,bounds,text,placeholder})) });
+        const bytes = new TextEncoder().encode(JSON.stringify(snapshot)).byteLength;
+        if (bytes > 8 * 1024 * 1024 || typographyBytes + bytes > 32 * 1024 * 1024) throw failure('BUSY', 'Text layout source budget is full');
+        const captured = options ? structuredClone(options) : undefined;
+        typographyPending++; typographyBytes += bytes;
+        const pending = typographyWork.catch(() => {}).then(() => {
+            alive(); return typography ? typography.render(snapshot, captured) : { frames: new Map(), notices: ['Text rendering unavailable.'] };
+        });
+        typographyWork = pending;
+        return pending.finally(() => { typographyPending--; typographyBytes -= bytes; });
+    }
+    let destinationVersion;
+    const releaseFileVersion=async version=>{if(version&&fileStore)await fileStore.releaseVersion(version).catch(error=>log?.warn('Deck file version cleanup failed',{message:String(error.message)}));};
+    async function setDestination(file,version){const previous=destinationVersion;destination=file;destinationVersion=version;if(previous!==version)await releaseFileVersion(previous);}
     let confirmDiscard = options => services.dialogs.confirm(options);
     const alive = () => { if (closed) throw failure('CLOSED', 'Deck document is closed'); };
     async function run(work) {
@@ -48,18 +80,27 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
     }
     async function load(file, { editTemplate = false } = {}) {
         if (!file || typeof file.handle !== 'string' || !file.handle || typeof file.name !== 'string') throw failure('INVALID_FILE', 'Expected an authorized file descriptor');
+        let inputVersion,adoptedVersion=false;
+        try {
         const meta = await services.files.stat({ handle: file.handle });
         alive();
         if (meta?.kind !== 1 || !Number.isSafeInteger(meta.size) || meta.size < 1 || meta.size > FILE_BYTES) {
             throw failure('FILE_LIMIT', 'This Deck engine profile opens presentations up to 8 MiB');
         }
-        const bytes = new Uint8Array(meta.size);
+        let bytes;
+        if(fileStore){
+            inputVersion=(await fileStore.version({handle:file.handle})).version;alive();
+            bytes=await fileStore.read({handle:file.handle,version:inputVersion},{signal:lifetime.signal});alive();
+            if(!bytes.length)throw failure('READ_FAILED','Presentation is empty');
+        }else{
+        bytes = new Uint8Array(meta.size);
         for (let offset = 0; offset < bytes.length; offset += BUFFER_BYTES) {
             const length = Math.min(BUFFER_BYTES, bytes.length - offset);
             const chunk = await services.files.read({ handle: file.handle, offset, length });
             alive();
             if (!(chunk instanceof Uint8Array) || chunk.length !== length) throw failure('READ_FAILED', 'Presentation changed or could not be read completely');
             bytes.set(chunk, offset);
+        }
         }
         let backend, port;
         try {
@@ -83,7 +124,9 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
             alive();
             const previous = current;
             current = { backend, port, format: status.result.format, name: filename(file.name, status.result.format) };
-            destination = null; pictures?.clear();
+            const writable=file.writable===true&&!(template(sourceFormat)&&!editTemplate);
+            await setDestination(writable?file:null,writable?inputVersion:undefined);adoptedVersion=writable;
+            pictures?.clear();
             await previous?.port.close().catch(error => log?.warn('Previous Deck document cleanup failed', { message: String(error.message) }));
             return { replaced: true, name: current.name, fromTemplate: template(sourceFormat) && !editTemplate,
                 startShow: sourceFormat === 'ppsx' };
@@ -92,18 +135,18 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
             await backend?.close().catch(() => {});
             throw cause;
         }
+        }finally{if(!adoptedVersion)await releaseFileVersion(inputVersion);}
     }
     async function newDocument(format = 'pptx') {
         if (!await allowReplace()) return null;
         let backend, port;
         try {
-            backend = await openWasmDeckBackend({ services, format, newDocument: true, signal: lifetime.signal });
+            backend = await openWasmDeckBackend({ services, format, newDocument: true, initialLayout: 'title-slide', signal: lifetime.signal });
             alive(); port = connectDeckEnginePort({ bus, backend });
-            const initial = await port.project({ slide: 0, startRun: 0, limit: 32 }); alive();
-            if (initial.result.slide?.id) await port.apply([{ type: 'set-slide-layout', slide: initial.result.slide.id, layout: 'title-slide' }]);
+            await port.project({ slide: 0, startRun: 0, limit: 32 }); alive();
             alive();
             const previous = current;
-            current = { backend, port, format, name: `Presentation.${format}` }; destination = null; pictures?.clear();
+            current = { backend, port, format, name: `Presentation.${format}` }; await setDestination(null); pictures?.clear();
             await previous?.port.close().catch(error => log?.warn('Previous Deck document cleanup failed', { message: String(error.message) }));
             return { replaced: true, name: current.name };
         } catch (error) { await port?.close().catch(() => {}); await backend?.close().catch(() => {}); throw error; }
@@ -140,10 +183,19 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
             await converted.exchange('project', { slide: 0, startRun: 0, limit: 32 });
             snapshot = await converted.exportBytes(converted.revision); alive();
         }
-        if (snapshot.bytes.length > 4 * 1024 * 1024) throw failure('SAVE_LIMIT', 'This presentation exceeds the current 4 MiB save limit');
-        const written = await services.files.write({ handle: target.handle, data: snapshot.bytes, requireDurable: true });
+        if (snapshot.bytes.length > (fileStore?FILE_BYTES:4*1024*1024)) throw failure('SAVE_LIMIT', fileStore?'This presentation exceeds the engine profile limit of 8 MiB':'Saving above 4 MiB requires the transactional file services in the current Deck release');
+        let written,nextVersion;
+        if(fileStore){
+            const result=await fileStore.write({handle:target.handle},snapshot.bytes,{signal:lifetime.signal,
+                requireDurable:true,...(target===destination&&destinationVersion?{expectedVersion:destinationVersion}:{})});
+            if(result?.durable!==true)throw failure('WRITE_FAILED','Storage did not acknowledge a durable presentation save');
+            written=result.size;nextVersion=result.version;
+        }else written = await services.files.write({ handle: target.handle, data: snapshot.bytes, requireDurable: true });
         alive();
         if (written !== snapshot.bytes.length) throw failure('WRITE_FAILED', 'Presentation write was incomplete');
+        // The file has committed even if a later mark-saved acknowledgement
+        // fails. Retain its new comparison token so a retry can succeed.
+        await setDestination(target,nextVersion);
         await (converted || current.backend).exchange('mark-saved', {}, snapshot.revision);
         alive();
         const replaced = Boolean(converted);
@@ -153,7 +205,6 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
             converted = null; pictures?.clear();
             await previous.port.close().catch(error => log?.warn('Previous Deck document cleanup failed', { message: String(error.message) }));
         }
-        destination = target;
         current.name = target.name;
         return { saved: true, replaced, name: target.name };
         } finally { await converted?.close().catch(() => {}); }
@@ -181,6 +232,7 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
         }
     }
     return Object.freeze({
+        fileWorkflow:Object.freeze({maximumPresentationBytes:FILE_BYTES,maximumSaveBytes:fileStore?FILE_BYTES:4*1024*1024,atomic:Boolean(fileStore),conflictProtection:Boolean(fileStore),durableRequired:true}),
         version: 1,
         readClipboardText: typeof services.clipboard?.readText === 'function' ? () => run(async () => {
             const text = await services.clipboard.readText(); alive();
@@ -195,6 +247,42 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
             if (typeof handler !== 'function') throw new TypeError('Expected a native confirmation handler');
             confirmDiscard = handler;
         },
+        copySlides: slideClipboard?({slides,text='',cut=false}={})=>run(async()=>{
+            if(!current)throw failure('NO_DOCUMENT','Open a presentation first');
+            const session=current,request=slideClipboardArguments({slides}),revision=session.port.revision;
+            let dispatched=false;
+            if(typeof text!=='string'||new TextEncoder().encode(text).length>16000||typeof cut!=='boolean')throw failure('INVALID_REQUEST','Invalid slide clipboard text');
+            try {
+                const snapshot=await session.port.exportSlides(request,revision);alive();
+                const bytes=await session.backend.slideClipboardBytes(snapshot);alive();
+                const plain=new TextEncoder().encode(text);
+                if(bytes.length+plain.length>SLIDE_CLIPBOARD_BYTES)throw failure('CLIPBOARD_LIMIT','Slides and their titles exceed the 4 MiB clipboard limit');
+                await slideClipboard.write([{mimeType:SLIDE_CLIPBOARD_MIME,data:bytes},{mimeType:'text/plain',data:plain}]);alive();
+                await session.port.confirmSlideCopy({selection:snapshot.result.selection},revision);alive();
+                if(cut){dispatched=true;return await session.port.apply([{type:'delete-selected-slides',slides:request.slides}],revision);}
+                return {copied:true,slideCount:snapshot.result.selectedSlideCount,revision:snapshot.revision};
+            } catch(cause) {
+                const error=cause instanceof Error?cause:failure('CLIPBOARD_UNAVAILABLE','Slide copy failed');
+                if(!dispatched)error.rejectedBeforeMutation=true;throw error;
+            } finally {await session.port.discardSlides().catch(()=>{});}
+        }):undefined,
+        pasteSlides: slideClipboard?({after=null}={})=>run(async()=>{
+            if(!current)throw failure('NO_DOCUMENT','Open a presentation first');
+            const session=current,revision=session.port.revision;
+            let dispatched=false;
+            try {
+                const value=await slideClipboard.read([SLIDE_CLIPBOARD_MIME]);alive();
+                if(value===null)return null;
+                if(value?.mimeType!==SLIDE_CLIPBOARD_MIME||!(value.data instanceof Uint8Array)||!value.data.length||value.data.length>SLIDE_CLIPBOARD_BYTES)
+                    throw failure('INVALID_CLIPBOARD','Invalid slide clipboard data');
+                await session.backend.uploadSlides(value.data,revision);alive();
+                const prepared=await session.port.prepareSlides(revision);alive();
+                dispatched=true;return await session.port.apply([{type:'paste-slides',after,selection:prepared.result.selection,count:prepared.result.selectedSlideCount}],revision);
+            } catch(cause) {
+                const error=cause instanceof Error?cause:failure('CLIPBOARD_UNAVAILABLE','Slide paste failed');
+                if(!dispatched)error.rejectedBeforeMutation=true;throw error;
+            } finally {await session.port.discardSlides().catch(()=>{});}
+        }):undefined,
         copySelection: args => run(async () => {
             if (!current) throw failure('NO_DOCUMENT', 'Open a presentation first');
             const session = current;
@@ -258,11 +346,26 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
                     y: frame ? frame.y + (frame.height - height * ratio) / 2 : (size.height - height * ratio) / 2, width: width * ratio, height: height * ratio } };
             return [command, ...(!replace && placeholder ? [{ type: 'delete-object', slide, object: placeholder.id }] : [])];
         })),
+        importTheme: ({slide}={}) => run(async()=>{
+            if(!current)throw failure('NO_DOCUMENT','Open a presentation first');
+            if(typeof slide!=='string'||!slide||typeof current.backend.uploadTheme!=='function')throw failure('UNSUPPORTED_OPERATION','The source theme is not editable');
+            const owner=current,revision=owner.port.revision,files=await services.dialogs.openFile({title:'Browse for Themes',filters:[{name:'Presentation themes',extensions:['thmx','pptx','potx','ppsx']}],multiple:false});alive();
+            if(!files?.length)return null;
+            if(current!==owner)throw failure('REVISION_CONFLICT','The presentation changed while choosing a theme');
+            const file=files[0],meta=await services.files.stat({handle:file.handle});alive();
+            if(meta?.kind!==1||!Number.isSafeInteger(meta.size)||meta.size<1||meta.size>FILE_BYTES)throw failure('FILE_LIMIT','Theme files use the presentation profile limit of 8 MiB');
+            const bytes=new Uint8Array(meta.size);
+            for(let offset=0;offset<bytes.length;offset+=BUFFER_BYTES){const length=Math.min(BUFFER_BYTES,bytes.length-offset),chunk=await services.files.read({handle:file.handle,offset,length});alive();if(!(chunk instanceof Uint8Array)||chunk.length!==length)throw failure('READ_FAILED','Theme file changed or could not be read completely');bytes.set(chunk,offset);}
+            if(current!==owner)throw failure('REVISION_CONFLICT','The presentation changed while reading a theme');
+            await owner.backend.uploadTheme(bytes,revision);alive();
+            try{const prepared=await owner.port.prepareTheme(revision);alive();return await owner.port.apply([{type:'set-theme-source',slide,asset:prepared.result.themeAsset}],revision);}
+            finally{if(current===owner&&!closed)await owner.port.discardTheme(owner.port.revision).catch(()=>{});}
+        }),
         backgroundPicture: options => {
             const settings = checkedBackgroundPictureRequest(options);
             return run(() => choosePicture('Insert background picture', ({ asset }) => [{ type: 'set-slide-picture-background', ...settings, asset }]));
         },
-        renderText: (scene, options) => run(() => typography ? typography.render(tableTextScene(scene), options) : { frames: new Map(), notices: ["Text rendering unavailable."] }),
+        renderText,
         project: args => run(async () => {
             if (!current) return idle();
             const reply = await current.port.project(args);
@@ -270,6 +373,16 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
         }),
         outline: (args, expected) => run(() => current ? current.port.outline(args, expected)
             : { ...idle(), result: { ...idle().result, startSlide: 0, slides: [], nextSlide: null, anchorIndex: null } }),
+        sectionOutline: (args, expected) => run(() => current ? current.port.sectionOutline(args, expected)
+            : { ...idle(), result: { ...idle().result, sectionCount: 0, startSection: 0, sections: [], nextSection: null } }),
+        sectionName: (args, expected) => run(() => {
+            if (!current) throw failure('NO_DOCUMENT', 'Open a presentation first');
+            return current.port.sectionName(args, expected);
+        }),
+        tableCells: (args, expected) => run(() => {
+            if (!current) throw failure('NO_DOCUMENT', 'Open a presentation first');
+            return current.port.tableCells(args, expected);
+        }),
         scene: (args, expected) => run(async () => {
             if (!current) throw failure('NO_DOCUMENT', 'Open a presentation first');
             if (!current.shapes) current.shapes = installShapeCatalog(await current.port.shapeCatalog());
@@ -348,7 +461,7 @@ export function createDeckDocumentPort({ app, services, bus, log, createTextLayo
         async close() {
             if (closed) return;
             closed = true; lifetime.abort();
-            await Promise.allSettled([current?.port.close(), typography?.close(), pictures?.close()]); current = null;
+            await Promise.allSettled([current?.port.close(), typography?.close(), pictures?.close(),releaseFileVersion(destinationVersion)]); current = null;destinationVersion=undefined;destination=null;
         },
     });
 }

@@ -5,7 +5,7 @@ import { createDeckTextLayout } from './text-layout.mjs';
 import { createDeckDocumentPort } from './document-port.mjs';
 
 export default defineApp({
-    manifest: { id: 'org.ricewm.deck', name: 'Rice Deck', version: '0.11.2-preview.1' },
+    // The validated host package supplies the application identity.
     start(context) {
         // Window construction must finish before a host-owned chooser is opened.
         return startDeckShell(context, createDeckDocumentPort({ ...context, createTextLayout: createDeckTextLayout, createImageLayout: createDeckImageLayout, lifetime: createCancellationScope() }));

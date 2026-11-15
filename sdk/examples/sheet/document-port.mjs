@@ -1,10 +1,13 @@
 import { openWasmSheetBackend } from './wasm-engine.mjs';
 import { connectSheetEnginePort, exposeSheetEngineService } from './bus-engine-port.mjs';
 import { checkedWorkbookGrant } from './file-open.mjs';
-import { openTypographyEngine } from '@ricewm/app';
+import { openTypographyFontBank, WorkbookContracts } from '@ricewm/app';
 import { createFontMetricsResolver } from './font-metrics.mjs';
+import { createSheetTextClipboardPort } from './clipboard-port.mjs';
+import { createSheetOwnedClipboardPort } from './clipboard-owner-port.mjs';
 
 import { workbookFormat, workbookFileFilters } from './workbook-formats.mjs';
+const { sheetQueryEffect,sheetCommandEffect,isCommittedWorkbookChange } = WorkbookContracts;
 /** Owns one document. Replacements are prepared in a spare worker and swapped
  * only after import and an initial projection succeed. The UI never owns cells.
  */
@@ -12,7 +15,7 @@ export async function openSheetDocumentPort(context) {
     let current, closed = false, busy = false, dirty = false, handle = null, sourceHandle = null, imported = false;
     let pendingOperation = null, closeCheck = null, closeApproved = false;
     const { services, bus } = context;
-    const resolveFontMetrics = createFontMetricsResolver(()=>openTypographyEngine({services}));
+    const resolveFontMetrics = createFontMetricsResolver(()=>openTypographyFontBank({services}));
     async function exclusive(operation) {
         if (closed) throw Error('Document is closed');
         if (busy || closeCheck || closeApproved) throw Object.assign(Error('A workbook operation or close request is already running'), {code:'BUSY'});
@@ -36,7 +39,7 @@ export async function openSheetDocumentPort(context) {
             await port.readViewport({top:0,left:0,rows:40,columns:20}, null);
             if (closed) throw Error('Document closed while opening');
             const sensitivity = (await backend.sensitivity()).labels;
-            return { backend, port, format, sensitivity, async close() { try { await port.close(); } finally { await provider.close(); } } };
+            return { backend, port, format, sensitivity, clipboardIdentity:crypto.randomUUID(), async close() { try { await port.close(); } finally { await provider.close(); } } };
         } catch (error) {
             await port?.close().catch(() => {});
             await provider?.close().catch(() => {});
@@ -87,12 +90,58 @@ export async function openSheetDocumentPort(context) {
         return { saved:true, name:destination.name };
     }
     current = await prepare();
+    function requireCurrentView() {
+        if (current.pendingViewRevision !== undefined) throw Object.assign(Error('Refresh the workbook view before changing cells. Saving remains available.'),
+            {code:'VIEW_REFRESH_REQUIRED',rejectedBeforeMutation:true,revision:current.backend.revision});
+    }
+    async function applyCommand(command, options) {
+        requireCurrentView();
+        const previousRevision = current.backend.revision;
+        try {
+            const result = await current.port.command(command, options);
+            ownedClipboard.observe(result);
+            if (sheetCommandEffect(command.type) === 'mutation' && result.revision !== previousRevision) dirty = true;
+            return result;
+        } catch (cause) {
+            if (isCommittedWorkbookChange(cause, previousRevision) && current.backend.revision === cause.revision) {
+                if (sheetCommandEffect(command.type) === 'mutation') dirty = true;
+                current.pendingViewRevision = cause.revision;
+                // No returned clipboard metadata is available to authenticate a
+                // cached owner after the change. A fresh Copy/Cut can restore it.
+                ownedClipboard.observe({clipboard:null});
+            }
+            throw cause;
+        }
+    }
+    const textClipboard=createSheetTextClipboardPort({services,
+        command:applyCommand,query:(...args)=>current.port.query(...args),
+        revision:()=>current.backend.revision,alive:()=>!closed});
+    const ownedClipboard=createSheetOwnedClipboardPort({services,
+        command:applyCommand,query:(...args)=>current.port.query(...args),
+        revision:()=>current.backend.revision,identity:()=>current.clipboardIdentity,alive:()=>!closed});
+    const workflows={...textClipboard,...ownedClipboard};
+    const clipboard=Object.freeze(Object.fromEntries(['copy','cut','paste','copy-text','paste-text','paste-values'].map(operation=>[operation,
+        current.backend.capabilities.includes('paste-text')&&typeof workflows[operation]==='function'
+        &&(!['copy','cut','paste'].includes(operation)||current.backend.capabilities.includes(operation==='paste'?'paste-special':operation==='cut'?'cut-range':'copy-range'))
+            ?(data,options)=>exclusive(async()=>{
+                const before=current.backend.revision;
+                const result=await workflows[operation](data,options);
+                ownedClipboard.observe(result?.projection,{systemWriteFailed:result?.written===false});
+                if(!['copy-text','copy','cut'].includes(operation)&&result.applied&&result.projection?.revision!==before)dirty=true;
+                return result;
+            }):undefined])));
     return Object.freeze({
         version:1,
-        readViewport: (...args) => exclusive(() => current.port.readViewport(...args)),
+        clipboard,
+        readViewport: (...args) => exclusive(async () => {
+            const result = await current.port.readViewport(...args);
+            if (result.revision >= current.pendingViewRevision) delete current.pendingViewRevision;
+            return result;
+        }),
         query: (data,options) => exclusive(async () => {
+            if (sheetQueryEffect(data.action) === 'mutation') requireCurrentView();
             const result = await current.port.query(data,options);
-            if (['activate-filter', 'clear-filter'].includes(data.action) && result.result?.changed !== false) dirty = true;
+            if (sheetQueryEffect(data.action) === 'mutation' && result.result?.changed !== false) dirty = true;
             return result;
         }),
         requestClose() {
@@ -112,12 +161,7 @@ export async function openSheetDocumentPort(context) {
             return closeCheck;
         },
         command: (command, options) => exclusive(async () => {
-            const previousRevision = current.backend.revision;
-            const result = await current.port.command(command, options);
-            if (['edit-cell','fill-range','paste-range','clear-range','format-range','format-cells','apply-cell-style','paint-format','create-chart','update-chart','delete-chart','move-chart','sort-range','merge-cells','unmerge-cells','remove-duplicates','text-to-columns','create-defined-name','update-defined-name','delete-defined-name','undo','redo',
-                'create-sheet','rename-sheet','delete-sheet','duplicate-sheet','move-sheet','toggle-autofilter','fill-down-adjacent',
-                'insert-rows','delete-rows','insert-columns','delete-columns'].includes(command.type)) dirty = true;
-            if (['resize-rows','resize-columns'].includes(command.type) && result.revision !== previousRevision) dirty = true;
+            const result = await applyCommand(command, options);
             if (['undo','redo'].includes(command.type)) current.sensitivity = (await current.backend.sensitivity()).labels;
             return result;
         }),

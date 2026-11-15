@@ -1,3 +1,4 @@
+import {nativeWindowRegions,pointInRegion} from './rice-native-window-regions.mjs';
 import {riceCompactFormFactor} from './rice-form-factor.mjs';
 import { isFrostedIceTheme } from "./rice-frosted-ice.mjs";
 
@@ -47,6 +48,7 @@ export function nativeChromeTheme(theme) {
     const familiar = theme.file === "classic.theme" ||
         theme.chromeProfile === "familiar";
     const redmond98 = theme.chromeProfile === "redmond-98";
+    const glassMenus = theme.menuMaterial === "glass";
     const configuredRadius = theme.windowCornerRadius ?? theme.cornerRadius ??
         (familiar || redmond98 ? 0 : frostedIce ? 18 : 6);
     const radius = Math.max(
@@ -78,6 +80,13 @@ export function nativeChromeTheme(theme) {
         body: rgbChannels(frame[3], frostedIce ? 150 : 255),
         text: rgbChannels(frame[4]),
         control: rgbChannels(frame[5], frostedIce ? 120 : 255),
+        // Application surfaces follow the native UI palette, whose ordinary
+        // surface/raised/text/border tokens come from the menu color group.
+        // frame.control is window furniture and can intentionally be blue.
+        surface: rgbChannels(glassMenus ? frame[3] : redmond98 ? 0xc0c0c0 : theme.menu?.[0] ?? frame[3]),
+        surfaceRaised: rgbChannels(glassMenus ? frame[5] : redmond98 ? 0xffffff : theme.menu?.[1] ?? frame[3]),
+        surfaceText: rgbChannels(glassMenus ? frame[4] : redmond98 ? 0x000000 : theme.menu?.[5] ?? frame[4]),
+        surfaceBorder: rgbChannels(glassMenus ? frame[2] : redmond98 ? 0x808080 : theme.menu?.[2] ?? frame[2]),
         close: rgbChannels(frame[6]),
         pressed: rgbChannels(frame[7], frostedIce ? 180 : 255),
         icon: rgbChannels(Number.isInteger(theme.icon) ? theme.icon : frame[4]),
@@ -103,7 +112,7 @@ export function nativeChromeTheme(theme) {
         ),
         radius,
         ...(decorations.frameBorderWidth!==undefined?{frameBorderWidth:decorations.frameBorderWidth}:{}),
-        ...Object.fromEntries(['typography','metrics','controlColors','surfaceSkins'].filter(key=>theme.bundle?.[key]!==undefined).map(key=>[key,theme.bundle[key]])),
+        ...Object.fromEntries(['treeView','typography','metrics','controlColors','surfaceSkins','windowEffects','shellAppearance'].filter(key=>theme.bundle?.[key]!==undefined).map(key=>[key,theme.bundle[key]])),
         ...(theme.bundle?.icons?{themeIcons:theme.bundle.icons}:{}),
         chromeProfile,
         ...(theme.sidebarMaterial === "glass" ? {
@@ -183,10 +192,10 @@ export function nativeChromeTheme(theme) {
             decorationArtwork: decorations.decorationArtwork || "Theme Default",
             buttonStyle,
             windowShape,
-            controlBoxEdgeInset:
+            controlBoxEdgeInset: decorations.controlBoxEdgeInset ?? (
                 chromeProfile === "neon-grid" && artworkEnabled
                     ? 72
-                    : redmond98 ? 3 : 0,
+                    : redmond98 ? 3 : 0),
             chromeProfile: decorations.chromeProfile || chromeProfile,
         }),
         ...(frostedIce ? {
@@ -449,10 +458,22 @@ export function nativeControlBoxPosition(decorations = {}) {
         : "Right";
 }
 
+/** Client coordinates are shared by layout, input, damage, IME and previews. */
+export function nativeClientRect(frame) {
+    const [,right,bottom,left] = frame.clientInsets || [0,0,0,0];
+    return {x:left,y:frame.titleHeight,width:Math.max(0,frame.width-left-right),height:Math.max(0,frame.height-frame.titleHeight-bottom)};
+}
+function titleInsets(frame, decorations) {
+    const [top,right,,left] = frame.titleHeight > 0 ? decorations.frameInsets || [0,0,0,0] : [0,0,0,0];
+    return {top:Math.min(top,Math.max(0,frame.titleHeight-1)),right:Math.min(right,frame.width/2),left:Math.min(left,frame.width/2)};
+}
+function captionActions(decorations) {
+    return decorations.controlOrder || (decorations.controlLayout === 'split' ? ['minimize','maximize','close'] : nativeControlBoxPosition(decorations)==='Left' ? ['close','minimize','maximize'] : ['minimize','maximize','close']);
+}
 function captionMetrics(frame, decorations) {
     const legacy = decorations.tiled ? Math.min(24,frame.titleHeight) : decorations.chromeProfile==='redmond-98'?18:frame.titleHeight;
     const width = decorations.tiled ? legacy : decorations.captionWidth ?? legacy;
-    return {width,height:Math.min(frame.titleHeight,decorations.tiled?frame.titleHeight:decorations.captionHeight??frame.titleHeight),gap:decorations.tiled?0:decorations.captionGap??0};
+    return {width,height:Math.min(frame.titleHeight-titleInsets(frame,decorations).top,decorations.tiled?frame.titleHeight:decorations.captionHeight??frame.titleHeight),gap:decorations.tiled?0:decorations.captionGap??0};
 }
 function tiledControlCount(frame, title = "RiceWM", decorations = {}) {
     const titleReserve=Math.max(72,Math.min(160,estimatedTitleWidth(title)));
@@ -468,6 +489,7 @@ export function nativeTitlebarLayout(
     decorations = {},
 ) {
     const profile = decorations?.chromeProfile || "standard";
+    const inset = titleInsets(frame,decorations);
     const controlsLeading = nativeControlBoxPosition(decorations) === "Left";
     const splitControls = !decorations.tiled && decorations?.controlLayout === "split";
     const compact = decorations?.compactTitlebar === true ||
@@ -477,42 +499,58 @@ export function nativeTitlebarLayout(
         ? decorations.titlebarEnd
         : "Straight";
     const toolCount = Array.isArray(tools) ? Math.min(6, tools.length) : 0;
-    const controlCount = decorations.tiled ? decorations.showTileControls===false ? 1 : tiledControlCount(frame,title,decorations) : profile === "yellow-jacket" ? 1 : TITLE_CONTROL_COUNT;
+    const controlCount = decorations.tiled ? decorations.showTileControls===false ? 1 : tiledControlCount(frame,title,decorations) : captionActions(decorations).length;
     const metrics=captionMetrics(frame,decorations);
     const controlPitch = metrics.width + metrics.gap;
-    const trailingControlCount = splitControls ? 2 : controlsLeading ? 0 : controlCount;
     const endWidth = compact ? end === "Straight" ? 7 : 18 : 0;
-    const iconX = splitControls
+    if (profile === "yellow-jacket" && !decorations.tiled) {
+        const edge = 4 + Math.max(0, Number(decorations.controlBoxEdgeInset) || 0);
+        const titleX = inset.left + edge + controlPitch + 6 +
+            (decorations.showTitleIcon === false ? 0 : 24);
+        const width = Math.min(frame.width, titleX + estimatedTitleWidth(title) + 8 +
+            frame.titleHeight * toolCount + controlPitch + endWidth + edge + inset.right);
+        const trailingX = width - inset.right - endWidth - edge - metrics.width;
+        const zoomTrailingX = width - inset.right - Math.min(endWidth, 2) -
+            Math.max(1, edge - 3) - metrics.width;
+        const toolsX = trailingX - frame.titleHeight * toolCount;
+        return Object.freeze({compact, x:inset.left, y:inset.top,
+            height:Math.max(0,frame.titleHeight-inset.top), width, end, endWidth,
+            titleX, titleWidth:Math.max(1,toolsX-titleX-4), toolsX,
+            controlsX:controlsLeading ? inset.left + edge : trailingX,
+            maximizeX:controlsLeading ? zoomTrailingX : inset.left + edge,
+            leadingControlsX:inset.left + edge, splitControls:false});
+    }
+    const trailingControlCount = splitControls ? controlCount-1 : controlsLeading ? 0 : controlCount;
+    const iconX = inset.left + (splitControls
         ? 4 + controlPitch + 6
         : controlsLeading
         ? 4 + controlPitch * controlCount + 6
-        : 7;
-    const titleX = iconX + 24;
+        : 7);
+    const titleX = iconX + (decorations.showTitleIcon===false ? 0 : 24);
     const naturalWidth = titleX + estimatedTitleWidth(title) + 8 +
         frame.titleHeight * toolCount + controlPitch * trailingControlCount +
-        endWidth + (profile === "yellow-jacket" ? 26 : 0);
+        endWidth;
     const width = compact
         ? Math.max(1, Math.min(frame.width, naturalWidth))
         : frame.width;
-    const edgeInset = controlsLeading
-        ? 0
-        : Math.max(0, Number(decorations?.controlBoxEdgeInset) || 0);
+    const edgeInset = Math.max(0, Number(decorations?.controlBoxEdgeInset) || 0);
     const controlsX = controlsLeading && !splitControls
-        ? 4
-        : width - endWidth - edgeInset - controlPitch *
-            (splitControls ? 2 : controlCount);
+        ? inset.left + 4 + edgeInset
+        : width - inset.right - endWidth - edgeInset - controlPitch *
+            (splitControls ? controlCount-1 : controlCount);
     const toolsX = controlsLeading && !splitControls
-        ? width - endWidth - frame.titleHeight * toolCount
+        ? width - inset.right - endWidth - frame.titleHeight * toolCount
         : controlsX - frame.titleHeight * toolCount;
     return Object.freeze({
         compact,
+        x:inset.left,y:inset.top,height:Math.max(0,frame.titleHeight-inset.top),
         width,
         end,
         endWidth,
         titleX,
         titleWidth: Math.max(1, toolsX - titleX - 4),
         controlsX,
-        leadingControlsX: splitControls ? 4 : controlsX,
+        leadingControlsX: splitControls ? inset.left + edgeInset + (decorations.controlOrder?0:4) : controlsX,
         splitControls,
         toolsX,
     });
@@ -538,7 +576,7 @@ export function nativeTitleIconX(decorations = {}, frame = {width:1000,titleHeig
 
 export function nativeTitleIconContains(frame, x, y, decorations = {}, title = "RiceWM") {
     const iconX = nativeTitleIconX(decorations,frame,title);
-    return frame.titleHeight > 0 &&
+    return decorations.showTitleIcon !== false && frame.titleHeight > 0 &&
         x >= frame.x + iconX && x < frame.x + iconX + 26 &&
         y >= frame.y && y < frame.y + frame.titleHeight;
 }
@@ -587,7 +625,10 @@ export function nativeTitleControlLayout(
     );
     const glyphWidth=Math.min(metrics.width,decorations.glyphWidth??glyphSize);
     const glyphHeight=Math.min(metrics.height,decorations.glyphHeight??glyphSize);
-    const cellY=Math.floor((frame.titleHeight-metrics.height)/2);
+    const inset=titleInsets(frame,decorations);
+    // The classic caption occupies y=3..titleHeight-2 inside the frame bevel.
+    const classicButtonY = 3 + Math.floor((frame.titleHeight - 5 - buttonHeight) / 2);
+    const cellY=inset.top+Math.floor((frame.titleHeight-inset.top-metrics.height)/2);
     const firstX = titlebar.controlsX;
     const controlsLeading = nativeControlBoxPosition(decorations) === "Left";
     const tileCount = tiledControlCount(frame,title,decorations);
@@ -595,14 +636,13 @@ export function nativeTitleControlLayout(
     const controls = decorations.tiled
         ? (decorations.showTileControls===false || tileCount===1 ? [["close",54]] : controlsLeading ? [["close",54],...tileActions.map(id=>["tile-"+id,0])] : [...tileActions.map(id=>["tile-"+id,0]),["close",54]])
         : profile === "yellow-jacket"
-        ? [["close", 54]]
-        : titlebar.splitControls
-        ? [["minimize", 55], ["maximize", 56], ["close", 54]]
-        : controlsLeading
-        ? [["close", 54], ["minimize", 55], ["maximize", 56]]
-        : [["minimize", 55], ["maximize", 56], ["close", 54]];
+        ? [["close", 54], ...(Math.abs(titlebar.maximizeX-titlebar.controlsX) >= metrics.width
+            ? [["maximize", 56]] : [])]
+        : captionActions(decorations).map(action=>[action,{menu:0,minimize:55,maximize:56,close:54}[action]]);
     return controls.map(([action, icon], index) => {
-        const cellX = titlebar.splitControls
+        const cellX = profile === "yellow-jacket" && !decorations.tiled
+            ? action === "maximize" ? titlebar.maximizeX : titlebar.controlsX
+            : titlebar.splitControls
             ? index === 0
                 ? titlebar.leadingControlsX
                 : firstX + cellSize * (index - 1)
@@ -620,16 +660,16 @@ export function nativeTitleControlLayout(
             button: {
                 x: cellX + Math.floor((metrics.width - buttonWidth) / 2),
                 y: redmond98
-                    ? 6
-                    : Math.floor((frame.titleHeight - buttonHeight) / 2),
+                    ? classicButtonY
+                    : inset.top+Math.floor((frame.titleHeight-inset.top-buttonHeight)/2),
                 width: buttonWidth,
                 height: buttonHeight,
             },
             glyph: {
                 x: cellX + Math.floor((metrics.width - glyphWidth) / 2),
                 y: redmond98
-                    ? 6 + Math.floor((buttonHeight - glyphSize) / 2)
-                    : Math.floor((frame.titleHeight - glyphHeight) / 2),
+                    ? classicButtonY + Math.floor((buttonHeight - glyphHeight) / 2)
+                    : inset.top+Math.floor((frame.titleHeight-inset.top-glyphHeight)/2),
                 width: glyphWidth,
                 height: glyphHeight,
             },
@@ -643,7 +683,8 @@ export function nativeTitleToolLayout(
     title = "RiceWM",
     decorations = {},
 ) {
-    const cellSize = frame.titleHeight;
+    const inset=titleInsets(frame,decorations);
+    const cellSize = frame.titleHeight-inset.top;
     if (cellSize <= 0 || !Array.isArray(tools)) return [];
     const bounded = tools.slice(0, 6);
     const firstX = nativeTitlebarLayout(
@@ -655,19 +696,19 @@ export function nativeTitleToolLayout(
         label: String(tool.label || tool.action || "Action").slice(0, 64),
         cell: {
             x: firstX + cellSize * index,
-            y: 0,
+            y: inset.top,
             width: cellSize,
             height: cellSize,
         },
         button: {
             x: firstX + cellSize * index + 3,
-            y: 3,
+            y: inset.top+3,
             width: Math.max(1, cellSize - 6),
             height: Math.max(1, cellSize - 6),
         },
         glyph: {
             x: firstX + cellSize * index + Math.floor((cellSize - 12) / 2),
-            y: Math.floor((cellSize - 12) / 2),
+            y: inset.top+Math.floor((cellSize - 12) / 2),
             width: 12,
             height: 12,
         },
@@ -685,9 +726,19 @@ export function nativeTitleTool(
     return nativeTitleToolLayout(frame, tools, title, decorations).find(tool =>
         x >= frame.x + tool.cell.x &&
         x < frame.x + tool.cell.x + tool.cell.width &&
-        y >= frame.y &&
-        y < frame.y + tool.cell.height
+        y >= frame.y + tool.cell.y &&
+        y < frame.y + tool.cell.y + tool.cell.height
     ) || null;
+}
+
+// Owned choosers expose only their retained dialog pane. Its visible edges,
+// rather than the invisible carrier frame, own the resize hit regions.
+export function nativeWindowResizeFrame(window, dialog = window?.dialog) {
+    if (!window?.dialogOnly) return window?.frame;
+    if (!window.fileChooser || !dialog?.rect) return null;
+    return {...dialog.rect,
+        x: window.frame.x + nativeClientRect(window.frame).x + dialog.rect.x,
+        y: window.frame.y + window.frame.titleHeight + dialog.rect.y};
 }
 
 export function nativeResizeHandles(frame) {
@@ -695,42 +746,43 @@ export function nativeResizeHandles(frame) {
     const top = frame.y;
     const right = frame.x + frame.width;
     const bottom = frame.y + frame.height;
-    const inside = RESIZE_EDGE_INSIDE;
+    const inside = Math.max(RESIZE_EDGE_INSIDE,...(frame.clientInsets||[]));
+    const corner = Math.max(inside,Math.min(frame.resizeGripLength||0,frame.width/2,frame.height/2));
     const outside = RESIZE_EDGE_OUTSIDE;
     const band = inside + outside;
-    const middleWidth = Math.max(0, frame.width - inside * 2);
-    const middleHeight = Math.max(0, frame.height - inside * 2);
+    const middleWidth = Math.max(0, frame.width - corner * 2);
+    const middleHeight = Math.max(0, frame.height - corner * 2);
     return [
         { edges: "lt", rect: {
             x: left - outside, y: top - outside,
-            width: band, height: band,
+            width: corner+outside, height: corner+outside,
         } },
         { edges: "rt", rect: {
-            x: right - inside, y: top - outside,
-            width: band, height: band,
+            x: right - corner, y: top - outside,
+            width: corner+outside, height: corner+outside,
         } },
         { edges: "lb", rect: {
-            x: left - outside, y: bottom - inside,
-            width: band, height: band,
+            x: left - outside, y: bottom - corner,
+            width: corner+outside, height: corner+outside,
         } },
         { edges: "rb", rect: {
-            x: right - inside, y: bottom - inside,
-            width: band, height: band,
+            x: right - corner, y: bottom - corner,
+            width: corner+outside, height: corner+outside,
         } },
         { edges: "l", rect: {
-            x: left - outside, y: top + inside,
+            x: left - outside, y: top + corner,
             width: band, height: middleHeight,
         } },
         { edges: "r", rect: {
-            x: right - inside, y: top + inside,
+            x: right - inside, y: top + corner,
             width: band, height: middleHeight,
         } },
         { edges: "t", rect: {
-            x: left + inside, y: top - outside,
+            x: left + corner, y: top - outside,
             width: middleWidth, height: band,
         } },
         { edges: "b", rect: {
-            x: left + inside, y: bottom - inside,
+            x: left + corner, y: bottom - inside,
             width: middleWidth, height: band,
         } },
     ];
@@ -831,13 +883,14 @@ export function topNativeWindow(
     return windows.findLast(window =>
         !window.minimized &&
         window.ignoreMouseEvents !== true &&
+        (!window.editorRegions?.length||window.dialog||nativeWindowRegions(window).some(rect=>pointInRegion(rect,x,y))) &&
         (includeDesktop || window.role !== "desktop") &&
         ((window.dialogOnly || window.dialog?.title?.startsWith("panel:drawer-dialog:"))
             ? Boolean(window.dialog?.rect) && pointInNativeFrame({
                 ...window.dialog.rect,
-                x: window.frame.x + window.dialog.rect.x,
+                x: window.frame.x + nativeClientRect(window.frame).x + window.dialog.rect.x,
                 y: window.frame.y + window.frame.titleHeight + window.dialog.rect.y,
-            }, x, y, false) || (!window.dialogOnly && pointInNativeFrame(window.frame, x, y, includeResize && window.resizable !== false))
+            }, x, y, includeResize && window.fileChooser && window.resizable !== false) || (!window.dialogOnly && pointInNativeFrame(window.frame, x, y, includeResize && window.resizable !== false))
             : pointInNativeFrame(window.frame, x, y, includeResize && window.resizable !== false))
     ) || null;
 }
@@ -909,10 +962,11 @@ export function dragNativeWindow(
 export function applyNativeTitlebarVisibility(window) {
     if (!window?.frame || window.role === "desktop") return;
     window.frame.titleHeight = window.fullscreen || window.titlebarHidden || window.dialogOnly ? 0 : window.themeTitlebarHeight??TITLE_HEIGHT;
-    window.frame.contentHeight = Math.max(
-        0,
-        window.frame.height - window.frame.titleHeight,
-    );
+    const insets=window.frame.titleHeight ? window.themeFrameInsets : null;
+    if(insets?.some(Boolean)) window.frame.clientInsets=[...insets];
+    else delete window.frame.clientInsets;
+    if(window.frame.titleHeight&&window.themeResizeGripLength)window.frame.resizeGripLength=window.themeResizeGripLength;else delete window.frame.resizeGripLength;
+    window.frame.contentHeight=nativeClientRect(window.frame).height;
 }
 
 export function resizeNativeWindow(window, viewport, workArea = viewport, fullscreenArea = viewport) {

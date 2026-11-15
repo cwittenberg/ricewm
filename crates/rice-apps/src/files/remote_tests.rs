@@ -21,7 +21,44 @@ fn open_dialog(actor: &mut super::RiceFiles) {
             &event(menu_widget(CONNECT_SERVER), UiEvent::Activate),
             request(2),
         )
-        .expect("open WebDAV dialog");
+        .expect("open server dialog");
+}
+
+#[test]
+fn server_dialog_defaults_to_smb() {
+    use super::files_remote::{DOMAIN_FIELD, SMB, WEBDAV};
+    let (mut actor, _) = loaded_actor();
+    open_dialog(&mut actor);
+    let Message::UiPatch(patch) = actor.emit_full().unwrap() else { panic!("dialog patch") };
+    assert!(patch.patches.iter().any(|p| matches!(p, UiPatch::Create { id, text: Some(text), .. }
+        if *id == widget_id(URL_FIELD) && text == "smb://")));
+    assert!(patch.patches.iter().any(|p| matches!(p, UiPatch::Create { id, .. }
+        if *id == widget_id(DOMAIN_FIELD))));
+    for (id, selected) in [(SMB, true), (WEBDAV, false)] {
+        assert!(patch.patches.iter().any(|p| matches!(p, UiPatch::Create { id: target, state, .. }
+            if *target == widget_id(id) && (*state & rice_ui::WidgetState::ACCENT.bits() != 0) == selected)));
+    }
+}
+
+#[test]
+fn enter_anywhere_connects_like_the_button_and_does_not_repeat_while_pending() {
+    use super::files_remote::{DOMAIN_FIELD, SMB, NFS, WEBDAV, CLOUD};
+    for key_code in [36, 104] {
+        for target in [310_000, URL_FIELD, USER_FIELD, PASSWORD_FIELD, DOMAIN_FIELD, SMB, NFS, WEBDAV, CLOUD, CANCEL, CONFIRM] {
+            let (mut actor, _) = loaded_actor();
+            open_dialog(&mut actor);
+            for (id, text) in [(URL_FIELD, "smb://nas.example/Documents"), (USER_FIELD, "ada"), (PASSWORD_FIELD, "secret"), (DOMAIN_FIELD, "WORKGROUP")] {
+                actor.handle_event(&event(id, value(text)), request(3)).unwrap();
+            }
+            let mut clicked = actor.clone();
+            let expected = clicked.handle_event(&event(CONFIRM, UiEvent::Activate), request(4)).unwrap();
+            let key = UiEvent::Key { pressed: true, key_code, modifiers: 0, text: None };
+            let actual = actor.handle_event(&event(target, key.clone()), request(4)).unwrap();
+            assert_eq!(actual, expected, "Enter at {target}");
+            assert!(actual.iter().any(|m| matches!(m, Message::DataProviderRequest(_))));
+            assert!(actor.handle_event(&event(target, key), request(5)).unwrap().is_empty());
+        }
+    }
 }
 
 #[test]

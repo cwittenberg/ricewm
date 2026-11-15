@@ -1,4 +1,5 @@
 import {OFFICE_FONT_FACES} from './rice-office-font-manifest.mjs';
+import {loadOfficeFontBytes} from './rice-document-font-hydration.mjs';
 
 const documents = new WeakMap();
 export const officeFace = id => OFFICE_FONT_FACES[id];
@@ -25,11 +26,13 @@ export function ensureOfficeFonts(layout, document = globalThis.document || glob
         if (!load) {
             load = { done: false };
             loads.set(id, load);
-            const face = new Font(spec.css_family, `url(${new URL(spec.web_path, import.meta.url).href})`, {
-                weight: spec.variable_weight ? '100 900' : spec.bold ? '700' : '400',
-                style: spec.italic ? 'italic' : 'normal',
-            });
-            load.promise = face.load().then(() => { document.fonts.add(face); }).finally(() => { load.done = true; });
+            load.promise = loadOfficeFontBytes(id).then(bytes=>{
+                const face = new Font(spec.css_family, bytes, {
+                    weight: spec.variable_weight ? '100 900' : spec.bold ? '700' : '400',
+                    style: spec.italic ? 'italic' : 'normal',
+                });
+                return face.load().then(()=>document.fonts.add(face));
+            }).catch(error=>{loads.delete(id);throw error;}).finally(()=>{load.done=true;});
         }
         if (!load.done) pending.push(load.promise);
     }

@@ -1,8 +1,8 @@
-import { Button, Dialog, Label, Message, Row, TextField } from '@ricewm/app';
+import { Button, Dialog, GeometryEditor, Label, Message, Row, TextField } from '@ricewm/app';
 import { canResize } from './canvas-geometry.mjs';
 
-export function createAuthoringDialogs({root, canvas, notice, selected}) {
-    let dialog = null;
+export function createAuthoringDialogs({root, canvas, notice, selected, context = () => null}) {
+    let dialog = null, positionSession = null;
     function cropDialog() {
         const object = selected()[0];
         if (!object?.image?.canCrop || dialog) return;
@@ -28,7 +28,7 @@ export function createAuthoringDialogs({root, canvas, notice, selected}) {
         dialog.on(Message.KEY, event => { if (event.detail?.pressed && event.detail.keyCode === 9) close(); });
         root.append(dialog);
     }
-    function positionDialog() {
+    function linePositionDialog() {
         const object = selected()[0];
         if (!object?.edit?.canTransform || !object.edit.box || dialog) return;
         const fields = new Map();
@@ -52,5 +52,72 @@ export function createAuthoringDialogs({root, canvas, notice, selected}) {
         dialog.on(Message.KEY, event => { if (event.detail?.pressed && event.detail.keyCode === 9) close(); });
         root.append(dialog);
     }
-    return { crop: cropDialog, position: positionDialog };
+    function positionDialog() {
+        const targets = selected(), object = targets[0];
+        if (targets.length !== 1 || !object?.edit?.canTransform || !object.edit.box || dialog) return;
+        if (object.geometry === 'line') return linePositionDialog();
+        const original = { ...object.edit.box, rotation: object.edit.rotationDegrees || 0 };
+        const scope = JSON.stringify(context());
+        const session = { id: object.id, scope, pending: false };
+        const close = () => {
+            if (positionSession !== session) return;
+            root.remove(session.dialog, { destroy: true }); dialog = null; positionSession = null;
+        };
+        const current = () => {
+            const objects = selected();
+            if (JSON.stringify(context()) !== scope || objects.length !== 1 || objects[0].id !== object.id)
+                throw Error('Selection changed. Reopen Size and Position.');
+            const next = { ...objects[0].edit?.box, rotation: objects[0].edit?.rotationDegrees || 0 };
+            if (Object.keys(original).some(key => next[key] !== original[key]))
+                throw Error('Object geometry changed. Reopen Size and Position before applying this draft.');
+        };
+        const editor = new GeometryEditor({ name: 'object-geometry',
+            value: { ...Object.fromEntries(['x', 'y', 'width', 'height'].map(key => [key, original[key] / 96])), rotation: original.rotation },
+            unit: 'in', allowResize: canResize(object), allowRotation: Boolean(object.edit.canRotate),
+            originLabel: 'From the top-left corner of the slide',
+            onCommit: async ({ value, changed }) => {
+                current();
+                const values = Object.fromEntries(changed.map(key => [key, key === 'rotation' ? value[key] : value[key] * 96]));
+                if (!await canvas.setProperties({ ids: [object.id], values })) throw Error('The editor is busy. Try again.');
+                return true;
+            },
+        });
+        const apply = new Button({ name: 'apply-object-position', text: 'OK', accent: true });
+        const cancel = new Button({ name: 'cancel-object-position', text: 'Cancel' });
+        cancel.on(Message.ACTIVATE, () => { if (!session.pending) close(); });
+        const applyDraft = async () => {
+            if (positionSession !== session || session.pending) return false;
+            session.pending = true; apply.enabled = false; cancel.enabled = false;
+            try {
+                const accepted = await editor.commit();
+                if (accepted) close();
+                return accepted;
+            } finally {
+                session.pending = false;
+                if (positionSession === session) { apply.enabled = true; cancel.enabled = true; }
+            }
+        };
+        apply.on(Message.ACTIVATE, applyDraft);
+        dialog = new Dialog({ name: 'object-position-dialog', text: 'Size and Position', modal: true }, [
+            editor, new Row({ text: 'panel:actions' }, [cancel, apply]),
+        ]);
+        Object.assign(session, { dialog, editor }); positionSession = session;
+        dialog.on(Message.KEY, event => {
+            if (event.detail?.pressed === false) return;
+            if (event.detail?.key === 'Escape' || event.detail?.keyCode === 9) {
+                event.preventDefault(); event.stopPropagation(); if (!session.pending) close();
+            } else if (event.detail?.key === 'Enter' || event.detail?.keyCode === 36) {
+                event.preventDefault(); event.stopPropagation(); return applyDraft();
+            }
+        });
+        root.append(dialog);
+    }
+    return { crop: cropDialog, position: positionDialog, update() {
+        const session = positionSession;
+        if (!session) return;
+        const objects = selected();
+        if (JSON.stringify(context()) !== session.scope || objects.length !== 1 || objects[0].id !== session.id) {
+            root.remove(session.dialog, { destroy: true }); dialog = null; positionSession = null;
+        }
+    } };
 }

@@ -1,3 +1,14 @@
+import {RiceSceneGpuPool} from './rice-scene-gpu-pool.mjs';
+import {RiceGameScenes} from './rice-game-scenes.mjs';
+import {nativeClientRect} from './rice-native-window-stack.mjs';
+import {GNOME_QUICK_SETTINGS_FRAME_PREFIX,readGnomeQuickSettingsFrames} from './gnome-extension-host/rice-gnome-quick-settings.mjs';
+import {readRiceGnomeOverlayFrames} from './gnome-extension-host/rice-gnome-overlay-frames.mjs';
+import {readRiceGnomePanelFrames} from './gnome-extension-host/rice-gnome-panel-frames.mjs';
+import {RiceNativeAccessibility} from './rice-native-accessibility.mjs';
+import {RiceWindowEffectRenderer} from './rice-window-effect-renderer.mjs';
+import {RiceNativeWindowShadow} from './rice-native-window-shadow.mjs';
+import {glassVisibleRegions} from './rice-glass-visible-regions.mjs';
+import {windowEffectStyle,windowEffectsOutset,windowEffectMotionOff,windowEffectAnimated} from './rice-window-effects.mjs';
 import {RiceThemeSkinRenderer} from './rice-theme-skin-renderer.mjs';
 import {desktopThemeFont} from './rice-theme-customization.mjs';
 import {themeColor} from "./rice-theme-customization.mjs";
@@ -64,6 +75,14 @@ export {
     riceNativeCommandIntersectsDamage,
     riceNativeSnapshotDamage,
 };
+// Bowl's validated non-erasing paint cannot punch a hole in an opaque native
+// Paper body. Ignore that safe leaf when asking the shared geometry contract
+// whether an animated image in a lower window is completely covered.
+export function riceNativeCompositedOpaqueInterior(native){
+    if(native?.entrypoint!=='rice-paper')return riceNativeOpaqueInterior(native);
+    return riceNativeOpaqueInterior({...native,commands:native.commands?.filter(command=>
+        !(command.type==='web-scene'&&command.nativeBowlDocument?.preservesCanvasOpacity===true))});
+}
 const MAX_NATIVE_COMMANDS = 65_536;
 const DECORATION_ASSET_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*\.png$/;
 const DECORATION_ASSET_BASE = new URL("./assets/themes/decorations/", import.meta.url);
@@ -165,6 +184,7 @@ const FILE_MIME_BY_EXTENSION = new Map(Object.entries({
     xls: "application/vnd.ms-excel",
     xlsx: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ods: "application/vnd.oasis.opendocument.spreadsheet",
+    vsdx: "application/vnd.ms-visio.drawing",
     pem: "application/x-pem-file", key: "application/x-pem-file",
     p12: "application/pkcs12", pfx: "application/pkcs12",
     gpg: "application/pgp-keys", asc: "application/pgp-keys",
@@ -209,6 +229,7 @@ const FILE_ICON_BY_EXTENSION = new Map(Object.entries({
     wmv: "video", asf: "video", avi: "video", mpeg: "video",
     mpg: "video", m2ts: "video",
     xls: "xls", xlsx: "xls", ods: "xls", yaml: "yaml", yml: "yaml",
+    vsdx: "vsdx",
     svg: "image", png: "image", jpg: "image", jpeg: "image",
     gif: "image", webp: "image", bmp: "image", avif: "image",
 }));
@@ -381,6 +402,40 @@ export function appendWindowSilhouette(context, frame, chrome, titlebar) {
         Math.max(0, frame.height - frame.titleHeight),
     );
 }
+// Paper retains only the visible source pixels. Unchanged desktop refreshes
+// must not reshape the complete source again. Input and source ownership stay
+// with the original native editor; every changed command invalidates this image.
+export class RicePaperSourcePaintCache {
+    constructor(){this.entries=new Map();this.bytes=0;this.hits=0;this.misses=0;this.enabled=true;}
+    clear(){for(const entry of this.entries.values())entry.canvas.width=entry.canvas.height=0;this.entries.clear();this.bytes=0;}
+    retain(owners){for(const [key,entry] of this.entries)if(!owners.has(entry.owner)){this.entries.delete(key);this.bytes-=entry.bytes;entry.canvas.width=entry.canvas.height=0;}}
+    paint(renderer,draw,command,chrome){
+        const target=renderer.context,v=command.paperSource?.viewport,owner=command.paperSource?.owner,t=target.getTransform?.(),document=target.canvas?.ownerDocument||globalThis.document;
+        if(!this.enabled||!v||!t||t.b||t.c||t.a<=0||t.d<=0||target.globalAlpha!==1||target.globalCompositeOperation!=='source-over'||target.shadowBlur||target.shadowOffsetX||target.shadowOffsetY||target.filter&&target.filter!=='none'||renderer.fontWork||renderer.officeFontWork?.size||!document||!target.canvas.ownerDocument&&typeof OffscreenCanvas!=='function')return draw(command,chrome);
+        const x=Math.floor(t.e+v.x*t.a),y=Math.floor(t.f+v.y*t.d),width=Math.ceil(t.e+(v.x+v.width)*t.a)-x,height=Math.ceil(t.f+(v.y+v.height)*t.d)-y,bytes=width*height*4;
+        if(width<=0||height<=0||bytes>8*1024*1024)return draw(command,chrome);
+        const attributes=target.getContextAttributes?.()||{};if(attributes.alpha===false)return draw(command,chrome);
+        const properties=['textAlign','textBaseline','direction','lang','fontKerning','fontStretch','fontVariantCaps','letterSpacing','wordSpacing','textRendering','lineWidth','lineCap','lineJoin','miterLimit'];
+        const direction=target.direction==='inherit'&&target.canvas.ownerDocument?document.defaultView.getComputedStyle(target.canvas).direction:target.direction;
+        const style=properties.map(name=>name==='direction'?direction:target[name]);
+        const key=JSON.stringify([command,chrome,t.a,t.d,t.e+v.x*t.a-x,t.f+v.y*t.d-y,width,height,style,attributes,document.fonts?.size,!!target.canvas.ownerDocument],(_key,value)=>typeof value==='bigint'?String(value):value);
+        let entry=this.entries.get(key);
+        if(entry){this.entries.delete(key);this.entries.set(key,entry);this.hits++;}
+        else{
+            this.misses++;const canvas=target.canvas.ownerDocument?document.createElement('canvas'):new OffscreenCanvas(width,height);canvas.width=width;canvas.height=height;const context=canvas.getContext('2d',attributes);
+            for(const name of ['font','fillStyle','strokeStyle',...properties])if(name in target)context[name]=name==='direction'?direction:target[name];
+            context.setTransform(t.a,0,0,t.d,t.e-x,t.f-y);context.beginPath();context.rect(v.x,v.y,v.width,v.height);context.clip();
+            renderer.context=context;try{draw(command,chrome);}finally{renderer.context=target;}
+            entry={owner,canvas,bytes};
+            if(!renderer.fontWork&&!renderer.officeFontWork?.size){
+                while(this.entries.size&&(this.bytes+bytes>8*1024*1024||this.entries.size>=8)){const [oldKey,old]=this.entries.entries().next().value;this.entries.delete(oldKey);this.bytes-=old.bytes;old.canvas.width=old.canvas.height=0;}
+                this.entries.set(key,entry);this.bytes+=bytes;
+            }
+        }
+        target.save();try{target.setTransform(1,0,0,1,0,0);target.drawImage(entry.canvas,x,y);}finally{target.restore();}
+    }
+}
+
 export class RiceNativeCanvasWindow {
     constructor(
         context,
@@ -396,9 +451,11 @@ export class RiceNativeCanvasWindow {
             decorationImageFactory,
             fonts = globalThis.document?.fonts,
             hostSurface = () => null,
+            onAccessibilityAction = null,
         } = {},
     ) {
         this.context = context;
+        this.accessibility = new RiceNativeAccessibility({document:context.canvas?.ownerDocument,canvas:context.canvas,onAction:onAccessibilityAction,onError:onFault});
         this.sceneLocale = new RiceNativeSceneLocale(context.canvas?.ownerDocument, onFault);
         this.onDamage = onDamage;
         void this.sceneLocale.prepare({locale:riceLocale()}).then(onDamage).catch(onFault);
@@ -417,10 +474,25 @@ export class RiceNativeCanvasWindow {
         this.snapPreview = null;
         this.layoutPreview = null;
         this.mediaSurface = mediaSurface;
-        this.hostSurface = typeof hostSurface === "function" ? hostSurface : () => null;
+        this.gnomeQuickSettingsFrames=new Map();
+        this.gnomePanelSurfaces=new Map();
+        this.gnomeOverlaySurfaces=new Map();
+        this.gnomeKeyboardGrabbed=false;
+        this.hostSurface = (identity,app)=>{
+            if(String(identity).startsWith(GNOME_QUICK_SETTINGS_FRAME_PREFIX)){
+                const owned=this.gnomeQuickSettingsFrames.get(identity);
+                return owned?.app===String(app)?owned.surface:null;
+            }
+            return typeof hostSurface==='function'?hostSurface(identity,app):null;
+        };
         this.wallpaper = new RiceNativeWallpaper(context,()=>this.onDamage());
         this.iconRenderer = new RiceNativeIconRenderer(context, onDamage, { monochrome: true });
         this.editorRenderer = new RiceNativeEditorRenderer(context, onDamage, onFault);
+        this.paperSourcePaintCache=new RicePaperSourcePaintCache();
+        const drawEditor=this.editorRenderer.render.bind(this.editorRenderer);
+        this.editorRenderer.render=(command,chrome)=>command.paperSource?this.paperSourcePaintCache.paint(this.editorRenderer,drawEditor,command,chrome):drawEditor(command,chrome);
+        this.paperSourceFontChanged=()=>this.paperSourcePaintCache.clear();
+        context.canvas?.ownerDocument?.fonts?.addEventListener('loadingdone',this.paperSourceFontChanged);
         this.frostedIceMaterial = new FrostedIceMaterial({
             ...(typeof canvasFactory === "function" ? { canvasFactory } : {}),
             onStatus: onVisualEffectStatus,
@@ -447,6 +519,7 @@ export class RiceNativeCanvasWindow {
         this.windowBodyAlpha = 1;
         this.cpuWorkByApp = new Map();
         this.structuralBackdrop = null;
+        this.structuralBackdropSource = null;
         this.decorationImages = new Map();
         this.decorationImageFactory = typeof decorationImageFactory === "function"
             ? decorationImageFactory
@@ -457,18 +530,24 @@ export class RiceNativeCanvasWindow {
                 image.src = source;
                 return image;
             };
+        this.sceneGpuPool=new RiceSceneGpuPool();
+        this.gameScenes=new RiceGameScenes({allScenes:true,open:this.sceneGpuPool.open,onDamage:owner=>{
+            const native=this.snapshots.find(window=>String(window.app)===owner);
+            if(native?.frame)this.onDamage([native.frame]);
+        }});
         this.commandRenderer = new RiceNativeCommandRenderer(context, {
             editor: this.editorRenderer,
             icons: this.iconRenderer,
-            renderWebScene: scene => renderRiceWebScene(this.context, scene, mediaSurface),
+            renderWebScene: scene => this.gameScenes.render(this.context, scene, mediaSurface),
             mediaSurface,
-            hostSurface: identity => this.hostSurface(identity),
+            hostSurface: (identity,app) => this.hostSurface(identity,app),
             mediaStatus,
             onDamage,
             glassMaterial: this.frostedIceMaterial,
         });
     }
     setVisualEffectAccelerationMode(mode) {
+        this.gameScenes.setAccelerationMode(mode);
         this.frostedIceMaterial.setAccelerationMode(mode);
         this.onDamage();
     }
@@ -698,7 +777,7 @@ export class RiceNativeCanvasWindow {
                 icon: command.namedIcon,
                 glyph,
                 rect: {
-                    x: native.frame.x + rect.x,
+                    x: native.frame.x + nativeClientRect(native.frame).x + rect.x,
                     y: native.frame.y + rect.y,
                     width: rect.width,
                     height: rect.height,
@@ -827,9 +906,16 @@ export class RiceNativeCanvasWindow {
     }
 
     apply(snapshot) {
+        this.gameScenes.reconcile(snapshot);
+        this.accessibility.update(snapshot);
         this.commandRenderer.terminalTheme = snapshot?.shell?.terminalTheme || null;
         if (snapshot === null) {
-            const damage = this.snapshots.map(frameRect).filter(Boolean);
+            this.paperSourcePaintCache.clear();
+            this.gnomeQuickSettingsFrames.clear();
+            this.gnomePanelSurfaces.clear();
+            this.gnomeOverlaySurfaces.clear();
+            this.gnomeKeyboardGrabbed=false;
+            const damage = riceNativeSnapshotDamage(this.snapshots, []);
             if (this.identifyingDisplays) damage.push(...(this.outputRects || []));
             this.identifyingDisplays = false;
             this.snapshots = [];
@@ -845,19 +931,27 @@ export class RiceNativeCanvasWindow {
             this.iconRenderer.setThemeHoverColor(null);
             this.iconRenderer.setThemeHoverBackground(null);
             this.iconRenderer.setThemeIcons("monochrome");
+            this.iconRenderer.setInstalledAppIcons({});this.packageIconLabels=new Map();
             this.onDamage(damage);
             return;
         }
+        this.iconRenderer.setInstalledAppIcons(snapshot?.packageIconArtwork||{},snapshot?.packageIconRevision);
+        this.packageIconLabels=new Map(Object.entries(snapshot?.packageIconLabels||{}).slice(0,128).filter(([label,id])=>label.length<=255&&this.iconRenderer.installedAppIcons?.has('app:'+id)));
         const previous = new Map(this.snapshots.map(native => [native.app, native]));
         const previousLiveApps = this.liveApps;
         this.liveApps = Array.isArray(snapshot.liveApps) ? new Set(snapshot.liveApps.map(String)) : null;
         const snapshots = Array.isArray(snapshot?.windows)
             ? snapshot.windows
             : [snapshot];
-        if (snapshots.length < 1 || snapshots.length > 128) {
+        if (snapshots.length > 128 || snapshots.length < 1 && !Array.isArray(snapshot.gnomePanelSurfaces)) {
             throw new RangeError("native UI window stack is out of bounds");
         }
         for (const native of snapshots) this.#validate(native);
+        const previousQuickSettingsFrames=this.gnomeQuickSettingsFrames;
+        this.gnomePanelSurfaces=readRiceGnomePanelFrames(snapshot.gnomePanelSurfaces||[],this.gnomePanelSurfaces);
+        this.gnomeOverlaySurfaces=readRiceGnomeOverlayFrames(snapshot.gnomeOverlaySurfaces||[],this.gnomeOverlaySurfaces);
+        this.gnomeKeyboardGrabbed=snapshot.gnomeKeyboardGrabbed===true;
+        this.gnomeQuickSettingsFrames=readGnomeQuickSettingsFrames(snapshot.gnomeQuickSettingsFrames||[],this.liveApps,previousQuickSettingsFrames);
         this.commandRenderer.terminalTheme = snapshots.at(-1)?.shell?.terminalTheme || null;
         this.iconRenderer.setThemeColor(
             snapshots.findLast(native => Array.isArray(native.chrome?.icon))
@@ -973,6 +1067,10 @@ export class RiceNativeCanvasWindow {
             }
         }
         const damage = riceNativeSnapshotDamage(this.snapshots, snapshots);
+        for(const native of snapshots){
+            if(native.commands.some(command=>command.type==='host-portal'&&
+                previousQuickSettingsFrames.get(command.identity)?.surface!==this.gnomeQuickSettingsFrames.get(command.identity)?.surface)&&native.frame)damage.push(native.frame);
+        }
         const previousDrop=paddyDropOverlayRect(this.snapshots,this.dragVisual);
         const nextDrag=validDragVisual(snapshot.dragVisual);
         const nextDrop=paddyDropOverlayRect(snapshots,nextDrag);
@@ -992,11 +1090,12 @@ export class RiceNativeCanvasWindow {
         this.identifyingDisplays = identifying;
         this.snapshots = snapshots.slice();
         const liveApps = new Set(snapshots.map(native => String(native.app)));
+        this.paperSourcePaintCache.retain(liveApps);
         for (const app of this.cpuWorkByApp.keys()) if (!liveApps.has(app)) this.cpuWorkByApp.delete(app);
         this.activeApp = snapshot.activeApp === undefined
-            ? snapshots.at(-1).app
+            ? snapshots.at(-1)?.app ?? null
             : String(snapshot.activeApp);
-        this.foregroundActive = snapshot.foregroundActive !== false;
+        this.foregroundActive = snapshots.length>0 && snapshot.foregroundActive !== false;
         this.dragVisual = nextDrag;
         this.snapPreview = snapPreview;
         this.onDamage(damage);
@@ -1068,7 +1167,7 @@ export class RiceNativeCanvasWindow {
         }
         for (const native of this.closingPopups.values()) {
             const popup = native.popup?.rect;
-            if (popup) damage.push(expandedRect({x:native.frame.x+popup.x, y:native.frame.y+(native.role==='desktop'?0:native.frame.titleHeight)+popup.y, width:popup.width, height:popup.height},16));
+            if (popup) damage.push(expandedRect({x:native.frame.x+nativeClientRect(native.frame).x+popup.x, y:native.frame.y+(native.role==='desktop'?0:native.frame.titleHeight)+popup.y, width:popup.width, height:popup.height},16));
         }
         return damage.filter(Boolean);
     }
@@ -1118,6 +1217,7 @@ export class RiceNativeCanvasWindow {
             ...windows.slice(0, prefixLength),
         ];
         const staticCommands = retainedWindows.every(native => !native.popup && !native.dialog &&
+            (windowEffectMotionOff(native.shell)||!windowEffectAnimated(windowEffectStyle(native.chrome,native.active!==false))) &&
             (native.commands || []).every(command =>
                 !["image", "media", "inline-image", "web-scene", "host-portal", "terminal-portal", "spinner", "activity"].includes(command.type) && !command.animated && !command.row?.image));
         const reusable = prefixLength > 0 && root.width * root.height <= 4_194_304 &&
@@ -1269,7 +1369,7 @@ export class RiceNativeCanvasWindow {
                 // Replay the same full window as every native preview, then
                 // fill its portal with the renderer-owned content pixels.
                 targetContext.drawImage(hostSurface,
-                    frame.x + hostPortal.rect.x,
+                    frame.x + nativeClientRect(frame).x + hostPortal.rect.x,
                     frame.y + frame.titleHeight + hostPortal.rect.y,
                     hostPortal.rect.width, hostPortal.rect.height);
             }
@@ -1296,6 +1396,12 @@ export class RiceNativeCanvasWindow {
         return true;
     }
     dispose() {
+        this.context.canvas?.ownerDocument?.fonts?.removeEventListener('loadingdone',this.paperSourceFontChanged);
+        this.paperSourcePaintCache.clear();
+        this.gameScenes.close();
+        this.accessibility.dispose();
+        this.windowEffectRenderer?.clear();
+        this.windowShadow?.clear();
         this.terminalPreviewReplays.clear();
         releaseRiceWebSceneTextures(this.context);
         this.commandRenderer.releaseInlineImages?.();
@@ -1319,6 +1425,7 @@ export class RiceNativeCanvasWindow {
         this.desktopLaunchAnimations.clear();
         this.desktopHoveredIcon = null;
         this.structuralBackdrop = null;
+        this.structuralBackdropSource = null;
     }
     renderOverlays(root) {
         this.#renderDisplayNumbers();
@@ -1366,7 +1473,7 @@ export class RiceNativeCanvasWindow {
             const motion = menuMotion(native, progress, closing);
             const offsetY = native.role === "desktop" ? 0 : frame.titleHeight;
             const globalPopup = popup ? {
-                x: frame.x + popup.x,
+                x: frame.x + nativeClientRect(frame).x + popup.x,
                 y: frame.y + offsetY + popup.y,
                 width: popup.width,
                 height: popup.height,
@@ -1395,7 +1502,7 @@ export class RiceNativeCanvasWindow {
                 if (!native.shell?.frostedIce?.enabled ||
                     !native.shell?.frostedIce?.menus || popupHasOwnGlass) continue;
                 const globalPane = {
-                    x: frame.x + pane.x,
+                    x: frame.x + nativeClientRect(frame).x + pane.x,
                     y: frame.y + offsetY + pane.y,
                     width: pane.width,
                     height: pane.height,
@@ -1444,7 +1551,7 @@ export class RiceNativeCanvasWindow {
                 this.context.beginPath();
                 this.context.rect(0, 0, root.width, root.height);
                 this.context.clip();
-                this.context.translate(frame.x, frame.y + offsetY);
+                this.context.translate(frame.x + nativeClientRect(frame).x, frame.y + offsetY);
                 if (popup && progress < 1) {
                     const originX = popup.x + popup.width / 2;
                     const originY = popup.y;
@@ -1483,7 +1590,7 @@ export class RiceNativeCanvasWindow {
                             : command
                     )
                     : native.popupCommands;
-                this.#renderSurfaceCommands(native, popupCommands, null, popup);
+                this.#renderSurfaceCommands(native, popupCommands, native.chrome || derivedChrome(native), popup);
                 if (matrixPopup) {
                     const capture=matrixPopup.source.getContext('2d');
                     capture.clearRect(0,0,popup.width+4,popup.height+4);
@@ -1747,7 +1854,7 @@ export class RiceNativeCanvasWindow {
             !Array.isArray(snapshot.commands) ||
             snapshot.commands.length > MAX_NATIVE_COMMANDS ||
             !snapshot.frame ||
-            snapshot.width !== snapshot.frame.width ||
+            snapshot.width !== nativeClientRect(snapshot.frame).width ||
             snapshot.height !== snapshot.frame.contentHeight
         ) {
             throw new TypeError("invalid native UI snapshot");
@@ -1767,6 +1874,7 @@ export class RiceNativeCanvasWindow {
         }
     }
     #captureStructuralBackdrop(native, chrome = null) {
+        this.structuralBackdropSource = null;
         if (
             chrome?.glassTitlebar !== true &&
             !native.commands?.some(command =>
@@ -1775,32 +1883,63 @@ export class RiceNativeCanvasWindow {
         ) return null;
         const source = this.context?.canvas;
         if (!source || source.width < 1 || source.height < 1) return null;
+        // Structural sheets only read this window and the 24px blur bleed.
+        // Copying the entire desktop here also forces unrelated windows into
+        // every adaptive-ink readback.
+        const transform = this.context.getTransform?.();
+        const crop = !this.paintOrigin && transform?.a === 1 && transform.d === 1 &&
+            transform.b === 0 && transform.c === 0 && transform.e === 0 && transform.f === 0 &&
+            native.frame.x < source.width && native.frame.y < source.height &&
+            native.frame.x + native.frame.width > 0 && native.frame.y + native.frame.height > 0 &&
+            !native.commands.some(command => (command.structural || command.type === 'text' || command.type === 'icon') && command.rect &&
+                (command.rect.x < 0 || command.rect.y < 0 ||
+                 command.rect.x + command.rect.width > native.width ||
+                 command.rect.y + command.rect.height > native.height));
+        const x = crop ? Math.max(0, native.frame.x - 24) : 0;
+        const y = crop ? Math.max(0, native.frame.y - 24) : 0;
+        const width = crop ? Math.min(source.width, native.frame.x + native.frame.width + 24) - x : source.width;
+        const height = crop ? Math.min(source.height, native.frame.y + native.frame.height + 24) - y : source.height;
         if (!this.structuralBackdrop) {
             this.structuralBackdrop = this.frostedIceMaterial.canvasFactory(
-                source.width,
-                source.height,
+                width,
+                height,
             );
         } else if (
-            this.structuralBackdrop.width !== source.width ||
-            this.structuralBackdrop.height !== source.height
+            this.structuralBackdrop.width !== width ||
+            this.structuralBackdrop.height !== height
         ) {
-            resizeCanvasBackingStore(this.structuralBackdrop, source.width, source.height);
+            resizeCanvasBackingStore(this.structuralBackdrop, width, height);
         }
         const target = this.structuralBackdrop?.getContext?.("2d", {
             alpha: true,
         });
         if (!target?.drawImage) return null;
         target.setTransform?.(1, 0, 0, 1, 0, 0);
-        target.clearRect?.(0, 0, source.width, source.height);
-        target.drawImage(source, 0, 0);
-        return this.structuralBackdrop;
+        target.clearRect?.(0, 0, width, height);
+        target.drawImage(source, x, y, width, height, 0, 0, width, height);
+        this.structuralBackdropSource = {
+            surface: this.structuralBackdrop, x, y, width: source.width, height: source.height,
+        };
+        return this.structuralBackdropSource;
     }
+    /** Managed guest frames reuse the native painter; the guest still owns its client. */
+    renderManagedChrome(window,client,title,state={}) {
+        const chrome=this.snapshot?.chrome;
+        if(!chrome?.windowDecorations?.frameInsets)return false;
+        const frame={x:0,y:0,width:window.width,height:window.height,titleHeight:client.y,contentHeight:client.height,
+            clientInsets:[chrome.windowDecorations.frameInsets[0],window.width-client.x-client.width,window.height-client.y-client.height,client.x]};
+        const native={app:`x11:${window.id}`,window:String(window.id),role:'window',title,entrypoint:'guest',frame,width:client.width,height:client.height,commands:[],chrome,
+            shell:{...this.snapshot.shell,activeWindowShadow:false},active:window.activeWindow===true,maximized:window.maximizedWindow===true,hoveredControl:state.hoveredControl,pressedControl:state.pressedControl};
+        this.#renderWindow(native,{width:window.width,height:window.height,preview:true});return true;
+    }
+
     #renderWindow(native, root) {
         const frame = native.frame;
         const visible=this.layoutPaintFrame||frame;
+        const visualOutset=Math.max(32,windowEffectsOutset(native.chrome));
         if (!root.preview && (
-            visible.x >= root.width + 32 || visible.x + visible.width < -32 ||
-            visible.y >= root.height + 32 || visible.y + visible.height < -32 ||
+            visible.x >= root.width + visualOutset || visible.x + visible.width < -visualOutset ||
+            visible.y >= root.height + visualOutset || visible.y + visible.height < -visualOutset ||
             frame.width === 0 || frame.height === 0
         )) {
             return;
@@ -1825,7 +1964,10 @@ export class RiceNativeCanvasWindow {
                             ? this.mediaSurface(wallpaperCommand.request)
                             : null),
             };
-            const wallpaperRects = this.outputRects?.length ? this.outputRects : [this.snapshot?.shell?.dockStyle === "Compact dock" ? {
+            const shell = this.snapshot?.shell;
+            // Work-area reservation belongs to icons/windows, not wallpaper.
+            // Paint the underlay through every edge of a translucent taskbar.
+            const wallpaperRects = this.outputRects?.length ? this.outputRects : [shell?.dockStyle === "Compact dock" || shell?.dockTranslucent && !shell.highContrast ? {
                 x: 0, y: 0, width: root.width, height: root.height,
             } : {
                 x: frame.x,
@@ -1858,6 +2000,24 @@ export class RiceNativeCanvasWindow {
             return;
         }
         const chrome = native.chrome || derivedChrome(native);
+        // The fixed browser client owns every skinned pixel, including region.txt
+        // transparency. Native body fills, shadows and chrome would show through.
+        if(native.editorRegions?.length && frame.titleHeight===0 && !native.dialog)return;
+        if(native.actorPopup){
+            // A shell popup already owns its background, border and rounded
+            // alpha in its St raster. Ordinary application chrome would paint
+            // a second rectangular frame through those transparent corners.
+            const portal=native.commands.find(command=>command.type==='host-portal');
+            if(!portal)return;
+            context.save();
+            try{
+                context.beginPath();context.rect(frame.x,frame.y,frame.width,frame.height);context.clip();
+                context.translate(frame.x,frame.y);
+                this.commandRenderer.render(native.commands.filter(command=>command.type==='host-portal'||
+                    command.rect&&command.rect.x>=portal.rect.x+portal.rect.width),chrome);
+            }finally{context.restore();}
+            return;
+        }
         if(root.preview&&root.paper&&!native.dialogOnly){
             context.save();
             try{
@@ -1912,7 +2072,7 @@ export class RiceNativeCanvasWindow {
             chrome.windowDecorations,
         );
         const glassTitlebar = chrome.glassTitlebar === true && structuralSource;
-        if (chrome.redmond98 && !this.classicFontsRequested) {
+        if ((chrome.redmond98||['classic','tahoma'].includes(chrome.typography?.titleFamily)||['classic','tahoma'].includes(chrome.typography?.family)) && !this.classicFontsRequested) {
             this.classicFontsRequested = true;
             ensureClassicUiFonts()?.then(() => this.onDamage()).catch(() => {});
         }
@@ -1957,7 +2117,7 @@ export class RiceNativeCanvasWindow {
                 ),
             }
             : titleChrome;
-        this.#renderFrostedIceBackdrop(frame, chrome, root, titlebar);
+        this.#renderFrostedIceBackdrop(frame, chrome, root, titlebar, native);
         this.#renderActiveWindowShadow(native, frame, chrome, root, titlebar);
         this.#captureTerminalBackdrops(native, frame, chrome);
         context.save();
@@ -1993,6 +2153,8 @@ export class RiceNativeCanvasWindow {
             context.fill();
             context.restore();
         }
+        this.windowSkinRenderer ||= new RiceThemeSkinRenderer(()=>this.onDamage());
+        const furnitureState=native.active===false?'normal':'selected';
         if (glassTitlebar) {
             paintStructuralGlass(
                 context,
@@ -2110,8 +2272,15 @@ export class RiceNativeCanvasWindow {
             context.fillRect(0, frame.titleHeight - 1, titlebar.width, 1);
         }
         this.#renderDecorationAtlas(chrome, frame, titlebar, "title");
-        this.windowSkinRenderer ||= new RiceThemeSkinRenderer(()=>this.onDamage());
-        this.windowSkinRenderer.paint(context,{x:0,y:0,width:frame.width,height:frame.titleHeight},chrome,'window',native.active===false?'normal':'selected');
+        this.windowSkinRenderer.paint(context,{x:0,y:0,width:frame.width,height:frame.titleHeight},chrome,'window',furnitureState);
+        const [ft,fr,fb,fl]=frame.clientInsets||[0,0,0,0];
+        context.save();context.beginPath();
+        context.rect(0,0,frame.width,ft);context.rect(0,0,fl,frame.height);context.rect(frame.width-fr,0,fr,frame.height);context.rect(0,frame.height-fb,frame.width,fb);context.clip();
+        this.windowSkinRenderer.paint(context,{x:0,y:0,width:frame.width,height:frame.height},chrome,'windowFrame',furnitureState);context.restore();
+        const titleRect={x:titlebar.x,y:titlebar.y,width:Math.max(0,titlebar.width-titlebar.x-(chrome.windowDecorations?.frameInsets?.[1]??0)),height:titlebar.height};
+        this.windowSkinRenderer.paint(context,titleRect,chrome,'windowTitle',furnitureState);
+        const client=nativeClientRect(frame),recess=chrome.windowDecorations?.clientRecess??0;
+        this.windowSkinRenderer.paint(context,{x:client.x-recess,y:client.y-recess,width:client.width+2*recess,height:client.height+2*recess},chrome,'windowClient',furnitureState);
         context.fillStyle = rgbaColor(
             chrome.chromeProfile === "command-deck"
                 ? chrome.pressed
@@ -2130,14 +2299,14 @@ export class RiceNativeCanvasWindow {
         context.textBaseline = "middle";
         const titleInset = native.shell?.surface?.frame === 'bracket' ? native.shell.surface.inset ?? 5 : 0;
         if(chrome.typography&&Object.keys(chrome.typography).length)context.font=desktopThemeFont(chrome.typography,'title');
-        const titleCenterY = (titleInset + frame.titleHeight) / 2;
+        const titleCenterY = (Math.max(titleInset,titlebar.y) + frame.titleHeight) / 2;
         const titleIconSize = chrome.redmond98 ? 16 : Math.max(12, Math.min(18, frame.titleHeight - titleInset - 8));
         const titleIconX = nativeTitleIconX(chrome.windowDecorations,frame,native.title);
         const titleIconY = Math.round(titleCenterY - titleIconSize / 2);
         // The application glyph is a functional window-menu target as well
         // as decoration. Yellow Jacket previously reserved this space but
         // deliberately skipped the draw, leaving a conspicuous blank square.
-        this.iconRenderer.renderNamed({
+        if(chrome.windowDecorations?.showTitleIcon!==false)this.iconRenderer.renderNamed({
             type: "icon",
             applicationId:native.riceAppId||native.applicationId,
             icon: native.iconName || nativeEntrypointIconName(
@@ -2195,18 +2364,26 @@ export class RiceNativeCanvasWindow {
                 context.fillText('⌁ '+label,titlebar.titleX,titleCenterY,Math.max(1,titlebar.titleWidth-reserve));
                 if(reserve){context.fillStyle=native.shell.surface.edge;context.textAlign='right';context.fillText(tag,titlebar.titleX+titlebar.titleWidth-8,titleCenterY);}
                 context.restore();
-            } else context.fillText(String(native.title || 'RiceWM'),titlebar.titleX,titleCenterY,Math.max(1,titlebar.titleWidth));
+            } else {
+                context.save();context.beginPath();context.rect(titlebar.titleX,titlebar.y,titlebar.titleWidth,titlebar.height);context.clip();
+                const alignment=chrome.windowDecorations?.titleAlignment??'left';
+                context.textAlign=alignment;
+                const titleStyle=this.windowSkinRenderer.style(chrome,'windowTitle',furnitureState);
+                if(titleStyle.foreground)context.fillStyle=rgbaColor(themeColor(titleStyle.foreground,titleChrome.text));
+                const textX=alignment==='center'?Math.max(titlebar.titleX,Math.min(frame.width/2,titlebar.titleX+titlebar.titleWidth)):alignment==='right'?titlebar.titleX+titlebar.titleWidth:titlebar.titleX;
+                context.fillText(String(native.title||'RiceWM'),textX,titleCenterY,Math.max(1,titlebar.titleWidth));context.restore();
+            }
         }
         context.save();
         context.beginPath();
         context.rect(
-            0,
+            nativeClientRect(frame).x,
             frame.titleHeight,
-            frame.width,
+            nativeClientRect(frame).width,
             frame.contentHeight,
         );
         context.clip();
-        context.translate(0, frame.titleHeight);
+        context.translate(nativeClientRect(frame).x, frame.titleHeight);
         // Content glass samples the completed window chrome, not the earlier
         // desktop/window backdrop epoch.
         this.invalidateBackdrop();
@@ -2234,7 +2411,7 @@ export class RiceNativeCanvasWindow {
         );
         this.#renderTitleControls(
             titleControlFrame,
-            titleControlChrome,
+            {...titleControlChrome,windowActive:native.active!==false},
             native.maximized,
             native.hoveredControl,
             native.pressedControl,
@@ -2243,6 +2420,11 @@ export class RiceNativeCanvasWindow {
             chrome.windowDecorations,
         );
         context.restore();
+        const gripLength=Math.min(chrome.windowDecorations?.resizeGripLength??0,frame.width/2,frame.height/2),gripWidth=chrome.windowDecorations?.resizeGripThickness??2;
+        if(gripLength>0) {
+            for(const x of [gripLength,frame.width-gripLength-gripWidth])for(const [y,height] of [[0,ft],[frame.height-fb,fb]])this.windowSkinRenderer.paint(context,{x,y,width:gripWidth,height},chrome,'windowResizeGrip',furnitureState);
+            for(const y of [gripLength,frame.height-gripLength-gripWidth])for(const [x,width] of [[0,fl],[frame.width-fr,fr]])this.windowSkinRenderer.paint(context,{x,y,width,height:gripWidth},chrome,'windowResizeGrip',furnitureState);
+        }
         if (chrome.redmond98) {
             paintRedmondBevel(context, { x: 0, y: 0, width: frame.width, height: frame.height });
         }
@@ -2381,6 +2563,7 @@ export class RiceNativeCanvasWindow {
             const applicationIcon = this.desktopApplicationIcons.get(
                 String(text.text || ""),
             );
+            const packageApplication=this.packageIconLabels?.get(String(text.text||''));
             let best = null;
             let bestDistance = Number.POSITIVE_INFINITY;
             for (let index = textIndex - 1; index >= 0; index -= 1) {
@@ -2394,10 +2577,11 @@ export class RiceNativeCanvasWindow {
                 const horizontal = iconCenterX >= text.rect.x - 2 &&
                     iconCenterX <= text.rect.x + text.rect.width + 2;
                 const gap = text.rect.y - (icon.rect.y + icon.rect.height);
+                const menuRow=packageApplication&&text.rect.x>=icon.rect.x+icon.rect.width&&text.rect.x-(icon.rect.x+icon.rect.width)<=32&&Math.abs(text.rect.y+text.rect.height/2-icon.rect.y-icon.rect.height/2)<=8;
                 if (
-                    !horizontal ||
+                    !menuRow&&(!horizontal ||
                     gap < -icon.rect.height ||
-                    gap > 16
+                    gap > 16)
                 ) continue;
                 const distance = Math.abs(gap) + Math.abs(
                     iconCenterX -
@@ -2409,14 +2593,14 @@ export class RiceNativeCanvasWindow {
                 }
             }
             const iconName = applicationIcon || best?.namedIcon ||
-                riceNativeIconName(best?.icon);
-            if (best && iconName) replacements.set(best, iconName);
+                riceNativeIconName(best?.icon) || (packageApplication?'view-grid':null);
+            if (best && iconName) replacements.set(best, {namedIcon:iconName,applicationId:packageApplication});
         }
         if (replacements.size === 0) return commands;
         return commands.map(command => {
-            const namedIcon = replacements.get(command);
-            if (!namedIcon) return command;
-            const decorated = { ...command, namedIcon };
+            const replacement = replacements.get(command);
+            if (!replacement) return command;
+            const decorated = { ...command, namedIcon:replacement.namedIcon,...(replacement.applicationId?{applicationId:replacement.applicationId,colorArtwork:true}:{}) };
             const key = this.#desktopLaunchKey(decorated);
             decorated.hovered = this.desktopHoveredIcon === key;
             if (native?.shell?.motionEnabled !== true) return decorated;
@@ -2462,7 +2646,7 @@ export class RiceNativeCanvasWindow {
             // files (for example Presentation in About). A generic filename
             // fallback is not evidence that the label represents a file.
             if (mimeType === "application/octet-stream" && fileIcon === "file") continue;
-            const iconName = this.fileAssociationIcons.get(mimeType) || fileIcon;
+            const iconName = fileIcon === 'vsdx' ? fileIcon : this.fileAssociationIcons.get(mimeType) || fileIcon;
             let best = null;
             let bestDistance = Number.POSITIVE_INFINITY;
             for (let index = textIndex - 1; index >= 0; index -= 1) {
@@ -2495,15 +2679,21 @@ export class RiceNativeCanvasWindow {
             if (best) replacements.set(best, iconName);
         }
         if (replacements.size === 0) return commands;
-        return commands.map(command => {
+        return commands.flatMap(command => {
             const namedIcon = replacements.get(command);
+            // The filename supplies the Visio MIME even when a mount reports
+            // generic ZIP/octet-stream metadata. Keep MIME theme overrides.
+            if (namedIcon === 'vsdx') return [
+                { type: 'icon-override', selector: 'mime:application/vnd.ms-visio.drawing' },
+                { ...command, namedIcon },
+            ];
             return namedIcon ? { ...command, namedIcon } : command;
         });
     }
     #desktopLaunchKey(command) {
         return `${command.namedIcon}:${command.rect.x}:${command.rect.y}`;
     }
-    #renderFrostedIceBackdrop(frame, chrome, root, titlebar) {
+    #renderFrostedIceBackdrop(frame, chrome, root, titlebar, native) {
         if (chrome.material !== "frosted-ice" || !this.context.canvas) return;
         const context = this.context;
         const rect = {
@@ -2514,8 +2704,48 @@ export class RiceNativeCanvasWindow {
         };
         const now = globalThis.performance?.now?.() || Date.now();
         const source = this.cpuTileBackdrop || context.canvas;
-        const profile = this.cpuTileBackdrop ? {...chrome.frostedIce, sourceScale:.25,
+        let profile = this.cpuTileBackdrop ? {...chrome.frostedIce, sourceScale:.25,
             backdropCacheKey:this.layoutPaintFrame ? null : this.tileBackdropKey} : chrome.frostedIce;
+        const transform = context.getTransform?.();
+        if (native && !root.preview && !this.paintOrigin && !this.layoutPaintFrame &&
+            transform?.a === 1 && transform.d === 1 && transform.b === 0 && transform.c === 0 &&
+            transform.e === 0 && transform.f === 0 &&
+            !native.dialog && !native.popup &&
+            (!chrome.windowShape || chrome.windowShape === 'Default') &&
+            !native.commands.some(command => ['glass','terminal-grid','terminal-portal'].includes(command.type))) {
+            const client = nativeClientRect(frame);
+            const solidFills = context.globalAlpha === 1 && this.windowContentAlpha === 1 &&
+                native.shell?.surface?.frame !== 'matrix' &&
+                !native.commands.some(command => command.type === 'theme-surface');
+            const covers = [], clips = [{x:0, y:0, width:native.width, height:native.height}];
+            const intersection = (a, b) => {
+                const x = Math.max(a.x,b.x), y = Math.max(a.y,b.y);
+                return {x,y,width:Math.max(0,Math.min(a.x+a.width,b.x+b.width)-x),
+                    height:Math.max(0,Math.min(a.y+a.height,b.y+b.height)-y)};
+            };
+            for (const command of native.commands) {
+                if (command.type === 'pop-clip') { if (clips.length > 1) clips.pop(); continue; }
+                if (!command.rect) continue;
+                if (command.type === 'push-clip') { clips.push(intersection(clips.at(-1),command.rect)); continue; }
+                const portal = command.type === 'host-portal' && !this.hostSurface(command.identity,window.app);
+                const solid = solidFills && command.type === 'fill' && !command.shape &&
+                    command.rect.width * command.rect.height >= 4096 &&
+                    hyprglassSurfaceCommand(command, chrome).color?.[3] === 255;
+                if (!portal && !solid) continue;
+                const rect = intersection(clips.at(-1),command.rect);
+                const inset = Math.max(2, Number(chrome.radius) || 0, Number(command.radius) || 0);
+                if (rect.width > inset * 2 && rect.height > inset * 2) covers.push({
+                    x:client.x + rect.x + inset, y:frame.titleHeight + rect.y + inset,
+                    width:rect.width - inset * 2, height:rect.height - inset * 2,
+                });
+            }
+            if (covers.length) {
+                const paintRects = glassVisibleRegions(rect.width, rect.height, covers);
+                if (paintRects && paintRects.length <= 16 &&
+                    paintRects.reduce((area, rect) => area + rect.width * rect.height, 0) < rect.width * rect.height * .9)
+                    profile = {...profile, paintRects};
+            }
+        }
         context.save();
         context.beginPath();
         context.rect(
@@ -2560,10 +2790,19 @@ export class RiceNativeCanvasWindow {
         context.restore();
     }
     #renderActiveWindowShadow(native, frame, chrome, root, titlebar) {
+        const effect=windowEffectStyle(chrome,native.active!==false,`native:${native.app}:${native.window}`);
+        if(effect!==undefined){
+            if(!native.maximized&&!native.fullscreen){
+                this.windowEffectRenderer ||= new RiceWindowEffectRenderer();
+                const local={...frame,x:0,y:0};
+                this.windowEffectRenderer.paint(this.context,frame,effect,[chrome.radius,chrome.windowShape,chrome.windowDecorations,titlebar],c=>appendWindowSilhouette(c,local,chrome,titlebar),{now:this.now(),reducedMotion:windowEffectMotionOff(native.shell,root.preview)});
+            }
+            return;
+        }
         if (
             native.shell?.surface?.frame === 'matrix' ||
             chrome.redmond98 ||
-            !native.active ||
+            (!native.active && chrome.chromeProfile !== "orchard") ||
             native.maximized ||
             native.shell?.activeWindowShadow === false
         ) return;
@@ -2577,8 +2816,12 @@ export class RiceNativeCanvasWindow {
             appendWindowSilhouette(context, frame, chrome, titlebar);
             context.clip("evenodd");
             const orchard = chrome.chromeProfile === "orchard";
-            context.shadowColor = orchard ? "rgba(28, 57, 88, .24)" : "rgba(0, 0, 0, 0.46)";
-            context.shadowBlur = orchard ? 34 : 28;
+            this.windowShadow ||= new RiceNativeWindowShadow(this.frostedIceMaterial.canvasFactory);
+            if (this.windowShadow.paint(context, frame,
+                [chrome.radius, chrome.windowShape, chrome.windowDecorations, titlebar, native.active],
+                target => appendWindowSilhouette(target, {...frame, x:0, y:0}, chrome, titlebar), orchard, native.active !== false)) return;
+            context.shadowColor = orchard ? (native.active ? "rgba(12, 20, 35, .30)" : "rgba(12, 20, 35, .11)") : "rgba(0, 0, 0, 0.46)";
+            context.shadowBlur = orchard ? (native.active ? 38 : 18) : 28;
             context.shadowOffsetX = 0;
             context.shadowOffsetY = orchard ? 12 : 10;
             // Canvas shadows inherit the caster's alpha. The previous almost
@@ -2715,7 +2958,7 @@ export class RiceNativeCanvasWindow {
         const workStarted = performance.now();
         const previousImageVisible = this.commandRenderer.terminalImageVisible;
         const covers = !root.preview && !this.layoutPreview && !this.dragVisual && !this.transitions.size
-            ? this.snapshots.slice(this.snapshots.indexOf(native) + 1).map(riceNativeOpaqueInterior).filter(Boolean) : [];
+            ? this.snapshots.slice(this.snapshots.indexOf(native) + 1).map(riceNativeCompositedOpaqueInterior).filter(Boolean) : [];
         this.commandRenderer.terminalImageVisible = rect => !covers.some(cover =>
             cover.x <= rect.x && cover.y <= rect.y &&
             cover.x + cover.width >= rect.x + rect.width && cover.y + cover.height >= rect.y + rect.height);
@@ -2814,7 +3057,7 @@ export class RiceNativeCanvasWindow {
                 for(const grid of grids){
                 this.context.save();
                 try {
-                    this.context.translate(native.frame.x, native.frame.y + native.frame.titleHeight);
+                    this.context.translate(native.frame.x + nativeClientRect(native.frame).x, native.frame.y + native.frame.titleHeight);
                     this.context.beginPath();
                     this.context.rect(grid.rect.x, grid.rect.y, grid.rect.width, grid.rect.height);
                     this.context.clip();
@@ -2880,7 +3123,7 @@ export class RiceNativeCanvasWindow {
             this.context.beginPath();
             this.context.rect(0, 0, root.width, root.height);
             this.context.clip();
-            this.context.translate(native.frame.x, native.frame.y + native.frame.titleHeight);
+            this.context.translate(native.frame.x + nativeClientRect(native.frame).x, native.frame.y + native.frame.titleHeight);
             this.invalidateBackdrop();
             this.#renderDialogShadow(native, chrome);
             this.#renderDialogMaterial(native, chrome);
@@ -2890,6 +3133,8 @@ export class RiceNativeCanvasWindow {
         }
     }
     #renderContentCommands(native, chrome) {
+        const paperMarkdown = native.entrypoint === 'rice-paper' &&
+            native.commands.some(command => command.nativeBowlDocument);
         const commands = this.#adaptiveStructuralForegrounds(
             this.#commandsWithFileAssociationIcons(this.directTerminalGrid
                 ? native.commands.filter(command => command.type !== "terminal-grid" && command.type !== "terminal-row")
@@ -2914,16 +3159,20 @@ export class RiceNativeCanvasWindow {
             .map(command => command.type === "web-scene" || command.type === "inline-image"
                 ? { ...command, cacheNamespace: String(native.app) }
                 : command)
+            .map(command => command.type==='icon'?{...command,iconApplication:String(native.app)}:command)
             .map(command => native.entrypoint === "rice-store" && command.type === "icon"
                 ? { ...command, colorArtwork: true } : command)
-            // Mail actions need the theme's readable ink, including compose
+            // Mail and News actions need the theme's readable ink, including compose
             // controls whose color icon variants can be black in dark themes.
-            .map(command => native.entrypoint === "rice-box" && command.type === "icon"
+            .map(command => (native.entrypoint === "rice-box" || native.riceAppId === "org.ricewm.news" && [133, 601].includes(command.icon)) && command.type === "icon"
                 ? { ...command, monochrome: true } : command)
             // A native status/toolbar repaint must not even issue a cached
             // page-sized drawImage. The compositor's clip remains the final
             // safety net, while this cull avoids page work altogether.
-            .filter(command => command.type !== "web-scene" ||
+            // Paper's source editor also performs layout before painting, so
+            // clipping alone still wastes work proportional to document size.
+            .filter(command => command.type !== "web-scene" &&
+                !(paperMarkdown && command.role === 'editor') ||
                 riceNativeCommandIntersectsDamage(
                     native,
                     command,
@@ -2965,6 +3214,7 @@ export class RiceNativeCanvasWindow {
             this.#renderDialogShadow(native, chrome);
             this.#renderDialogMaterial(native, chrome);
             this.#renderSurfaceCommands(native, foreground, chrome, rect, true);
+            this.#renderFileChooserGrips(native, chrome, rect);
             return;
         }
         const motion = dialogMotion(native, progress);
@@ -2982,10 +3232,39 @@ export class RiceNativeCanvasWindow {
         this.context.clip();
         this.#renderDialogMaterial(native, chrome);
         this.#renderSurfaceCommands(native, foreground, chrome, rect, true);
+        this.#renderFileChooserGrips(native, chrome, rect);
         this.context.restore();
     }
+    #renderFileChooserGrips(native, chrome, rect) {
+        if (!native.fileChooser || !native.resizeHandles?.length) return;
+        const context = this.context;
+        context.save();
+        // Keep the grips quieter than controls using the theme's text ink.
+        context.strokeStyle = rgbaColor(chrome.text || [136, 136, 136, 255]);
+        context.globalAlpha *= 0.45;
+        context.lineWidth = 1;
+        context.lineCap = 'round';
+        context.beginPath();
+        for (const x of [rect.x + 3.5, rect.x + rect.width - 3.5]) {
+            for (const offset of [-1, 1]) {
+                context.moveTo(x + offset, rect.y + rect.height / 2 - 9);
+                context.lineTo(x + offset, rect.y + rect.height / 2 + 9);
+            }
+        }
+        for (const y of [rect.y + 3.5, rect.y + rect.height - 3.5]) {
+            context.moveTo(rect.x + rect.width / 2 - 9, y);
+            context.lineTo(rect.x + rect.width / 2 + 9, y);
+        }
+        // A small diagonal corner glyph also advertises two-axis resizing.
+        for (const inset of [5, 9, 13]) {
+            context.moveTo(rect.x + rect.width - inset, rect.y + rect.height - 4);
+            context.lineTo(rect.x + rect.width - 4, rect.y + rect.height - inset);
+        }
+        context.stroke();
+        context.restore();
+    }
     #adaptiveStructuralForegrounds(commands, native, chrome) {
-        const source = this.structuralBackdrop;
+        const source = this.structuralBackdropSource;
         const panels = commands.filter(command =>
             command.type === "glass" && command.structural === true && command.rect
         ).map(command => {
@@ -3021,7 +3300,7 @@ export class RiceNativeCanvasWindow {
             const ink = adaptiveStructuralInk(
                 source,
                 {
-                    x: native.frame.x + command.rect.x,
+                    x: native.frame.x + nativeClientRect(native.frame).x + command.rect.x,
                     y: native.frame.y + native.frame.titleHeight + command.rect.y,
                     width: command.rect.width,
                     height: command.rect.height,
@@ -3064,7 +3343,7 @@ export class RiceNativeCanvasWindow {
         }
         this.context.save();
         this.context.beginPath();
-        this.context.rect(0, 0, native.frame.width, native.frame.contentHeight);
+        this.context.rect(0, 0, nativeClientRect(native.frame).width, native.frame.contentHeight);
         this.context.rect(rect.x, rect.y, rect.width, rect.height);
         this.context.clip("evenodd");
         this.commandRenderer.render(commands, chrome);
@@ -3103,7 +3382,7 @@ export class RiceNativeCanvasWindow {
             },
             this.now(),
             {
-                x: native.frame.x + rect.x,
+                x: native.frame.x + nativeClientRect(native.frame).x + rect.x,
                 y: native.frame.y + native.frame.titleHeight + rect.y,
                 width: rect.width,
                 height: rect.height,
@@ -3126,7 +3405,7 @@ export class RiceNativeCanvasWindow {
         context.save();
         try {
             context.beginPath();
-            context.rect(0, 0, native.frame.width, native.frame.contentHeight);
+            context.rect(0, 0, nativeClientRect(native.frame).width, native.frame.contentHeight);
             if (typeof context.roundRect === "function") {
                 context.roundRect(rect.x, rect.y, rect.width, rect.height, radius);
             } else {
@@ -3228,26 +3507,50 @@ export class RiceNativeCanvasWindow {
         const controls = nativeTitleControlLayout(
             frame, title, tools, decorations,
         );
-        const customCaption = decorations.buttonStyle === 'Borderless' || Object.keys(decorations).some(key=> /^(caption|glyph)/.test(key));
+        this.captionSkinRenderer ||= new RiceThemeSkinRenderer(()=>this.onDamage());
+        const captionRoles=['captionClose','captionMinimize','captionMaximize','captionMenu'];
+        const captionSkins=['caption',...captionRoles].some(role=>Object.keys(chrome.surfaceSkins?.[role]||{}).length||Object.keys(chrome.controlColors?.[role]||{}).length);
+        const explicitCaption=decorations.buttonStyle === 'Borderless' || Object.keys(decorations).some(key=> /^(caption|glyph)/.test(key) && !(chrome.chromeProfile === 'orchard' && ['captionWidth','captionHeight','captionGap'].includes(key)));
+        const customCaption=captionSkins||explicitCaption,paintedCaptions=new Set();
+        const captionMap=map=>({...map,...Object.fromEntries(captionRoles.map(role=>[role,Object.fromEntries([...new Set([...Object.keys(map?.caption||{}),...Object.keys(map?.[role]||{})])].map(state=>[state,{...map?.caption?.[state],...map?.[role]?.[state]}]))]))});
+        const captionChrome=captionSkins?{...chrome,surfaceSkins:captionMap(chrome.surfaceSkins),controlColors:captionMap(chrome.controlColors)}:chrome;
         if(customCaption) {
             for(const control of controls) {
                 if(control.action.startsWith('tile-'))continue;
                 const close=control.action==='close', hovered=!control.disabled&&control.action===hoveredControl, pressed=!control.disabled&&control.action===pressedControl;
                 const state=pressed?'Pressed':hovered?'Hover':'';
+                const captionState=control.disabled?'disabled':pressed?'pressed':hovered?'hover':chrome.windowActive===true?'selected':'normal',captionRole='caption'+control.action[0].toUpperCase()+control.action.slice(1);
+                if(!explicitCaption&&!Object.keys(this.captionSkinRenderer.style(captionChrome,captionRole,captionState)).length)continue;
+                paintedCaptions.add(control.action);
                 const pick=(kind,fallback)=>themeColor(decorations['caption'+(close?'Close':'')+state+kind],themeColor(decorations['caption'+state+kind],fallback));
-                const background=pick('Background',decorations.buttonStyle==='Borderless'?(hovered||pressed?chrome.pressed:[0,0,0,0]):chrome.control);
-                const ink=pick('Foreground',chrome.controlText||chrome.text);
+                const skin=this.captionSkinRenderer.style(captionChrome,captionRole,captionState);
+                const background=themeColor(skin.background,pick('Background',decorations.buttonStyle==='Borderless'?(hovered||pressed?chrome.pressed:[0,0,0,0]):chrome.control));
+                const ink=[...pick('Foreground',chrome.controlText||chrome.text)];
                 context.save();
                 if(control.disabled)context.globalAlpha*=.35;
                 const b=control.button;
-                context.fillStyle=rgbaColor(background);roundedPath(context,b,decorations.captionRadius??0);context.fill();
-                if(decorations.buttonStyle!=='Borderless'){context.strokeStyle=rgbaColor(chrome.border);context.lineWidth=1;roundedPath(context,b,decorations.captionRadius??0);context.stroke();}
+                const ownsFace=skin.background!==undefined||skin.gradient||skin.artwork;
+                if(!ownsFace){context.fillStyle=rgbaColor(background);roundedPath(context,b,skin.radius??decorations.captionRadius??0);context.fill();}
+                if(!ownsFace&&decorations.buttonStyle!=='Borderless'){context.strokeStyle=rgbaColor(chrome.border);context.lineWidth=1;roundedPath(context,b,decorations.captionRadius??0);context.stroke();}
+                this.captionSkinRenderer.paint(context,b,captionChrome,captionRole,captionState);
+                const skinInk=this.captionSkinRenderer.style(captionChrome,captionRole,captionState).foreground;
+                if(skinInk)ink.splice(0,4,...themeColor(skinInk,ink));
                 const icon=control.action==='maximize'&&maximized?57:control.icon;
-                if(decorations.glyphStyle==='geometric'&&!this.iconRenderer.hasOverride(icon)) {
+                if(decorations.glyphStyle==='none'){context.restore();continue;}
+                if(control.action==='menu'||['geometric','beveled'].includes(decorations.glyphStyle)&&!this.iconRenderer.hasOverride(icon)) {
                     const g=control.glyph,w=g.width,h=g.height;
                     context.strokeStyle=rgbaColor(ink);context.lineWidth=decorations.glyphStrokeWidth??1;context.lineCap='butt';
                     context.beginPath();
-                    if(close){context.moveTo(g.x,g.y);context.lineTo(g.x+w,g.y+h);context.moveTo(g.x+w,g.y);context.lineTo(g.x,g.y+h);}
+                    if(decorations.glyphStyle==='beveled'&&!close||control.action==='menu') {
+                        const relief=this.captionSkinRenderer.style(captionChrome,captionRole,captionState).bevel||{light:'#dedee4',dark:'#737382'};
+                        const size=control.action==='minimize'?Math.max(3,Math.min(w,h)*.4):w;
+                        const rect={x:g.x+(w-size)/2,y:g.y+(h-size)/2,width:size,height:control.action==='menu'?Math.max(3,h*.32):size};
+                        const invert=pressed||control.action==='maximize'&&maximized;
+                        context.fillStyle=rgbaColor(background);context.fillRect(rect.x,rect.y,rect.width,rect.height);
+                        context.strokeStyle=relief[invert?'dark':'light'];context.lineWidth=1;context.beginPath();context.moveTo(rect.x,rect.y+rect.height);context.lineTo(rect.x,rect.y);context.lineTo(rect.x+rect.width,rect.y);context.stroke();
+                        context.strokeStyle=relief[invert?'light':'dark'];context.beginPath();context.moveTo(rect.x+rect.width,rect.y);context.lineTo(rect.x+rect.width,rect.y+rect.height);context.lineTo(rect.x,rect.y+rect.height);context.stroke();
+                    }
+                    else if(close){context.moveTo(g.x,g.y);context.lineTo(g.x+w,g.y+h);context.moveTo(g.x+w,g.y);context.lineTo(g.x,g.y+h);}
                     else if(control.action==='minimize'){context.moveTo(g.x,g.y+h/2);context.lineTo(g.x+w,g.y+h/2);}
                     else if(maximized){const d=Math.max(2,Math.min(w,h)*.25);context.rect(g.x,g.y+d,w-d,h-d);context.moveTo(g.x+d,g.y+d);context.lineTo(g.x+d,g.y);context.lineTo(g.x+w,g.y);context.lineTo(g.x+w,g.y+h-d);context.lineTo(g.x+w-d,g.y+h-d);}
                     else context.rect(g.x,g.y,w,h);
@@ -3256,7 +3559,7 @@ export class RiceNativeCanvasWindow {
                 context.restore();
             }
             // Tiling actions retain their established renderer and geometry.
-            if(!decorations.tiled)return;
+            if(!decorations.tiled&&controls.every(control=>paintedCaptions.has(control.action)))return;
         }
         const orchard = chrome.chromeProfile === "orchard";
         const yellowJacket = chrome.chromeProfile === "yellow-jacket";
@@ -3292,7 +3595,7 @@ export class RiceNativeCanvasWindow {
                 if(control.disabled)context.restore();
                 continue;
             }
-            if (customCaption) continue;
+            if (paintedCaptions.has(control.action)) continue;
             if (chrome.redmond98) {
                 // The layout owns the classic 16x14 caption-button metric and
                 // its four-pixel right gutter.  Do not reconstruct it here:
@@ -3319,13 +3622,22 @@ export class RiceNativeCanvasWindow {
                     width: diameter,
                     height: diameter,
                 };
-                context.fillStyle = rgbaColor(colors[control.action]);
+                const active = chrome.windowActive !== false;
+                context.fillStyle = active || hoveredControl ? rgbaColor(colors[control.action]) : 'rgba(135, 135, 144, .46)';
                 roundedPath(context, trafficLight, diameter / 2);
                 context.fill();
                 context.strokeStyle = "rgba(0, 0, 0, .18)";
                 context.lineWidth = 1;
                 roundedPath(context, trafficLight, diameter / 2);
                 context.stroke();
+                if (hoveredControl && ['close','minimize','maximize'].includes(control.action)) {
+                    const cx=trafficLight.x+diameter/2,cy=trafficLight.y+diameter/2;
+                    context.strokeStyle='rgba(35,28,25,.75)';context.lineWidth=1.2;context.lineCap='round';context.beginPath();
+                    if(control.action==='close'){context.moveTo(cx-2.5,cy-2.5);context.lineTo(cx+2.5,cy+2.5);context.moveTo(cx+2.5,cy-2.5);context.lineTo(cx-2.5,cy+2.5);}
+                    else if(control.action==='minimize'){context.moveTo(cx-3,cy);context.lineTo(cx+3,cy);}
+                    else{context.moveTo(cx-3,cy+1);context.lineTo(cx-3,cy-3);context.lineTo(cx+1,cy-3);context.moveTo(cx+3,cy-1);context.lineTo(cx+3,cy+3);context.lineTo(cx-1,cy+3);}
+                    context.stroke();context.lineCap='butt';
+                }
                 continue;
             }
             if (commandDeck) {
@@ -3350,6 +3662,29 @@ export class RiceNativeCanvasWindow {
                 continue;
             }
             if (yellowJacket) {
+                if (control.action === "maximize") {
+                    const size = Math.max(1, Math.min(16, Math.min(control.cell.width, control.cell.height) - 8));
+                    const x = Math.round(control.cell.x + control.cell.width - size - 1);
+                    const y = Math.round(control.cell.y + (control.cell.height-size)/2);
+                    context.save();
+                    if (control.disabled) context.globalAlpha *= .35;
+                    const pressed = control.action === pressedControl && !control.disabled;
+                    const hovered = control.action === hoveredControl && !control.disabled;
+                    // Be's zoom mark is a shallow emboss at the tab's outer edge.
+                    const square = (x, y, side) => {
+                        context.fillStyle = pressed ? '#E7C32A' : hovered ? '#FFE36A' : '#FFDC45';
+                        context.fillRect(x,y,side,side);
+                        context.fillStyle = pressed ? '#D8B83C' : '#FFF19A';
+                        context.fillRect(x,y,side,1); context.fillRect(x,y,1,side);
+                        context.fillStyle = pressed ? '#FFF19A' : '#D8B83C';
+                        context.fillRect(x,y+side-1,side,1); context.fillRect(x+side-1,y,1,side);
+                    };
+                    const shift = Math.max(2,Math.round(size*.28));
+                    square(x+shift,y,size-shift);
+                    square(x,y+shift,size-shift);
+                    context.restore();
+                    continue;
+                }
                 // This artwork is the complete control surface, not an icon
                 // nested inside the generic title-control button.
                 const inset = 2;
@@ -3482,7 +3817,7 @@ export class RiceNativeCanvasWindow {
             }
         }
         for (const control of controls) {
-            if (customCaption || control.action.startsWith("tile-") || yellowJacket || commandDeck || chrome.redmond98 || (chrome.chromeProfile==='redmond-xp'&&!wedged&&!chamfered)) continue;
+            if (paintedCaptions.has(control.action) || control.action.startsWith("tile-") || yellowJacket || commandDeck || chrome.redmond98 || (chrome.chromeProfile==='redmond-xp'&&!wedged&&!chamfered)) continue;
             if (orchard && control.action !== hoveredControl) continue;
             const familiarCloseHover = chrome.familiar &&
                 control.action === "close" && control.action === hoveredControl;
@@ -3713,7 +4048,7 @@ function editorPreviewRect(native) {
     return {
         x,
         y,
-        width: Math.max(0, native.frame.width - x),
+        width: Math.max(0, nativeClientRect(native.frame).width - x),
         height: Math.max(0, native.frame.contentHeight - y),
     };
 }

@@ -36,6 +36,11 @@ impl RiceFiles {
         if envelope.app != self.app || envelope.window != self.window {
             return Ok(Vec::new());
         }
+        if self.remote.is_open()
+            && matches!(envelope.event, UiEvent::Key { pressed: true, key_code: 36 | 104, .. })
+        {
+            return self.confirm_remote(request);
+        }
         // App shortcuts must match the advertised menu actions independently
         // of which pane or location field currently owns keyboard focus.
         if self.options_dialog.is_none() && self.dialog.is_none() && self.open_with.is_none() && !self.remote.is_open() {
@@ -94,6 +99,14 @@ impl RiceFiles {
         let preview_seek_shortcut = matches!(self.preview_state, PreviewState::Video { .. })
             && files_view::pane_for_widget(raw_target).is_some()
             && matches!(&envelope.event, UiEvent::Key { modifiers, .. } if modifiers & 1 != 0 && modifiers & (4 | 8 | 64) == 0);
+        // A selected tree folder is already open. Repeated clicks (including
+        // the primary clicks preceding dblclick) must not reload it or flash
+        // the loading/empty state. Explicit Refresh still reloads normally.
+        if self.folder_tree && matches!(envelope.event,UiEvent::Activate)
+            && self.folder_tree_path_for_target(target).is_some_and(|path| path==*self.location())
+            && self.runtime_mut()?.pending_directory.is_none() {
+            return Ok(Vec::new());
+        }
         match (&envelope.event, target) {
             (UiEvent::Pointer { kind: rice_native_app_protocol::PointerEventKind::Wheel, button: 4 | 5, modifiers, .. }, _)
                 if modifiers & 4 != 0 && self.dialog.is_none() && self.open_with.is_none() && !self.remote.is_open() => {
@@ -137,7 +150,7 @@ impl RiceFiles {
 
             (UiEvent::Activate, files_remote::CLOUD | files_remote::CLOUD_BACK) => self.show_cloud_providers(request),
             (UiEvent::Activate, files_remote::CLOUD_FIRST..=files_remote::CLOUD_LAST) => self.select_cloud_provider(target, request),
-            (UiEvent::Activate, files_remote::SMB | files_remote::NFS | files_remote::WEBDAV | files_remote::BRIDGE) => self.select_remote_protocol(target),
+            (UiEvent::Activate, files_remote::SMB | files_remote::NFS | files_remote::WEBDAV | files_remote::BRIDGE | files_remote::NFS_ADVANCED) => self.select_remote_protocol(target),
             (UiEvent::Focus { focused: true }, _) if focus_changed => {
                 self.emit_full().map(|message| vec![message])
             }
@@ -406,11 +419,7 @@ impl RiceFiles {
             (UiEvent::Activate, files_view::ZOOM_OUT) => self.adjust_view_zoom(-100),
             (UiEvent::Activate, files_view::ZOOM_IN) => self.adjust_view_zoom(100),
             (UiEvent::ValueChanged(value), files_view::ZOOM_SLIDER) => {
-                let zoom = value
-                    .split_once('/')
-                    .and_then(|(position, _)| position.parse::<u16>().ok())
-                    .map(|position| position.saturating_add(MIN_VIEW_ZOOM_PERMILLE))
-                    .unwrap_or(self.view_zoom_permille);
+                let zoom = super::view_zoom_from_fraction(value).unwrap_or(self.view_zoom_permille);
                 self.set_view_zoom(zoom)
             }
             (
@@ -711,6 +720,9 @@ impl RiceFiles {
             }
             (UiEvent::ValueChanged(value), files_properties::NAME_FIELD) => {
                 self.update_property_name(value)
+            }
+            (UiEvent::ValueChanged(value), files_properties::DETAILS_SCROLL) => {
+                self.scroll_properties(value)
             }
             (UiEvent::Activate, files_properties::COPY_LOCATION) => {
                 self.copy_property_location(request)

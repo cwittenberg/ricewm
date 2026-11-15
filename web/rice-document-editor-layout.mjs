@@ -1,6 +1,9 @@
+import {shapedTextPresentation} from '../sdk/versions/1.0.0/runtime/sdk/js/shaped-text-presentation.mjs';
+import {ShapedTextLayout} from '../sdk/versions/1.0.0/runtime/sdk/js/shaped-text-layout.mjs';
 import {parsePresentation} from './rice-native-editor-renderer.mjs';
 import {applyDocumentFont,documentFontMetrics} from './rice-document-text-metrics.mjs';
 import {rgbaColor} from './rice-native-canvas-primitives.mjs';
+import {documentEditorLayout,documentEditorShapedReference} from '../sdk/versions/1.0.0/runtime/sdk/js/document-editor.mjs';
 
 export const isDocumentEditor = command => command.documentEditor === true && command.text.startsWith('editor:document~');
 /** Versionless bounded metadata remains inside the native editor presentation;
@@ -10,15 +13,56 @@ export function documentEditorMetadata(command) {
     const presentation=parsePresentation(command.text),hex=presentation.language.slice('document~'.length);
     if(hex.length>4096||!hex.length||!/^(?:[0-9a-f]{2})+$/u.test(hex))throw new RangeError('Invalid document editor metadata');
     const data=JSON.parse(new TextDecoder('utf-8',{fatal:true}).decode(Uint8Array.from(hex.match(/../gu),value=>parseInt(value,16))));
-    const layout=data.layout,zoom=data.zoom;
+    if(!data||typeof data!=='object'||Array.isArray(data)||Object.keys(data).some(key=>!['id','layout','zoom','point','placeholder','shaped'].includes(key)))throw new RangeError('Invalid document editor metadata');
+    if(data.placeholder!==undefined&&(typeof data.placeholder!=='string'||new TextEncoder().encode(data.placeholder).length>512))throw new RangeError('Invalid document editor placeholder');
+    const layout=documentEditorLayout(data.layout===undefined?{}:data.layout),zoom=data.zoom===undefined?100:data.zoom;
     if(typeof data.id!=='string'||!/^\d{1,20}$/u.test(data.id)||BigInt(data.id)>0xffffffffffffffffn)throw new RangeError('Invalid editor identity');
     if(!layout||!['left','right','top','bottom'].every(key=>Number.isFinite(layout[key])&&layout[key]>=0&&layout[key]<=65536)||!['left','center','right'].includes(layout.align)||!['top','middle','bottom'].includes(layout.vertical)||!Number.isFinite(zoom)||zoom<1||zoom>1600)throw new RangeError('Invalid document editor layout');
     const line=layout.lineHeight;
     if(!line||!['normal','multiple','exact'].includes(line.kind)||!Number.isFinite(line.value)||line.value<0||line.value>(line.kind==='exact'?65536:100)||(line.kind==='normal'&&line.value!==1))throw new RangeError('Invalid document editor spacing');
-    const point=data.point;
+    const point=data.point===undefined?null:data.point;
     if(point!==null&&(!point||![point.x,point.y].every(value=>Number.isFinite(value)&&Math.abs(value)<=16)||!['click','down','move','up'].includes(point.phase)||typeof point.extend!=='boolean'||!Number.isSafeInteger(point.revision)||point.revision<1))throw new RangeError('Invalid editor point request');
     if(point?.origin!=null&&(![point.origin.x,point.origin.y].every(value=>Number.isFinite(value)&&Math.abs(value)<=16)||typeof point.origin.extend!=='boolean'))throw new RangeError('Invalid editor pointer origin');
-    return {presentation,layout,scale:zoom/100,point,id:BigInt(data.id)};
+    const shaped=data.shaped===undefined?null:documentEditorShapedReference(data.shaped);
+    return {presentation,layout,scale:zoom/100,point,...(shaped?{shaped}:{}),id:BigInt(data.id),placeholder:data.placeholder||''};
+}
+
+const shapedLayouts=new WeakMap();
+export function documentEditorShapedGeometry(command) {
+    const metadata=documentEditorMetadata(command);if(!metadata?.shaped)return null;
+    const data=command.shapedEditor;
+    if(command.shapedEditorPending||!data||data.token!==metadata.shaped.token||data.text!==metadata.presentation.document)return null;
+    let layout=shapedLayouts.get(data.map);
+    if(!layout){layout=new ShapedTextLayout(data.text,data.map);shapedLayouts.set(data.map,layout);}
+    if(layout.caret(data.caret).scalar!==metadata.presentation.caret||layout.caret(data.anchor).scalar!==metadata.presentation.anchor)return null;
+    const presentation=shapedTextPresentation(data.presentation??null);
+    let transform=[metadata.scale,0,0,metadata.scale,command.rect.x,command.rect.y];
+    if(presentation){
+        const scale=Math.min(command.rect.width/presentation.width,command.rect.height/presentation.height),m=presentation.transform;
+        transform=[m[0]*scale,m[1]*scale,m[2]*scale,m[3]*scale,
+            command.rect.x+(command.rect.width-presentation.width*scale)/2+m[4]*scale,
+            command.rect.y+(command.rect.height-presentation.height*scale)/2+m[5]*scale];
+    }
+    return {...metadata,layout,transform,caretColor:presentation?.caretColor,caret:data.caret,anchor:data.anchor};
+}
+export function documentEditorShapedHit(command,x,y) {
+    const data=documentEditorShapedGeometry(command);if(!data)return null;
+    const [a,b,c,d,e,f]=data.transform,det=a*d-b*c,dx=x-e,dy=y-f;
+    const stop=data.layout.hit(Math.max(-1e6,Math.min(1e6,(d*dx-c*dy)/det)),Math.max(-1e6,Math.min(1e6,(a*dy-b*dx)/det)));
+    return stop===null?null:{stop,scalar:data.layout.caret(stop).scalar,token:data.shaped.token};
+}
+function paintShapedDocumentEditor(context,command,selectionOnly=false) {
+    const data=documentEditorShapedGeometry(command);if(!data)return true;
+    context.beginPath();context.rect(command.rect.x,command.rect.y,command.rect.width,command.rect.height);context.clip();
+    context.transform(...data.transform);
+    context.fillStyle=rgbaColor(command.selection?.color||[184,214,255,255]);
+    if(selectionOnly||!command.shapedSelectionBelow)for(const rect of data.layout.selectionRects(data.anchor,data.caret))context.fillRect(rect.x,rect.y,rect.width,rect.height);
+    if(!selectionOnly&&command.caret){const caret=data.layout.caret(data.caret);context.fillStyle=data.caretColor||rgbaColor(command.color);context.fillRect(caret.x,caret.y0,1/Math.hypot(data.transform[0],data.transform[1]),Math.max(1,caret.y1-caret.y0));}
+    return true;
+}
+
+export function paintShapedTextSelection(context,command) {
+    context.save();try{return paintShapedDocumentEditor(context,command,true);}finally{context.restore();}
 }
 
 /** One measured layout supplies painting, caret placement and pointer selection.
@@ -62,6 +106,7 @@ export function documentEditorGeometry(context,command) {
 
 export function documentEditorHit(context,command,x,y) {
     context.save();try{
+        if(documentEditorMetadata(command)?.shaped)return documentEditorShapedHit(command,x,y)?.scalar??null;
         const data=documentEditorGeometry(context,command);if(!data)return null;
         const row=data.rows.reduce((best,row)=>Math.abs(y-row.y-data.lineHeight/2)<Math.abs(y-best.y-data.lineHeight/2)?row:best,data.rows[0]);
         if(x<=row.x)return row.start;
@@ -73,10 +118,12 @@ export function documentEditorHit(context,command,x,y) {
 
 export function paintDocumentEditor(context,command) {
     context.save();try{
+        if(documentEditorMetadata(command)?.shaped)return paintShapedDocumentEditor(context,command);
         const data=documentEditorGeometry(context,command);if(!data)return false;
         const {rows,characters,caret,anchor,lineHeight,font}=data;
         context.beginPath();context.rect(command.rect.x,command.rect.y,command.rect.width,command.rect.height);context.clip();context.textAlign='left';context.textBaseline='alphabetic';
         const from=Math.min(caret,anchor),to=Math.max(caret,anchor);
+        if(!characters.length&&data.placeholder){context.fillStyle='rgba(128,128,128,1)';context.fillText(data.placeholder,rows[0].x,rows[0].baseline);}
         for(const row of rows){
             if(row.y+lineHeight<command.rect.y||row.y>command.rect.y+command.rect.height)continue;
             if(to>row.start&&from<=row.end){const start=Math.max(from,row.start),end=Math.min(to,row.end);context.fillStyle=rgbaColor(command.selection?.color||[184,214,255,255]);context.fillRect(row.x+data.measure(row.start,start),row.y,Math.max(1,data.measure(row.start,end)-data.measure(row.start,start)),Math.max(1,lineHeight));}

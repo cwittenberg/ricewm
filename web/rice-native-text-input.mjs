@@ -1,9 +1,25 @@
+import {nativeClientRect} from './rice-native-window-stack.mjs';
 // Browser IME/committed-text ingress for authoritative native text widgets.
 // The transient textarea never mirrors document content or owns editing state.
-export function focusedNativeTextTarget(snapshot) {
+export function focusedNativeTextTarget(snapshot, { terminal = false } = {}) {
     const window = [...(snapshot?.windows || [])].reverse().find(window =>
         window.active && window.layerVisible !== false && !window.minimized);
-    if (!window || window.popup || !window.focusedWidget || String(window.focusedWidget) === '0') return null;
+    if (!window || window.popup) return null;
+    if (terminal && window.entrypoint === 'rice-term' && !window.dialog &&
+        !window.commands?.some(command => command.type === 'text' && command.caret === true)) {
+        const focus = Number(window.focusedWidget || 0);
+        const session = focus >= 100000 && (focus - 100000) % 512 === 0
+            ? Math.floor((focus - 100000) / 512) : null;
+        const grid = window.commands?.find(command => command.type === 'terminal-grid' &&
+            (session === null || String(command.session) === String(session)));
+        if (!grid?.rect || grid.rect.width <= 0 || grid.rect.height <= 0) return null;
+        return { key: [window.app, window.window, 'terminal', grid.session].map(String).join(':'),
+            terminal: true,
+            x: window.frame.x + nativeClientRect(window.frame).x + grid.rect.x,
+            y: window.frame.y + window.frame.titleHeight + grid.rect.y,
+            width: grid.rect.width, height: grid.rect.height };
+    }
+    if (!window.focusedWidget || String(window.focusedWidget) === '0') return null;
     // A scene owns application input, not a native text caret. Older frames can
     // retain a caret request on a previously focused editor during actor updates.
     if (window.commands?.some(command => command.type === 'web-scene' &&
@@ -12,12 +28,13 @@ export function focusedNativeTextTarget(snapshot) {
     const command = window.commands?.find(command => command.type === 'text' && command.caret === true);
     if (!command?.rect || command.rect.width <= 0 || command.rect.height <= 0) return null;
     return { key: [window.app, window.window, window.focusedWidget].map(String).join(':'),
-        x: window.frame.x + command.rect.x,
+        x: window.frame.x + nativeClientRect(window.frame).x + command.rect.x,
         y: window.frame.y + window.frame.titleHeight + command.rect.y };
 }
 
 export function createRiceNativeTextInput({ document, container, canvas, snapshot, enabled,
-    commit, rejected = () => {}, compositionChanged = () => {}, maximumBytes = 4096 }) {
+    commit, rejected = () => {}, compositionChanged = () => {}, maximumBytes = 4096,
+    mobileTerminal = false }) {
     if (!document || !container || !canvas || typeof snapshot !== 'function' ||
         typeof enabled !== 'function' || typeof commit !== 'function') throw new TypeError('Native text input host is incomplete');
     if (!Number.isSafeInteger(maximumBytes) || maximumBytes < 1 || maximumBytes > 4096) throw new RangeError('Native text commit limit');
@@ -26,9 +43,20 @@ export function createRiceNativeTextInput({ document, container, canvas, snapsho
     let element = null, owner = null, composing = false, compositionOwner = null;
     let pendingComposition = null, compositionTimer = null, disposed = false, waitingForScene = false;
     let windowBlurred = false, resumeOwner = null;
+    let nativeTouchFocus = false;
     const listen = (target, type, handler, options = {}) => target.addEventListener(type, handler,
         { ...options, signal: controller.signal });
-    const current = () => enabled() && container.isConnected ? focusedNativeTextTarget(snapshot()) : null;
+    const current = () => enabled() && container.isConnected
+        ? focusedNativeTextTarget(snapshot(), { terminal: mobileTerminal }) : null;
+    function showKeyboard() {
+        // Android exposes this API; iOS uses focus in the original tap handler.
+        if (!current()?.terminal || document.activeElement !== element) return;
+        try { document.defaultView.navigator.virtualKeyboard?.show(); } catch {}
+    }
+    function key(keycode) {
+        commit({ input: 'key', pressed: true, keycode, state: 0, text: '' });
+        commit({ input: 'key', pressed: false, keycode, state: 0, text: '' });
+    }
     function setComposing(value) { composing = value; compositionChanged(value); }
     function clear() { if (element) { element.value = ''; element.setSelectionRange(0, 0); } }
     function release({ restoreFocus = false, preserveResume = false } = {}) {
@@ -63,9 +91,12 @@ export function createRiceNativeTextInput({ document, container, canvas, snapsho
         element.dataset.riceNativeTextInput = 'true';
         element.setAttribute('aria-label', 'Native application text input');
         element.autocomplete = 'off'; element.autocapitalize = 'off'; element.spellcheck = false;
+        element.setAttribute('autocorrect', 'off');
+        element.setAttribute('inputmode', 'text');
+        element.setAttribute('enterkeyhint', 'enter');
         element.tabIndex = -1;
         Object.assign(element.style, { position: 'fixed', width: '1px', height: '1px', opacity: '0',
-            padding: '0', border: '0', pointerEvents: 'none', resize: 'none', overflow: 'hidden' });
+            padding: '0', border: '0', pointerEvents: 'none', resize: 'none', overflow: 'hidden', fontSize: '16px' });
         // These element listeners are collected with the element on release.
         element.addEventListener('compositionstart', event => {
             event.stopPropagation();
@@ -88,10 +119,24 @@ export function createRiceNativeTextInput({ document, container, canvas, snapsho
             if (event.inputType === 'insertFromComposition' ||
                 (pendingComposition !== null && event.data === pendingComposition)) { clear(); return; }
             if (event.inputType === 'insertText' || event.inputType === 'insertReplacementText') send(event.data);
+            else if (current()?.terminal) {
+                if (event.inputType === 'insertLineBreak' || event.inputType === 'insertParagraph') key(36);
+                else if (event.inputType === 'deleteContentBackward') key(22);
+                else if (event.inputType === 'deleteContentForward') key(119);
+            }
             clear();
         });
         element.addEventListener('input', () => { if (!composing) clear(); });
-        element.addEventListener('keydown', () => { if (!composing) pendingComposition = null; });
+        element.addEventListener('keydown', event => {
+            if (!composing) pendingComposition = null;
+            // Some phone keyboards provide a key name without a physical
+            // code, including Backspace on an empty textarea. Mapped hardware
+            // keys were already consumed by the native input handler.
+            if (!valid(event) || event.defaultPrevented || composing || event.isComposing ||
+                event.keyCode === 229 || !current()?.terminal) return;
+            const keycode = {Enter:36,Backspace:22,Delete:119}[event.key];
+            if (keycode) { event.preventDefault(); key(keycode); }
+        });
         element.addEventListener('blur', () => { if (!disposed) queueMicrotask(() => sync()); });
         container.append(element);
     }
@@ -103,8 +148,15 @@ export function createRiceNativeTextInput({ document, container, canvas, snapsho
             if (target?.key !== resumeOwner) resumeOwner = null;
             release({ preserveResume: true }); return;
         }
+        // Keep the same browser input connected while a terminal touch is
+        // awaiting its native scene. Recreating it during the tap can leave
+        // WebKit's keyboard process pointing at the detached input.
+        if (waitingForScene && mobileTerminal && nativeTouchFocus && target?.terminal &&
+            owner === target.key) return;
         const focus = document.activeElement;
-        const ownsFocus = focus === canvas || focus === element;
+        const ownsFocus = focus === canvas || focus === element ||
+            (mobileTerminal && nativeTouchFocus && target?.terminal &&
+                (focus === document.body || focus === document.documentElement));
         if (!target || !ownsFocus || waitingForScene) {
             release({ restoreFocus: ownsFocus && !waitingForScene }); return;
         }
@@ -112,18 +164,52 @@ export function createRiceNativeTextInput({ document, container, canvas, snapsho
         const bounds = canvas.getBoundingClientRect();
         element.style.left = `${bounds.left + target.x * bounds.width / canvas.width}px`;
         element.style.top = `${bounds.top + target.y * bounds.height / canvas.height}px`;
-        if (document.activeElement !== element) element.focus({ preventScroll: true });
+        if (document.activeElement !== element) {
+            element.focus({ preventScroll: true });
+            showKeyboard();
+        }
     }
     listen(document, 'pointerdown', event => {
         if (event.target === element) return;
-        waitingForScene = true; release();
+        nativeTouchFocus = Boolean(event.isTrusted && event.pointerType === 'touch' &&
+            (event.target === canvas || event.target === container));
+        waitingForScene = true;
+        if (mobileTerminal && nativeTouchFocus && current()?.terminal && current()?.key === owner) return;
+        release();
     }, { capture: true });
+    // A native scene arrives asynchronously, after iOS's keyboard activation
+    // opportunity. A direct tap inside the current terminal must focus the
+    // ingress synchronously, after the canvas's pointer handler has run.
+    function focusTerminalTouch(event, point) {
+        if (!mobileTerminal || !event.isTrusted) return;
+        // RiceWM captures touch pointers on the desktop wrapper.
+        if (event.target !== canvas && event.target !== container) return;
+        const target = current(), bounds = canvas.getBoundingClientRect();
+        if (!target?.terminal || bounds.width <= 0 || bounds.height <= 0) return;
+        const x = (point.clientX - bounds.left) * canvas.width / bounds.width;
+        const y = (point.clientY - bounds.top) * canvas.height / bounds.height;
+        if (x < target.x || y < target.y || x >= target.x + target.width || y >= target.y + target.height) return;
+        // WebKit's compatibility mouse focus follows pointerup and otherwise
+        // takes focus back from the textarea. Native pointer input was already
+        // delivered; cancel only that browser default at the end of the touch.
+        event.preventDefault();
+        sync({ scene: true });
+        showKeyboard();
+    }
+    listen(container, 'pointerup', event => {
+        if (event.pointerType === 'touch' && event.button === 0) focusTerminalTouch(event, event);
+    });
+    listen(container, 'touchend', event => {
+        if (event.touches.length === 0 && event.changedTouches.length === 1)
+            focusTerminalTouch(event, event.changedTouches[0]);
+    }, { passive: false });
     listen(document, 'focusin', event => {
         // The synchronous clipboard fallback restores this same live input.
         // Removing it here would leave focus on BODY when copying finishes.
         if (event.target?.dataset?.riceClipboardTransfer === 'true') return;
         if (event.target !== canvas && event.target !== element) {
             if (event.target !== document.body && event.target !== document.documentElement) resumeOwner = null;
+            if (event.target !== document.body && event.target !== document.documentElement) nativeTouchFocus = false;
             release({ preserveResume: windowBlurred });
         }
         else if (event.target === canvas && !waitingForScene) queueMicrotask(() => sync());

@@ -113,9 +113,10 @@ export function previewBox(object, box) {
 export function resizedBox(object, dx, dy, corner = 2) {
     const box = object.edit.box, [a, b, c, d] = object.transform, det = a * d - b * c;
     if (Math.abs(det) < 1e-12) return { ...box };
-    const sx = [1, 2].includes(corner) ? 1 : -1, sy = corner >= 2 ? 1 : -1;
-    const width = Math.max(4, box.width + sx * (d * dx - c * dy) / det);
-    const height = Math.max(4, box.height + sy * (-b * dx + a * dy) / det);
+    if(!Number.isInteger(corner)||corner<0||corner>7)throw RangeError('Unknown resize handle');
+    const sx = [-1,1,1,-1,0,1,0,-1][corner],sy = [-1,-1,1,1,-1,0,1,0][corner];
+    const width = sx ? Math.max(4, box.width + sx * (d * dx - c * dy) / det) : box.width;
+    const height = sy ? Math.max(4, box.height + sy * (-b * dx + a * dy) / det) : box.height;
     const dw = width - box.width, dh = height - box.height;
     return { ...box, width, height, x: box.x + (a * sx * dw + c * sy * dh - dw) / 2,
         y: box.y + (b * sx * dw + d * sy * dh - dh) / 2 };
@@ -123,12 +124,12 @@ export function resizedBox(object, dx, dy, corner = 2) {
 
 export const normalizedDegrees = value => (value % 360 + 360) % 360;
 /** Preserve flips and center while changing the source rotation angle. */
-export function previewRotation(object, degrees) {
+export function previewRotation(object, degrees, box = object.edit.box) {
     const delta = (degrees - (object.edit.rotationDegrees || 0)) * Math.PI / 180;
     const cos = Math.cos(delta), sin = Math.sin(delta), [a, b, c, d] = object.transform;
-    return previewBox({ ...object, transform: [cos*a-sin*b, sin*a+cos*b, cos*c-sin*d, sin*c+cos*d, 0, 0] }, object.edit.box);
+    return previewBox({ ...object, transform: [cos*a-sin*b, sin*a+cos*b, cos*c-sin*d, sin*c+cos*d, 0, 0] }, box);
 }
-export function rotationHandle(object, ratio = 1) {
+export function rotationHandle(object) {
     if (!object.edit?.canRotate || object.geometry === 'line') return null;
     const corners = objectCorners(object);
     if (corners.length !== 4) return null;
@@ -136,7 +137,7 @@ export function rotationHandle(object, ratio = 1) {
     const top = [(corners[0][0]+corners[1][0])/2, (corners[0][1]+corners[1][1])/2];
     const length = Math.hypot(top[0]-center[0], top[1]-center[1]);
     if (length < 1e-8) return null;
-    return { center, top, point: [top[0]+(top[0]-center[0])*28/ratio/length, top[1]+(top[1]-center[1])*28/ratio/length] };
+    return { center, top, point: [top[0]+(top[0]-center[0])*20/length, top[1]+(top[1]-center[1])*20/length] };
 }
 export function draggedRotation(object, start, point, snap = false) {
     const handle = rotationHandle(object);
@@ -160,9 +161,9 @@ function inverse([a,b,c,d,e,f]) {
 export function previewObjects(objects, { boxes = new Map(), lines = new Map(), rotations = new Map() } = {}) {
     const byId = new Map(objects.map(object => [object.id, object])), deltas = new Map();
     const direct = objects.map(object => {
-        const next = rotations.has(object.id) ? previewRotation(object, rotations.get(object.id))
-            : lines.has(object.id) ? { ...object, line: lines.get(object.id) }
+        let next = lines.has(object.id) ? { ...object, line: lines.get(object.id) }
             : boxes.has(object.id) ? previewBox(object, boxes.get(object.id)) : object;
+        if (rotations.has(object.id)) next = previewRotation(next, rotations.get(object.id), boxes.get(object.id) || object.edit.box);
         if (object.kind === 'group' && next !== object && object.transform) {
             const inverted = inverse(object.transform);
             if (inverted) deltas.set(object.id, multiply(next.transform, inverted));

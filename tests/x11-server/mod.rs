@@ -210,3 +210,5 @@ mod depth_32_put_image_preserves_argb_alpha;
 mod render_pictures_alpha_masks_and_a8_glyphs_paint_retained_pixels;
 mod gnome_50_panel_keeps_taskbar_and_renders_extension_indicator;
 mod fourth_native_instance_becomes_an_exact_task_group_menu;
+
+mod window_chrome_theme_geometry;

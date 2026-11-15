@@ -1,7 +1,10 @@
-import {exposeAppCopilot} from '@ricewm/app';
+import {exposeAppCopilot,GRID_MULTI_SELECTION_CAPABILITY} from '@ricewm/app';
+import {desktopEventTopics} from '@ricewm/app';
+import {createSheetCommandSearch} from './command-search.mjs';
+import {checkedSheetSelectionPreview,sheetSelectionPreviewFrame} from './command-contract.mjs';
 import { createSensitivityDialog, sensitivityCaption } from '@ricewm/app';
 import {createNamedRangesDialog,nameFormulaToken} from './named-ranges.mjs';
-import {checkedCellValidation,createValidationDialog,createValidationList} from './validation-ui.mjs';
+import {checkedCellValidation,checkedTableRenameValidation,createValidationDialog,createValidationList} from './validation-ui.mjs';
 import { SHEET_FONT_FAMILIES, adjacentFontSize, changeDecimals } from './home-format-actions.mjs';
 import { headerAxis, headerRange, headerPreview } from './header-selection.mjs';
 import { formatPainterCommand } from './format-painter.mjs';
@@ -12,6 +15,10 @@ import {createSheetRibbon} from './ribbon.mjs';
 import {createFontColorPicker} from './font-color-picker.mjs';
 import {createSheetContextMenu} from './context-menu.mjs';
 import {createFormatDialog} from './format-dialog.mjs';
+import {createConditionalFormatDialog} from './conditional-format-dialog.mjs';
+import {createDataValidationDialog} from './validation-authoring-dialog.mjs';
+import {createTableDialog,createTablePropertiesDialog} from './table-dialog.mjs';
+import {createPasteSpecialDialog} from './paste-special-dialog.mjs';
 import {createStyleGallery} from './style-gallery.mjs';
 import {formulaReferences} from './formula-references.mjs';
 import {
@@ -21,7 +28,7 @@ import {
 import { createAboutDialog } from "./about.mjs";
 import { checkedEnginePort, checkedProjection } from "./engine-port.mjs";
 import { SheetViewportCache } from "./viewport-cache.mjs";
-import { checkedSheetCommand } from "./command-contract.mjs";
+import { checkedSheetCommand, checkedSheetSpecialCellsPlan, checkedSheetFindResultSort, checkedSheetFindResultsPage, SHEET_FIND_RESULT_SORT, checkedSheetFindOptions, checkedSheetFindPreferences, checkedSheetFindUiState, rememberSheetFindText, sheetFindRepeatDirection, SHEET_FIND_DEFAULTS, isCommittedWorkbookChange, sheetCommittedActionResponse, sheetActionCatalog, checkedSheetAction, checkedSheetContextQuery, sheetAutomationProjection, sheetAutomationResponse } from "./command-contract.mjs";
 import { createFilterValuesDialog, createFindDialog } from "./data-dialogs.mjs";
 import { openFilterDataProvider, openFindDataProvider } from "./data-provider.mjs";
 import { workbookGrantFromOpen } from "./file-open.mjs";
@@ -30,7 +37,11 @@ import { createLayoutDialog, headerResizeHit, resizeDragValue, resizeCommand } f
 import { createSortDialog } from './sort-dialog.mjs';
 import { createDataToolsDialog } from './data-tools-dialog.mjs';
 import { characterOffset, completeFormula, referenceInsertion } from './formula-entry.mjs';
-import { autoSumCommand, betweenCells, createFunctionDialog, fillSelection, rangeAddress, selectionRange } from './editor-actions.mjs';
+import { autoSumCommand, betweenCells, createFunctionDialog, fillSelection, rangeAddress, selectionRange, clearSelectionCommand, formatSelectionCommand, selectionTraversalCommand } from './editor-actions.mjs';
+import {createGoToDialog} from './go-to-dialog.mjs';
+import {createSpecialCellsDialog} from './special-cells-dialog.mjs';
+import {createWorkbookFindDialog} from './find-workbook-dialog.mjs';
+import {createDragAutoScroll, dragScrollViewport, dragScrollHitPoint} from './drag-scroll.mjs';
 
 const STARTUP_STATUS = "Opening workbook…";
 
@@ -42,8 +53,21 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     let closePending = false;
     let functionOpen = false;
     let starting = Boolean(engine), pendingOpen = null;
-    const isBusy = () => busy || closePending || functionOpen;
-    let projection = null, charts = null;
+    let selectionGesture = null, finishingPointerDrag = null;
+    const isBusy = () => busy || closePending || functionOpen || Boolean(selectionGesture) || Boolean(finishingPointerDrag);
+    let projection = null, charts = null, pendingCommittedRevision = null;
+    const workbookRevision = () => pendingCommittedRevision ?? projection?.revision ?? 0;
+    const automationProjection = (...args) => pendingCommittedRevision === null ? sheetAutomationProjection(projection,...args) : null;
+    let documentEpoch=0,addressDraft=null,addressRevision=null,addressEpoch=null,recentDestinations=[];
+    let findPreferences=SHEET_FIND_DEFAULTS,lastFindOptions=null,findHistory=[],replacementHistory=[],findOptionsExpanded=false,findResultSort=SHEET_FIND_RESULT_SORT;
+    let replacementText='';
+    function rememberFindInputs(options,replacement){
+        lastFindOptions=checkedSheetFindOptions(options);
+        const {sheetId,range,...preferences}=lastFindOptions;findPreferences=checkedSheetFindPreferences(preferences);
+        findHistory=rememberSheetFindText(findHistory,options.text);
+        if(replacement!==undefined){replacementText=replacement;replacementHistory=rememberSheetFindText(replacementHistory,replacement,{replacement:true});}
+    }
+    const findUiState=()=>({...checkedSheetFindUiState({preferences:findPreferences,replacement:replacementText,optionsExpanded:findOptionsExpanded}),lastSearch:lastFindOptions,resultsSort:findResultSort,historyCounts:{find:findHistory.length,replace:replacementHistory.length}});
     let viewport = { top: 0, left: 0, rows: 40, columns: 20 };
     const zoomListeners = new Set();
     const zoomSupported = () => Boolean(BigInt(app.hostCapabilities || 0) & (1n << 20n));
@@ -64,6 +88,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     let deferredSelection = null;
     const viewportCache = new SheetViewportCache();
     let dialog = null, contextMenu = null, contextColumn = null;
+    let commandSearch=null;
     let dismissValidation = null;
     let dataSession = null;
     let grid = null;
@@ -83,7 +108,13 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     let headerAnchor = null;
     let formulaBarRequestedVisible = true, offscreenDraft = false;
     const status = new Label({ name: "status-text", text: engine ? STARTUP_STATUS : "Spreadsheet engine unavailable" });
-    const address = new TextField({ name: "name-box", value: "", readOnly: true, enabled: false });
+    const address = new TextField({ name: "name-box", value: "", readOnly: true, enabled: false,accessibleName:'Name Box',tooltip:'Enter a cell or range reference' });
+    address.on(Message.VALUE_CHANGED,()=>{addressDraft=address.getProperty('value');addressRevision??=projection?.revision;addressEpoch??=documentEpoch;});
+    address.on(Message.KEY,event=>{
+        if(!event.detail?.pressed)return;
+        if(event.detail.keyCode===9||event.detail.key==='Escape'){event.preventDefault();addressDraft=addressRevision=addressEpoch=null;address.setProperty('value',projection?.selection.address||'');address.setProperty('focused',false);focusGrid();}
+        else if([36,104].includes(event.detail.keyCode)||event.detail.key==='Enter'){event.preventDefault();void navigateReference(address.getProperty('value'),{expectedRevision:addressRevision??projection?.revision,ownerEpoch:addressEpoch??documentEpoch});}
+    });
     const formula = new TextField({ name: "formula-input", value: "", readOnly: true, enabled: false });
     const validationListButton=new Button({name:'validation-list-open',text:'',icon:74,visible:false,enabled:false,tooltip:'Choose an allowed value (Alt+Down)',accessibleName:'Choose an allowed value'});
     validationListButton.on(Message.ACTIVATE,()=>showValidationList());
@@ -136,9 +167,12 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         commandItems.set(name, item);
         return item;
     };
-    const supports = type => projection?.capabilities.includes(type) === true;
+    const supports = type => pendingCommittedRevision === null && projection?.capabilities.includes(type) === true
+        &&(!['select-ranges','modify-selection','select-special-cells'].includes(type)||Boolean(BigInt(app.hostCapabilities??0)&GRID_MULTI_SELECTION_CAPABILITY));
     const commandAvailable = type => supports(type) && (projection?.history === undefined ||
         (type !== 'undo' || projection.history.canUndo) && (type !== 'redo' || projection.history.canRedo));
+    const canClearSelection=()=>pendingCommittedRevision===null&&Boolean(clearSelectionCommand(projection));
+    const canFormatSelection=type=>pendingCommittedRevision===null&&(projection?.selection.ranges?.length>1?supports('format-ranges'):supports(type)||supports('format-ranges'));
     function updateEnabled() {
         const labelText=sensitivityCaption(engine?.documents?.sensitivity);
         sensitivityBadge.text=sensitivityCaption(engine?.documents?.sensitivity,{compact:true});
@@ -152,6 +186,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         // cell commit must not flash every toolbar control disabled and back.
         if (busy && !closed && !closePending && !functionOpen) {
             formula.setProperty('readOnly', true);
+            address.setProperty('readOnly',true);
             // History may already have advanced while bounded chart results are
             // loading. Keep those buttons accurate and queue further clicks.
             for (const {item,capability} of editorItems) if(capability==='undo'||capability==='redo')item.setProperty('enabled',commandAvailable(capability));
@@ -161,21 +196,22 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         const editable = !closed && !isBusy() && supports("edit-cell") && Boolean(projection?.frame?.active) && !projection.selection.readOnly;
         formula.setProperty("enabled", editable);
         formula.setProperty("readOnly", !editable);
+        const navigable=!closed&&!isBusy()&&supports('select-range');address.setProperty('enabled',navigable);address.setProperty('readOnly',!navigable);
         for (const [type, item] of commandItems) item.setProperty("enabled", !closed && !isBusy() && commandAvailable(type));
         for (const [name, items] of documentItems) for (const item of items) {
             item.setProperty("enabled", !closed && !isBusy() && typeof engine?.documents?.[name] === 'function');
         }
         for (const item of dataItems.values()) item.setProperty('enabled', !closed && !isBusy() &&
-            typeof engine?.query === 'function' && Boolean(projection?.frame?.active));
+            pendingCommittedRevision === null && typeof engine?.query === 'function' && Boolean(projection?.frame?.active));
         const hasAppliedFilter=projection?.filterState ? projection.filterState.appliedColumns>0 : Boolean(projection?.frame?.filter_columns?.some(column=>column.active));
-        dataItems.get('clear-filters')?.setProperty('enabled',!closed&&!isBusy()&&typeof engine?.query==='function'&&hasAppliedFilter);
+        dataItems.get('clear-filters')?.setProperty('enabled',pendingCommittedRevision===null&&!closed&&!isBusy()&&typeof engine?.query==='function'&&hasAppliedFilter);
         for (const { item, capability, available } of editorItems) item.setProperty('enabled', !closed && !isBusy() &&
-            commandAvailable(capability) && Boolean(activeCell()) && (!available || available()));
+            (capability==='clear-range'?canClearSelection():['format-cells','format-range'].includes(capability)?canFormatSelection(capability):commandAvailable(capability)) && Boolean(activeCell()) && (!available || available()));
         for (const { item } of editorItems) item.refreshSelection?.(projection);
         for(const {item,capability} of editorItems)if(capability==='paint-format')item.setProperty('checked',Boolean(formatPainter));
         for(const {item,capability} of editorItems)if(capability==='toggle-autofilter'&&item.name?.endsWith('toggle-filter'))item.setProperty('checked',Boolean(projection?.frame && (projection.frame.filter_header_row!==undefined || projection.frame.filter_columns?.length)));
-        fontSize.setProperty('enabled', !closed && !isBusy() && supports('format-range') && Boolean(projection?.selection.font));
-        fontFamily.setProperty('enabled',!closed&&!isBusy()&&supports('format-cells')&&Boolean(projection?.selection.font));
+        fontSize.setProperty('enabled', !closed && !isBusy() && canFormatSelection('format-range') && Boolean(projection?.selection.font));
+        fontFamily.setProperty('enabled',!closed&&!isBusy()&&canFormatSelection('format-cells')&&Boolean(projection?.selection.font));
         for(const {item}of editorItems){if(item.name?.endsWith('wrap-text'))item.setProperty('checked',projection?.selection.format?.wrapText===true);if(item.name?.includes('vertical-'))item.setProperty('checked',item.name.endsWith('vertical-'+(projection?.selection.format?.vertical||'bottom')));}
         for (const { item, property } of fontItems) item.setProperty('checked', property === 'weight'
             ? projection?.selection.font?.weight >= 600 : projection?.selection.font?.[property] === true);
@@ -197,7 +233,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if (inlineLayer) gridStack.remove(inlineLayer,{destroy:true});
         inlineLayer = inlineEditor = inlinePosition = null;
     }
-    function focusGrid() { formula.setProperty('focused',false);grid?.setProperty('focused',true); }
+    function focusGrid() { address.setProperty('focused',false);formula.setProperty('focused',false);grid?.setProperty('focused',true); }
     function showDraftFormulaBar(required) {
         offscreenDraft=required;
         formulaBar.setProperty('visible',formulaBarRequestedVisible||required);
@@ -206,7 +242,12 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if(draft===null)showDraftFormulaBar(false);
         if (!grid || !projection?.frame) return;
         grid.setProperty('state',grid.getProperty('state')&~State.PRESSED);
-        grid.setFormulaReferences(formulaReferences(draft, {
+        const clipboard=projection.clipboard;
+        const visibleClipboard=clipboard?.sheetId===projection.activeSheetId&&clipboard.range.firstRow<projection.frame.row_count&&clipboard.range.firstColumn<projection.frame.column_count;
+        grid.setFormulaReferences(draft===null&&visibleClipboard?[{
+            first_row:clipboard.range.firstRow,last_row:Math.min(clipboard.range.lastRow,projection.frame.row_count-1),
+            first_column:clipboard.range.firstColumn,last_column:Math.min(clipboard.range.lastColumn,projection.frame.column_count-1),color:7,
+        }]:formulaReferences(draft, {
             sheetName: projection.sheets.find(sheet => sheet.id === projection.activeSheetId)?.name || '',
             rows: projection.frame.row_count, columns: projection.frame.column_count,
         }));
@@ -327,6 +368,10 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if(queuedInput.length>=64){status.text='Input queue is full. Wait for the current edit to finish.';return;}
         queuedInput.push(action);
     }
+    function queueRepeatFind(direction) {
+        queueInput(()=>repeatFind(direction));
+        void drainInput();
+    }
     async function drainInput() {
         if(drainingInput||inputTransaction||isBusy()||closed)return;
         drainingInput=true;
@@ -336,14 +381,25 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     }
     async function commitDraft(key='Enter',modifiers=0,explicitTarget=null) {
         if(draft===null || !draftTarget || isBusy() || inputTransaction)return;
-        const input=completeFormula(draft),target=draftTarget,next=explicitTarget||neighboringCell(target,key,modifiers);
+        if(key==='Enter'&&(modifiers&5)===5){status.text='Array entry is unavailable.';return;}
+        const fillEntry=key==='Enter'&&Boolean(modifiers&4);
+        const ranges=projection.selection.ranges||[selectionRange(projection)];
+        const selectionFill=fillEntry&&supports('fill-selection');
+        if(fillEntry&&!selectionFill&&(ranges.length>1||ranges.some(r=>r&&(r.firstRow!==r.lastRow||r.firstColumn!==r.lastColumn)))){
+            status.text='Filling selected cells with one entry is unavailable.';return;
+        }
+        const input=completeFormula(draft),target=draftTarget,next=explicitTarget||(fillEntry?target:neighboringCell(target,key,modifiers));
+        const traversal=explicitTarget?null:selectionTraversalCommand(projection,key,modifiers);
         inputTransaction=true;draft=null;draftTarget=null;pointing=null;syncFormulaReferences();clearInlineEditor();focusGrid();
-        let changed=false,validationCancelled=false;
+        let changed=false,validationCancelled=false,commitConfirmed=false;
         try {
-            changed=await dispatchCommand({type:'edit-cell',...target,input},{onValidationCancel:()=>{validationCancelled=true;}});
-            if(!changed){queuedInput.length=0;if(closed)return;if(validationCancelled){cancelDraft();focusGrid();return;}draftTarget=target;draft=input;showDraftFormulaBar(true);formula.setProperty('value',input);formula.setSelection?.(Array.from(input).length);formula.setProperty('focused',true);syncFormulaReferences();return;}
-            if(!closed&&next&&(next.row!==target.row||next.column!==target.column))await dispatchCommand({type:'select-cell',...next});
+            const command=selectionFill?{type:'fill-selection',sheetId:target.sheetId,ranges,origin:{row:target.row,column:target.column},input}:{type:'edit-cell',...target,input};
+            changed=await dispatchCommand(command,{onValidationCancel:()=>{validationCancelled=true;},onCommittedChange:()=>{commitConfirmed=true;}});
+            if(!changed){queuedInput.length=0;if(closed)return;if(commitConfirmed){cancelDraft();focusGrid();return false;}if(validationCancelled){cancelDraft();focusGrid();return;}draftTarget=target;draft=input;showDraftFormulaBar(true);formula.setProperty('value',input);formula.setSelection?.(Array.from(input).length);formula.setProperty('focused',true);syncFormulaReferences();return;}
+            if(!closed&&traversal)await dispatchCommand(traversal);
+            else if(!closed&&next&&(next.row!==target.row||next.column!==target.column))await dispatchCommand({type:'select-cell',...next});
             if(!closed)focusGrid();
+            return changed&&!closed;
         } finally {inputTransaction=false;if(changed&&!closed)void drainInput();}
     }
     function bindEditor(control) {
@@ -360,8 +416,12 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         control.on(Message.KEY,handleEditorKey);
     }
     function handleEditorKey(event) {
-            if(!event.detail?.pressed||isBusy()||closed)return;
+            if(!event.detail?.pressed||closed)return;
+            if(event.detail.modifiers===8&&(event.detail.keyCode===47||event.detail.key===';')){event.preventDefault();void selectVisibleCells();return;}
             const key=keyName(event.detail),modifiers=event.detail.modifiers||0;
+            const repeat=sheetFindRepeatDirection(event.detail);
+            if(repeat){if(closePending||functionOpen||(isBusy()&&!inputTransaction&&!commandInFlight))return;event.preventDefault();queueRepeatFind(repeat);return;}
+            if(isBusy())return;
             if(event.detail.key==='F2'||event.detail.keyCode===68){entryMode=!entryMode;pointing=null;for(const editor of [formula,inlineEditor].filter(Boolean))editor.setProperty('state',entryMode?editor.getProperty('state')|State.KEY_NAVIGATION:editor.getProperty('state')&~State.KEY_NAVIGATION);status.text=entryMode?'Point mode: arrows select formula references; F2 edits text':'Text mode: arrows move the caret; F2 selects formula references';event.preventDefault();return;}
             if(key==='Escape'){cancelDraft();focusGrid();event.preventDefault();return;}
             if(draft===null||!draftTarget)return;
@@ -409,6 +469,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     }
     function queueViewport(changes) {
         viewport={...viewport,...changes};pendingViewport=true;void flushViewport();
+        selectionGesture?.autoScroll?.update();
     }
     async function flushViewport() {
         if(!pendingViewport||closed||isBusy()||!engine||viewportRead)return;
@@ -416,11 +477,168 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         const requested={...viewport};
         viewportRead=readProjection({preserveDraft:true,region:requested});
         try{await viewportRead;}catch(error){if(!closed){ if(!pendingViewport && requested.zoomPercent !== (projection?.frame?.zoom_percent || 100)) { viewport={...viewport,zoomPercent:projection?.frame?.zoom_percent||100}; updateZoom(); } status.text=`Cannot change view: ${String(error.message||error).slice(0,180)}`; }}
-        finally{viewportRead=null;if(pendingViewport)void flushViewport();}
+        finally{viewportRead=null;if(pointerDrag?.autoScroll&&dragIsCurrent(pointerDrag)){updatePointerDrag(pointerDrag);paintPointerDrag(pointerDrag);}if(pendingViewport)void flushViewport();}
     }
     function scrollBy(axis,steps) {
         const key=axis==='rows'?'top':'left',maximum=axis==='rows'?1048576:16384,count=axis==='rows'?viewport.rows:viewport.columns;
         const current=viewport[key];queueViewport({[key]:Math.max(0,Math.min(maximum-(viewport.pixelWidth?1:count),current+steps)),followSelection:false});
+    }
+    function dragIsCurrent(drag) {
+        return !closed&&!drag.cancelled&&documentEpoch===drag.epoch&&projection?.revision===drag.revision&&projection.activeSheetId===drag.sheetId;
+    }
+    function cancelDragScroll(drag=pointerDrag) {
+        if(drag){drag.cancelled=true;void drag.autoScroll?.stop();}
+    }
+    function dragPointerHit(drag) {
+        const point=dragScrollHitPoint(projection?.frame,drag.pointer,drag.axis);
+        return point?drag.control.hitTest(point.x,point.y):null;
+    }
+    function updatePointerDrag(drag) {
+        const hit=dragPointerHit(drag);
+        if(drag.mode==='selection-modification')selectionGesturePoint(drag,hit);
+        else if(drag.mode==='header'){
+            const coordinate=drag.axis==='rows'?hit?.row:hit?.column;
+            if(Number.isInteger(coordinate))drag.last=coordinate;
+        }else if(hit&&Number.isInteger(hit.row)&&Number.isInteger(hit.column))drag.last={row:hit.row,column:hit.column};
+    }
+    function paintPointerDrag(drag) {
+        if(!dragIsCurrent(drag)||drag.ended)return;
+        if(drag.mode==='selection-modification'){queueSelectionPreview(drag);return;}
+        const range=drag.mode==='header'?headerRange(projection.frame,drag.axis,drag.first,drag.last):betweenCells(drag.first,drag.last);
+        drag.control.presentFrame(headerPreview(projection.frame,range),{fullPaint:false,changedCells:[]});
+        status.text=`Select ${rangeAddress(range)}`;
+    }
+    function trackDragPointer(drag,control,point) {
+        if(!drag||!['select','header','selection-modification'].includes(drag.mode))return;
+        drag.control=control;drag.pointer={x:point.x,y:point.y};drag.sheetId??=projection.activeSheetId;drag.epoch??=documentEpoch;
+        drag.autoScroll??=createDragAutoScroll({
+            canScroll:()=>pointerDrag===drag&&!drag.ended&&dragIsCurrent(drag)&&!busy&&!closePending&&!functionOpen
+                &&Boolean(pendingViewport||dragScrollViewport(projection.frame,viewport,drag.pointer,drag.axis)),
+            step:async()=>{
+                if(drag.previewPromise)await drag.previewPromise;
+                while(viewportRead){try{await viewportRead;}catch{}}
+                if(pointerDrag!==drag||drag.ended||!dragIsCurrent(drag))return;
+                const changes=pendingViewport?{}:dragScrollViewport(projection.frame,viewport,drag.pointer,drag.axis);
+                if(!changes)return;
+                const requested={...viewport,...changes,followSelection:false};viewport=requested;pendingViewport=false;
+                const read=readProjection({preserveDraft:true,region:requested});viewportRead=read;
+                try{await read;}finally{if(viewportRead===read)viewportRead=null;}
+                if(pointerDrag!==drag||drag.ended||!dragIsCurrent(drag))return;
+                updatePointerDrag(drag);paintPointerDrag(drag);
+            },
+            onError:error=>{
+                drag.cancelled=true;if(pointerDrag===drag)pointerDrag=null;
+                if(!closed){drag.control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});status.text=`Cannot scroll selection: ${String(error.message||error).slice(0,180)}`;}
+                if(selectionGesture===drag)void finishSelectionGesture(drag,true);
+            },
+        });
+        drag.autoScroll.update();
+    }
+    async function finishPointerDrag(drag,cancel=false) {
+        drag.ended=true;drag.cancelled||=cancel;if(pointerDrag===drag)pointerDrag=null;
+        finishingPointerDrag=drag;inputTransaction=true;updateEnabled();
+        try{
+        await drag.autoScroll?.stop();
+        if(!dragIsCurrent(drag)){if(!closed)drag.control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});return;}
+        updatePointerDrag(drag);
+        let applied;
+        if(drag.mode==='header'){
+            headerAnchor={axis:drag.axis,first:drag.first,last:drag.last,sheetId:drag.sheetId};
+            applied=await dispatchCommand({type:'select-range',sheetId:drag.sheetId,...headerRange(projection.frame,drag.axis,drag.first,drag.last)},{expectedRevision:drag.revision});
+        }else{
+            rangeAnchor=drag.first;rangeExtent=drag.last;
+            applied=await dispatchCommand({type:'select-range',sheetId:drag.sheetId,...betweenCells(drag.first,drag.last)},{expectedRevision:drag.revision});
+        }
+        if(!applied&&!closed)drag.control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});
+        }finally{
+            if(finishingPointerDrag===drag){finishingPointerDrag=null;inputTransaction=false;if(!closed){updateEnabled();if(pendingViewport)void flushViewport();void drainInput();}}
+        }
+    }
+    function selectionGestureCommand(drag){
+        const frame=projection.frame,axis=drag.axis;
+        const range=axis?headerRange(frame,axis,axis==='columns'?drag.first.column:drag.first.row,axis==='columns'?drag.last.column:drag.last.row):betweenCells(drag.first,drag.last);
+        return {type:'modify-selection',sheetId:drag.sheetId,range,anchor:drag.anchor,unit:axis==='rows'?'row':axis==='columns'?'column':axis==='all'?'sheet':'cell',operation:'toggle'};
+    }
+    function selectionGesturePoint(drag,hit,checkRevision=true){
+        if(!hit||checkRevision&&hit.revision!==drag.revision)return;
+        if(drag.axis==='rows'&&Number.isInteger(hit.row))drag.last={...drag.last,row:hit.row};
+        else if(drag.axis==='columns'&&Number.isInteger(hit.column))drag.last={...drag.last,column:hit.column};
+        else if(!drag.axis&&Number.isInteger(hit.row)&&Number.isInteger(hit.column))drag.last={row:hit.row,column:hit.column};
+    }
+    function queueSelectionPreview(drag){
+        const command=selectionGestureCommand(drag),key=JSON.stringify(command);
+        if(drag.latestKey===key)return drag.previewPromise;
+        drag.latestKey=key;drag.pendingPreview={command,key};
+        if(drag.previewPromise)return drag.previewPromise;
+        drag.previewPromise=(async()=>{
+            while(drag.pendingPreview&&!drag.cancelled&&!closed&&selectionGesture===drag){
+                const request=drag.pendingPreview;drag.pendingPreview=null;
+                try{
+                    while(viewportRead){try{await viewportRead;}catch{}}
+                    if(drag.cancelled||closed||documentEpoch!==drag.epoch||projection?.revision!==drag.revision||projection.activeSheetId!==drag.sheetId)break;
+                    let plan=drag.validatedPlan;
+                    if(request.key!==drag.validatedKey){
+                        const {type,...data}=request.command;
+                        const response=await engine.query({action:'preview-selection',...data},{expectedRevision:drag.revision});
+                        plan=checkedSheetSelectionPreview(response,data,drag.revision);drag.validatedKey=request.key;drag.validatedPlan=plan;
+                    }
+                    drag.previewError=null;
+                    if(selectionGesture===drag&&!drag.cancelled&&!drag.ended&&!closed&&documentEpoch===drag.epoch&&projection?.revision===drag.revision&&projection.activeSheetId===drag.sheetId&&drag.latestKey===request.key){
+                        drag.control.presentFrame(sheetSelectionPreviewFrame(projection.frame,plan),{fullPaint:false,changedCells:[]});
+                        status.text=`Select ${rangeAddress(request.command.range)} · Ctrl toggles the starting cell or header`;
+                    }
+                }catch(error){
+                    drag.previewError=error;
+                    if(selectionGesture===drag&&!closed&&!drag.cancelled&&documentEpoch===drag.epoch){drag.control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});status.text=String(error.message||error).slice(0,240);}
+                }
+            }
+        })().finally(()=>{drag.previewPromise=null;});
+        return drag.previewPromise;
+    }
+    function beginSelectionGesture(control,first,last=first,axis=headerAxis(first),anchor=null){
+        if(selectionGesture||!supports('modify-selection')||typeof engine?.query!=='function')return null;
+        const active=activeCell();
+        anchor??=axis==='rows'?{row:first.row,column:active.column}:axis==='columns'?{row:active.row,column:first.column}:axis==='all'?{row:active.row,column:active.column}:{row:first.row,column:first.column};
+        const drag={mode:'selection-modification',control,first:{row:first.row,column:first.column},last:{row:last.row,column:last.column},axis,anchor,sheetId:projection.activeSheetId,revision:projection.revision,epoch:documentEpoch,cancelled:false,ended:false};
+        selectionGesture=pointerDrag=drag;inputTransaction=true;cancelDraft();rangeAnchor=rangeExtent=null;headerAnchor=null;focusGrid();updateEnabled();queueSelectionPreview(drag);return drag;
+    }
+    function deferSelectionGesture(control,target){
+        if(!supports('modify-selection')||typeof engine?.query!=='function'){status.text='Multiple-area selection is unavailable.';return null;}
+        if(queuedInput.length>=64){status.text='Input queue is full. Wait for the current operation to finish.';return null;}
+        const axis=headerAxis(target),active=activeCell();
+        if(target.kind||!axis&&(!Number.isInteger(target.row)||!Number.isInteger(target.column)))return null;
+        const anchor=axis==='rows'?{row:target.row,column:active.column}:axis==='columns'?{row:active.row,column:target.column}:axis==='all'?{row:active.row,column:active.column}:{row:target.row,column:target.column};
+        const pending={mode:'modify',axis,anchor,first:{row:target.row,column:target.column},last:{row:target.row,column:target.column},sheetId:projection.activeSheetId,epoch:documentEpoch,ended:false,cancelled:false};
+        deferredSelection=pending;
+        queueInput(async()=>{
+            if(!pending.cancelled&&!closed&&documentEpoch===pending.epoch&&projection?.activeSheetId===pending.sheetId){
+                const drag=beginSelectionGesture(control,pending.first,pending.last,pending.axis,pending.anchor);
+                if(drag&&pending.ended)await finishSelectionGesture(drag);
+            }
+            if(deferredSelection===pending)deferredSelection=null;
+        });return pending;
+    }
+    function finishSelectionGesture(drag,cancel=false){
+        if(drag.finishing){if(cancel&&!drag.committing)drag.cancelled=true;return drag.finishing;}
+        drag.ended=true;drag.cancelled||=cancel;if(pointerDrag===drag)pointerDrag=null;
+        drag.finishing=(async()=>{
+            let applied=false;
+            try{
+                await drag.autoScroll?.stop();
+                if(!drag.cancelled&&dragIsCurrent(drag)){if(drag.pointer)selectionGesturePoint(drag,dragPointerHit(drag));queueSelectionPreview(drag);}
+                if(drag.previewPromise)await drag.previewPromise;
+                if(!drag.cancelled&&!closed&&documentEpoch===drag.epoch&&projection?.revision===drag.revision&&projection.activeSheetId===drag.sheetId){
+                    const command=selectionGestureCommand(drag);
+                    if(drag.validatedKey===JSON.stringify(command)&&!drag.previewError){drag.committing=true;applied=await dispatchCommand(command,{expectedRevision:drag.revision});}
+                    else if(drag.previewError)status.text=String(drag.previewError.message||drag.previewError).slice(0,240);
+                }
+                if(!applied&&!closed&&documentEpoch===drag.epoch)drag.control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});
+                if(drag.cancelled&&!closed)status.text=projection?.status||'Selection cancelled';
+            }finally{
+                if(selectionGesture===drag){selectionGesture=null;inputTransaction=false;if(!closed){updateEnabled();if(pendingViewport)void flushViewport();void drainInput();}}
+            }
+            return applied;
+        })();return drag.finishing;
     }
     function bindGridEvents(control) {
         if(Message.SIZE_CHANGED)control.on(Message.SIZE_CHANGED,event=>{
@@ -431,18 +649,36 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             queueViewport({pixelWidth,pixelHeight,...(BigInt(app.hostCapabilities||0)&(1n<<14n)?{frameBytes:262144}:{}),rows:256,columns:128,top:viewport.top,left:viewport.left,followSelection:draft===null});
             if(inlinePosition){const position=editorPosition();if(position)inlinePosition.setProperty('text',position);}
         });
-        control.on(Message.BLUR, () => { if (pointerDrag?.mode === 'resize') status.text = projection?.status || 'Resize cancelled'; if(pointerDrag?.mode!=='reference'){if(pointerDrag?.mode==='fill')syncFormulaReferences();if(pointerDrag?.mode==='header')control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});pointerDrag = null;} });
+        control.on(Message.BLUR, () => { if(selectionGesture?.control===control)void finishSelectionGesture(selectionGesture,true);if(pointerDrag?.autoScroll)void finishPointerDrag(pointerDrag,true);if (pointerDrag?.mode === 'resize') status.text = projection?.status || 'Resize cancelled'; if(pointerDrag?.mode!=='reference'){if(pointerDrag?.mode==='fill')syncFormulaReferences();if(pointerDrag?.mode==='header')control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});pointerDrag = null;} });
         control.on(Message.POINTER, event => {
+            if(event.detail?.kind==='leave'){
+                if(deferredSelection){deferredSelection.cancelled=true;deferredSelection=null;}
+                if(selectionGesture?.control===control)void finishSelectionGesture(selectionGesture,true);
+                else if(pointerDrag?.autoScroll)void finishPointerDrag(pointerDrag,true);
+                event.preventDefault();return;
+            }
             if(event.detail?.kind==='down'&&event.detail.button===1)charts?.select(null);
             if(event.detail?.kind==='wheel'&&!closed&&supports('select-cell')) {
                 const horizontal=(event.detail.modifiers&1)||[6,7].includes(event.detail.button);
                 const direction=[4,6].includes(event.detail.button)?-1:1;
                 scrollBy(horizontal?'columns':'rows',direction*3);event.preventDefault();return;
             }
+            if(selectionGesture?.control===control&&!selectionGesture.ended&&['move','up','cancel'].includes(event.detail?.kind)){
+                const drag=selectionGesture;trackDragPointer(drag,control,event.detail);selectionGesturePoint(drag,dragPointerHit(drag));
+                if(event.detail.kind==='up'||event.detail.kind==='cancel')void finishSelectionGesture(drag,event.detail.kind==='cancel');else queueSelectionPreview(drag);
+                event.preventDefault();return;
+            }
+            if(pointerDrag&&['select','header'].includes(pointerDrag.mode)&&['move','up','cancel'].includes(event.detail?.kind)){
+                const drag=pointerDrag;trackDragPointer(drag,control,event.detail);
+                if(event.detail.kind==='move'){updatePointerDrag(drag);paintPointerDrag(drag);}
+                else void finishPointerDrag(drag,event.detail.kind==='cancel');
+                event.preventDefault();return;
+            }
             if(deferredSelection && ['move','up','cancel'].includes(event.detail?.kind)) {
                 const pending=deferredSelection,target=control.hitTest(event.detail.x,event.detail.y);
                 if(event.detail.kind==='cancel'){pending.cancelled=true;deferredSelection=null;return;}
-                if(pending.mode==='header') {
+                if(pending.mode==='modify')selectionGesturePoint(pending,target,false);
+                else if(pending.mode==='header') {
                     const last=pending.axis==='rows'?target?.row:target?.column;
                     if(Number.isInteger(last))pending.last=last;
                 } else if(target&&Number.isInteger(target.row)&&Number.isInteger(target.column)&&!target.kind)pending.last={row:target.row,column:target.column};
@@ -451,6 +687,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             }
             if((inputTransaction||commandInFlight)&&!closed&&!closePending&&!functionOpen&&event.detail?.kind==='down'&&event.detail.button===1) {
                 const target=control.hitTest(event.detail.x,event.detail.y);
+                if((event.detail.modifiers&4)&&target&&!target.kind){deferSelectionGesture(control,target);event.preventDefault();return;}
                 const axis=target&&supports('select-range')?headerAxis(target):null;
                 if(axis) {
                     if(queuedInput.length>=64){status.text='Input queue is full. Wait for the current edit to finish.';event.preventDefault();return;}
@@ -494,17 +731,27 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 }
                 return;
             }
-            if (closed || isBusy() || !supports("select-cell")) { if(pointerDrag?.mode==='fill')syncFormulaReferences();pointerDrag = null; return; }
+            if (closed || isBusy() || !supports("select-cell")) { cancelDragScroll();if(pointerDrag?.mode==='fill')syncFormulaReferences();pointerDrag = null; return; }
             const hit = control.hitTest(event.detail.x, event.detail.y);
             const kind = event.detail?.kind;
             if(kind==='down'&&event.detail.button===3&&hit){void openContextMenu(hit,event.detail.x,event.detail.y);event.preventDefault();return;}
-            if (kind === 'cancel') { if(pointerDrag?.mode==='header')control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]}); if(pointerDrag?.mode==='fill')syncFormulaReferences();pointerDrag = null; status.text = projection?.status || 'Resize cancelled'; return; }
+            if (kind === 'cancel') { cancelDragScroll();if(pointerDrag?.mode==='header')control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]}); if(pointerDrag?.mode==='fill')syncFormulaReferences();pointerDrag = null; status.text = projection?.status || 'Resize cancelled'; return; }
             if(pointerDrag?.mode==='reference'&&['move','up'].includes(kind)) {
                 if(hit&&hit.row!==null&&hit.column!==null&&hit.row!==undefined)pointReference(pointerDrag.first,hit);
                 if(kind==='up')pointerDrag=null;event.preventDefault();return;
             }
+            if(kind==='down'&&event.detail.button===1&&draft!==null&&(event.detail.modifiers&4)&&hit&&!hit.kind&&headerAxis(hit)){
+                const pending=deferSelectionGesture(control,hit);
+                if(pending)void(async()=>{const applied=await commitDraft('Enter',0,draftTarget);if(!applied){pending.cancelled=true;if(deferredSelection===pending)deferredSelection=null;}})();
+                event.preventDefault();return;
+            }
             if(kind==='down'&&event.detail.button===1&&draft!==null&&hit&&hit.row!==null&&hit.column!==null&&hit.row!==undefined) {
                 if(pointReference(hit,hit,Boolean(event.detail.modifiers&1))){pointerDrag={mode:'reference',first:pointing.first};event.preventDefault();return;}
+                if(event.detail.modifiers&4){
+                    const pending=deferSelectionGesture(control,hit);
+                    if(pending)void(async()=>{const applied=await commitDraft('Enter',0,draftTarget);if(!applied){pending.cancelled=true;if(deferredSelection===pending)deferredSelection=null;}})();
+                    event.preventDefault();return;
+                }
                 const target={sheetId:projection.activeSheetId,row:hit.row,column:hit.column};void commitDraft('Enter',0,target);event.preventDefault();return;
             }
             if (pointerDrag?.mode === 'resize' && ['move', 'up'].includes(kind)) {
@@ -516,23 +763,6 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 pointerDrag = null;
                 if (coordinate === drag.hit.origin) { status.text = projection.status; return; }
                 void dispatchCommand(resizeCommand(drag.sheetId, drag.hit.axis, drag.hit.index, drag.hit.index, value), { expectedRevision: drag.revision });
-                return;
-            }
-            if (pointerDrag?.mode === 'header' && ['move', 'up'].includes(kind)) {
-                const drag = pointerDrag;
-                if (drag.revision !== projection.revision || drag.sheetId !== projection.activeSheetId) {
-                    pointerDrag = null; control.presentFrame(projection.frame); return;
-                }
-                const coordinate = drag.axis === 'rows' ? hit?.row : hit?.column;
-                if (Number.isInteger(coordinate) && coordinate !== drag.last) {
-                    drag.last = coordinate;
-                    control.presentFrame(headerPreview(projection.frame, headerRange(projection.frame, drag.axis, drag.first, drag.last)), {fullPaint:false,changedCells:[]});
-                }
-                event.preventDefault();
-                if (kind === 'move') return;
-                pointerDrag = null;
-                headerAnchor = {axis:drag.axis, first:drag.first, last:drag.last, sheetId:drag.sheetId};
-                void dispatchCommand({type:'select-range',sheetId:drag.sheetId,...headerRange(projection.frame,drag.axis,drag.first,drag.last)});
                 return;
             }
             if (pointerDrag && ['move', 'up'].includes(kind)) {
@@ -568,6 +798,11 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 if (hit.revision === projection?.revision) void showData('filter', hit.column);
                 return;
             }
+            if((event.detail.modifiers&4)&&hit&&!hit.kind&&hit.revision===projection?.revision){
+                if(!supports('modify-selection')||typeof engine?.query!=='function')status.text='Multiple-area selection is unavailable.';
+                else {const drag=beginSelectionGesture(control,hit);if(drag)trackDragPointer(drag,control,event.detail);}
+                event.preventDefault();return;
+            }
             if(hit&&hit.revision===projection?.revision&&supports('select-range')&&(hit.row===null||hit.column===null)) {
                 const axis = headerAxis(hit);
                 if (!axis) return;
@@ -576,6 +811,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 const first = event.detail.modifiers & 1 ? (previous ?? last) : last;
                 cancelDraft();focusGrid();rangeAnchor=rangeExtent=null;
                 pointerDrag={mode:'header',axis,first,last,revision:projection.revision,sheetId:projection.activeSheetId};
+                trackDragPointer(pointerDrag,control,event.detail);
                 control.presentFrame(headerPreview(projection.frame,headerRange(projection.frame,axis,first,last)),{fullPaint:false,changedCells:[]});
                 event.preventDefault();return;
             }
@@ -592,22 +828,31 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             }
             if (supports('select-range')) {
                 const first = event.detail.modifiers & 1 ? (rangeAnchor || activeCell()) : hit;
-                pointerDrag = { mode: 'select', first, last: hit, revision: projection.revision }; return;
+                pointerDrag = { mode: 'select', first, last: hit, revision: projection.revision };trackDragPointer(pointerDrag,control,event.detail); return;
             }
             rangeAnchor = rangeExtent = null;
             void dispatchCommand({ type: "select-cell", sheetId: projection.activeSheetId, row: hit.row, column: hit.column });
         });
         const handleGridKey = event => {
+            if(event.detail?.pressed&&keyName(event.detail)==='Escape'&&finishingPointerDrag&&!commandInFlight){event.preventDefault();cancelDragScroll(finishingPointerDrag);return;}
+            if(event.detail?.pressed&&keyName(event.detail)==='Escape'&&selectionGesture&&!deferredSelection&&!commandInFlight){event.preventDefault();void finishSelectionGesture(selectionGesture,true);return;}
             if(event.detail?.pressed&&(inputTransaction||commandInFlight)&&!closed&&!closePending&&!functionOpen) {
-                const key=keyName(event.detail);
+                if(event.detail.modifiers===8&&(event.detail.keyCode===47||event.detail.key===';')){queueInput(()=>selectVisibleCells());event.preventDefault();return;}
+                const key=keyName(event.detail),repeat=sheetFindRepeatDirection(event.detail);
+                if(repeat){queueRepeatFind(repeat);event.preventDefault();return;}
+                if(event.detail.keyCode===42&&(event.detail.modifiers&4)||event.detail.keyCode===71&&!event.detail.modifiers){queueInput(()=>performEditorAction('go-to'));event.preventDefault();return;}
+                if(event.detail.modifiers&4&&(event.detail.keyCode===41||event.detail.keyCode===43&&supports('replace-text'))){const operation=event.detail.keyCode===41?'find':'replace';queueInput(()=>performEditorAction(operation));event.preventDefault();return;}
                 if(key==='Escape'&&deferredSelection){deferredSelection.cancelled=true;deferredSelection=null;event.preventDefault();return;}
+                if(key==='Escape'&&commandInFlight){const detail={...event.detail};queueInput(()=>handleGridKey({detail,preventDefault(){}}));event.preventDefault();return;}
                 if(['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Tab','Enter','PageUp','PageDown','Home','End'].includes(key)||(event.detail.keyCode===65&&[1,4,5].includes(event.detail.modifiers))||event.detail.keyCode===68||event.detail.key==='F2'||event.detail.text) {
                     const detail={...event.detail};queueInput(()=>handleGridKey({detail,preventDefault(){}}));event.preventDefault();
                 }
                 return;
             }
             if (!event.detail?.pressed || closed || isBusy() || !supports("select-cell")) return;
+            if(event.detail.modifiers===8&&(event.detail.keyCode===47||event.detail.key===';')){event.preventDefault();void selectVisibleCells();return;}
             const modifiers = event.detail.modifiers || 0;
+            const repeat=sheetFindRepeatDirection(event.detail);if(repeat){event.preventDefault();queueRepeatFind(repeat);return;}
             if(draft===null&&modifiers===8&&(event.detail.key==='ArrowDown'||event.detail.keyCode===116)){
                 event.preventDefault();void showValidationList();return;
             }
@@ -621,7 +866,8 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             }
             // Input may already be in flight to the grid while the host applies
             // the editor focus patch. Preserve its logical editing destination.
-            if(draft!==null && !(modifiers&(4|8|64))) {
+            const entryCommitKey=keyName(event.detail)==='Enter'&&Boolean(modifiers&4)&&!(modifiers&(8|64));
+            if(draft!==null && (!(modifiers&(4|8|64))||entryCommitKey)) {
                 if(event.detail.text&&!/[\u0000-\u001f]/u.test(event.detail.text)){
                     const editor=inlineEditor||formula,characters=Array.from(draft),selection=editor.selection;
                     const start=selection?Math.min(selection.anchor,selection.caret):characters.length,end=selection?Math.max(selection.anchor,selection.caret):characters.length;
@@ -642,27 +888,34 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             }
             if (modifiers & 4) {
                 const code=event.detail.keyCode;
+                if(code===55&&(modifiers&8)){event.preventDefault();showPasteSpecial();return;}
                 if(code===10){event.preventDefault();showFormat();return;}
                 if(code===110){event.preventDefault();cancelDraft();void dispatchCommand({type:'select-cell',sheetId:projection.activeSheetId,row:0,column:0});return;}
                 if(code===115){event.preventDefault();void selectUsedEnd();return;}
-                if(code===41){event.preventDefault();void showData('find');return;}
+                if(code===41){event.preventDefault();performEditorAction('find');return;}
+                if(code===42){event.preventDefault();performEditorAction('go-to');return;}
+                if(code===43&&supports('replace-text')){event.preventDefault();performEditorAction('replace');return;}
                 if(code===46&&(modifiers&1)){event.preventDefault();performEditorAction('toggle-filter');return;}
                 const document=({57:'new',32:'open',39:'save'})[code];
                 if(document){event.preventDefault();void dispatchDocument(document);return;}
-                const operation = ({ 54: 'copy', 55: modifiers & 1 ? 'paste-values' : 'paste', 40: 'fill-down', 27: 'fill-right', 52: 'undo', 29: 'redo',
+                const operation = ({ 53:'cut',54: 'copy', 55: modifiers & 1 ? 'paste-values' : 'paste', 40: 'fill-down', 27: 'fill-right', 52: 'undo', 29: 'redo',
                     56: 'font-bold', 31: 'font-italic', 30: 'font-underline' })[event.detail.keyCode];
                 if (operation) { event.preventDefault(); performEditorAction(operation); }
                 return;
             }
             if (modifiers & (8 | 64)) return;
+            if(!modifiers&&(event.detail.key==='F5'||event.detail.keyCode===71)){event.preventDefault();performEditorAction('go-to');return;}
             if (event.detail.key === 'F2' || event.detail.keyCode === 68) { event.preventDefault(); beginEditing(null, false); return; }
             if (event.detail.key === 'Delete' || event.detail.keyCode === 119) { event.preventDefault(); performEditorAction('clear'); return; }
             if (typeof event.detail.text === 'string' && event.detail.text && !/[\u0000-\u001f]/u.test(event.detail.text)) {
                 event.preventDefault(); beginEditing(event.detail.text); return;
             }
             const key = keyName(event.detail);
-            if (key === 'Escape') { if(deferredSelection)deferredSelection.cancelled=true;deferredSelection=null;cancelFormatPainter();if(pointerDrag?.mode==='header')control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});pointerDrag = null; cancelDraft(); status.text = projection.status; return; }
+            if (key === 'Escape') { if(deferredSelection)deferredSelection.cancelled=true;deferredSelection=null;cancelFormatPainter();cancelDragScroll();if(pointerDrag&&['header','select'].includes(pointerDrag.mode))control.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});pointerDrag = null; cancelDraft(); status.text = projection.status;
+                if(projection.clipboard&&supports('cancel-clipboard')){event.preventDefault();void dispatchCommand({type:'cancel-clipboard',clipboardGeneration:projection.clipboard.generation});}return; }
             if(!['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','Enter','Tab','PageUp','PageDown','Home','End'].includes(key))return;
+            const traversal=selectionTraversalCommand(projection,key,modifiers);
+            if(traversal){rangeAnchor=rangeExtent=null;headerAnchor=null;event.preventDefault();return dispatchCommand(traversal);}
             const extending = (modifiers & 1) && !['Tab','Enter'].includes(key);
             if (extending && !supports('select-range')) return;
             if (extending && headerAnchor?.sheetId === projection.activeSheetId && headerAnchor.axis !== 'all') {
@@ -716,7 +969,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         const palette = name === 'font-color' && toolbar;
         const item = control || (palette ? createFontColorPicker({onChoose:applyFontColor}) : toolbar ? new Button({ name: `toolbar-${name}`, text, enabled: false }) : action(name, text));
         if (!palette) item.on(Message.ACTIVATE, () => performEditorAction(name));
-        editorItems.push({ item, capability, available }); return item;
+        editorItems.push({ item, capability, available:()=>canPasteAction(name)&&(!available||available()) }); return item;
     };
     const fontAction = (name, text, property, toolbar = false) => {
         const item = editorAction(name, text, 'format-range', toolbar, () => Boolean(projection?.selection.font));
@@ -764,8 +1017,59 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);functionOpen=false;}
         finally{busy=false;updateEnabled();}
     }
+    function recordDestination(command){
+        cancelDragScroll();headerAnchor=null;rangeAnchor=rangeExtent=null;pointerDrag=null;
+        if(['navigate-reference','find-next'].includes(command.type))command={type:'navigate-range',sheetId:projection.activeSheetId,...projection.selection.range};
+        const same=value=>value.sheetId===command.sheetId&&['firstRow','lastRow','firstColumn','lastColumn'].every(key=>value[key]===command[key]);
+        recentDestinations=[command,...recentDestinations.filter(value=>!same(value))].slice(0,10);
+    }
+    async function navigateReference(reference,{expectedRevision=projection?.revision,ownerEpoch=documentEpoch}={}){
+        if(closed||isBusy()||!projection)return false;
+        try{
+            if(ownerEpoch!==documentEpoch||expectedRevision!==projection.revision)throw Error('Workbook changed. Enter the reference again.');
+            if(draft!==null){await commitDraft('Enter',0,draftTarget);if(closed||draft!==null)return false;expectedRevision=projection.revision;}
+            const checked=checkedSheetAction('navigate.reference',{reference},actionOptions(expectedRevision));
+            const applied=await dispatchCommand(checked.command,{expectedRevision});
+            if(applied){recordDestination(checked.command);addressDraft=addressRevision=addressEpoch=null;address.setProperty('value',projection.selection.address);address.setProperty('focused',false);focusGrid();}
+            return applied;
+        }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);return false;}
+    }
+    async function showGoTo(){
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports('select-range'))return;
+        if(draft!==null){await commitDraft('Enter',0,draftTarget);if(closed||draft!==null)return;}
+        const initial=projection,ownerEpoch=documentEpoch;if(isBusy())return;
+        cancelFormatPainter();pointerDrag=null;functionOpen=true;updateEnabled();grid?.setProperty('focused',false);
+        dialog=createGoToDialog({projection:initial,recent:recentDestinations,isCurrent:()=>!closed&&documentEpoch===ownerEpoch&&projection?.revision===initial.revision,onClose:closeAbout,
+            ...(supports('select-special-cells')&&supports('special-cells')&&typeof engine?.query==='function'?{onSpecial:()=>{closeAbout();void showSpecialCells();}}:{}),
+            ...(supports('navigate-reference')&&typeof engine?.query==='function'?{query:async request=>{busy=true;updateEnabled();try{return await engine.query(request,{expectedRevision:initial.revision});}finally{busy=false;if(!closed)updateEnabled();}}}:{}),
+            apply:async(command,expectedRevision)=>{const applied=await dispatchCommand(command,{fromDialog:true,expectedRevision});if(!applied&&!closed)throw Error(status.text);if(applied)recordDestination(command);return applied;}});root.append(dialog);
+    }
+    async function showSpecialCells(){
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports('select-special-cells')||!supports('special-cells')||typeof engine?.query!=='function')return;
+        if(draft!==null){await commitDraft('Enter',0,draftTarget);if(closed||draft!==null)return;}
+        const initial=projection,ownerEpoch=documentEpoch;if(isBusy())return;
+        cancelFormatPainter();cancelDragScroll();pointerDrag=null;functionOpen=true;updateEnabled();grid?.setProperty('focused',false);
+        dialog=createSpecialCellsDialog({projection:initial,isCurrent:()=>!closed&&documentEpoch===ownerEpoch&&projection?.revision===initial.revision,
+            query:async request=>{busy=true;updateEnabled();try{return await engine.query(request,{expectedRevision:initial.revision});}finally{busy=false;if(!closed)updateEnabled();}},
+            onPreview:plan=>{
+                if(closed||documentEpoch!==ownerEpoch||projection?.revision!==initial.revision)return;
+                if(!plan?.ranges.length){grid?.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});return;}
+                const old={row:initial.frame.active[0],column:initial.frame.active[1]},active=plan.ranges.some(r=>old.row>=r.firstRow&&old.row<=r.lastRow&&old.column>=r.firstColumn&&old.column<=r.lastColumn)?old:{row:plan.ranges[0].firstRow,column:plan.ranges[0].firstColumn};
+                grid?.presentFrame(sheetSelectionPreviewFrame(initial.frame,{ranges:plan.ranges,active}),{fullPaint:false,changedCells:[]});
+            },
+            onClose:()=>{if(!closed)grid?.presentFrame(projection.frame,{fullPaint:false,changedCells:[]});closeAbout();},
+            apply:async(command,expectedRevision)=>{const applied=await dispatchCommand(command,{fromDialog:true,expectedRevision,throwErrors:true});if(applied){headerAnchor=null;rangeAnchor=rangeExtent=null;}return applied;}});
+        root.append(dialog);
+    }
+    async function selectVisibleCells(){
+        if(closed||isBusy()||!projection||!supports('select-special-cells'))return;
+        if(draft!==null){await commitDraft('Enter',0,draftTarget);if(closed||draft!==null)return;}
+        const ranges=projection.selection.ranges||[selectionRange(projection)],r=ranges[0];
+        const scope=ranges.length===1&&r.firstRow===r.lastRow&&r.firstColumn===r.lastColumn?[{firstRow:0,lastRow:1048575,firstColumn:0,lastColumn:16383}]:ranges;
+        if(await dispatchCommand({type:'select-special-cells',sheetId:projection.activeSheetId,ranges:scope,kind:'visible',types:[]})){headerAnchor=null;rangeAnchor=rangeExtent=null;}
+    }
     async function showFormat(initialTab='number') {
-        if(closed||isBusy()||dialog||dataSession||!projection||!supports('format-cells'))return;
+        if(closed||isBusy()||dialog||dataSession||!projection||!canFormatSelection('format-cells'))return;
         const initial=projection;cancelDraft();pointerDrag=null;grid?.setProperty("focused",false);busy=true;updateEnabled();
         try{
             let themeColors=[];
@@ -776,9 +1080,39 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             }
             functionOpen=true;
             dialog=createFormatDialog({projection:initial,initialTab,themeColors,isCurrent:()=>!closed&&projection===initial,onClose:closeAbout,
-                apply:(command,expectedRevision)=>dispatchCommand(command,{fromDialog:true,expectedRevision})});root.append(dialog);
+                apply:(command,expectedRevision)=>dispatchCommand(command,{fromDialog:true,expectedRevision,throwErrors:true})});root.append(dialog);
         }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);functionOpen=false;}
         finally{busy=false;updateEnabled();}
+    }
+    async function showConditionalFormats(initialKind=null) {
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports('add-conditional-format')||typeof engine?.query!=='function')return;
+        const initial=projection;cancelDraft();pointerDrag=null;grid?.setProperty('focused',false);busy=true;updateEnabled();
+        try{
+            let themeColors=[];
+            if(supports('apply-cell-style')){const response=await engine.query({action:'cell-styles',offset:0,limit:1});themeColors=response.result?.theme||[];}
+            if(closed)return;
+            functionOpen=true;dialog=createConditionalFormatDialog({projection:initial,initialKind,themeColors,currentRevision:()=>projection?.revision,
+                query:request=>engine.query(request),apply:async(command,expectedRevision)=>{
+                    const applied=await dispatchCommand(command,{fromDialog:true,expectedRevision});
+                    if(!applied&&!closed)throw Error(status.text);return applied;
+                },onClose:closeAbout});root.append(dialog);
+        }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);functionOpen=false;}
+        finally{busy=false;updateEnabled();}
+    }
+    function showPasteSpecial(){
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports('paste-special')||!canPasteAction('paste-special-dialog'))return;
+        const initial=projection;cancelDraft();pointerDrag=null;grid?.setProperty('focused',false);functionOpen=true;updateEnabled();
+        dialog=createPasteSpecialDialog({projection:initial,isCurrent:()=>projection===initial,apply:(command,expectedRevision)=>dispatchCommand(command,{fromDialog:true,expectedRevision}),onClose:closeAbout});root.append(dialog);
+    }
+    function showTable(properties=false){
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports(properties?'rename-table':'create-table')||properties&&(!supports('table-metadata')||typeof engine?.query!=='function'))return;
+        const initial=projection;cancelDraft();pointerDrag=null;grid?.setProperty('focused',false);functionOpen=true;updateEnabled();
+        dialog=(properties?createTablePropertiesDialog:createTableDialog)({projection:initial,currentRevision:()=>projection?.revision,query:request=>engine.query(request),apply:(command,expectedRevision)=>dispatchCommand(command,{fromDialog:true,expectedRevision,throwErrors:true}),onClose:closeAbout});root.append(dialog);
+    }
+    function showDataValidation(){
+        if(closed||isBusy()||dialog||dataSession||!projection||!supports('set-data-validation')||typeof engine?.query!=='function')return;
+        const initial=projection;cancelDraft();pointerDrag=null;grid?.setProperty('focused',false);functionOpen=true;updateEnabled();
+        dialog=createDataValidationDialog({projection:initial,currentRevision:()=>projection?.revision,query:request=>engine.query(request),apply:(command,expectedRevision)=>dispatchCommand(command,{fromDialog:true,expectedRevision}),onClose:closeAbout});root.append(dialog);
     }
     function showLayout(axis) {
         if (closed || isBusy() || !projection?.selection.layout || !supports(`resize-${axis}`) || dialog || dataSession) return;
@@ -945,19 +1279,42 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if (!closed && !closePending && !functionOpen && commandInFlight) {
             queueInput(() => applyFontColor(value)); return;
         }
-        if (closed || isBusy() || !projection || !supports('format-cells')) return;
+        if (closed || isBusy() || !projection || !canFormatSelection('format-cells')) return;
         const range = selectionRange(projection), initial = projection;
         if (!range || !activeCell()) return;
         cancelFormatPainter(); cancelDraft();
-        await dispatchCommand({type:'format-cells',sheetId:initial.activeSheetId,range,
-            changes:[{path:'font.color',value:value ?? 'none'}]}, {expectedRevision:initial.revision});
+        const command=formatSelectionCommand({type:'format-cells',sheetId:initial.activeSheetId,range,
+            changes:[{path:'font.color',value:value ?? 'none'}]},initial);
+        if(command)await dispatchCommand(command,{expectedRevision:initial.revision});
         if (!closed) focusGrid();
+    }
+    function canPasteAction(name){
+        if(['paste','paste-values','paste-formulas'].includes(name)&&typeof engine?.clipboard?.paste==='function')return true;
+        if(!['paste','paste-values','paste-formulas','paste-special-dialog','paste-special-quick'].includes(name)||!supports('cancel-clipboard'))return true;
+        return Boolean(projection?.clipboard)&&!(projection.clipboard.mode==='cut'&&['paste-values','paste-formulas'].includes(name));
     }
     function performEditorAction(name) {
         if(!closed&&!closePending&&!functionOpen&&commandInFlight) {
             queueInput(()=>performEditorAction(name));return;
         }
         if (closed || isBusy() || !projection) return;
+        if(!canPasteAction(name))return;
+        if(name==='clear'&&!canClearSelection()){status.text='Clear Contents is unavailable for the current selection.';return;}
+        if(name==='go-to'){void showGoTo();return;}
+        if(name==='go-to-special'){void showSpecialCells();return;}
+        if(name==='select-visible'){void selectVisibleCells();return;}
+        if(name==='find'){void showData('find');return;}
+        if(name==='replace'&&supports('replace-text')){void showWorkbookFind('replace');return;}
+        if(['copy','cut'].includes(name)&&typeof engine?.clipboard?.[name]==='function'){
+            void dispatchClipboard(name,{sheetId:projection.activeSheetId,range:selectionRange(projection)});return;
+        }
+        if(['paste','paste-values','paste-formulas'].includes(name)&&typeof engine?.clipboard?.paste==='function'){
+            void dispatchClipboard('paste',{sheetId:projection.activeSheetId,target:selectionRange(projection),mode:name==='paste'?'all':name==='paste-values'?'values':'formulas'});return;
+        }
+        if(['copy-text','paste-text','paste-text-values'].includes(name)){
+            const copy=name==='copy-text',operation=copy?'copy-text':name==='paste-text-values'?'paste-values':'paste-text';
+            void dispatchClipboard(operation,{sheetId:projection.activeSheetId,[copy?'range':'target']:selectionRange(projection)});return;
+        }
         if (name === 'format-painter') {
             if (formatPainter) { cancelFormatPainter(); return; }
             const range = selectionRange(projection);
@@ -975,7 +1332,11 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if(name==='delete-chart'){if(charts?.selected)void dispatchCommand({type:'delete-chart',id:charts.selected});return;}
         const range = selectionRange(projection), active = activeCell();
         if (!range || !active) return;
+        if(name==='create-table'||name==='table-properties'){showTable(name==='table-properties');return;}
         if(name==='cell-styles'){void showStyles();return;}
+        if(name==='paste-special-dialog'||name==='paste-special-quick'){showPasteSpecial();return;}
+        if(name==='data-validation'){showDataValidation();return;}
+        if(name==='conditional-manage'||name.startsWith('conditional-new-')){void showConditionalFormats(name==='conditional-manage'?null:name.slice('conditional-new-'.length));return;}
         if(['name-manager','define-name','use-name'].includes(name)){showNames(name==='define-name'?'define':name==='use-name'?'use':'manage');return;}
         if (name==='format-cells'||name==='font-color'||name==='fill-color'||name==='borders'){showFormat(({ 'font-color':'font','fill-color':'fill',borders:'border'})[name]||'number');return;}
         if (name === 'row-height' || name === 'column-width') { showLayout(name === 'row-height' ? 'rows' : 'columns'); return; }
@@ -987,10 +1348,15 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         if (name === 'functions' || name === 'vlookup') { showFunction(name === 'vlookup' ? 'VLOOKUP' : 'SUM'); return; }
         let command;
         if (name === 'undo' || name === 'redo') command = { type: name };
+        else if(name==='conditional-clear-selection'||name==='conditional-clear-sheet')command={type:'clear-conditional-formats',sheetId:projection.activeSheetId,ranges:name==='conditional-clear-sheet'?null:[range]};
+        else if(name==='validation-clear-selection'||name==='validation-clear-sheet')command={type:'clear-data-validations',sheetId:projection.activeSheetId,ranges:name==='validation-clear-sheet'?null:[range]};
+        else if(['freeze-selected','freeze-top-row','freeze-first-column','unfreeze-panes'].includes(name))command={type:'freeze-panes',sheetId:projection.activeSheetId,rows:name==='freeze-top-row'?1:name==='freeze-selected'?active.row:0,columns:name==='freeze-first-column'?1:name==='freeze-selected'?active.column:0};
         else if (name === 'merge-cells' || name === 'unmerge-cells') command = { type: name, sheetId: projection.activeSheetId, range };
-        else if (name === 'copy' || name === 'cut' || name === 'clear') command = { type: name === 'copy' ? 'copy-range' : name==='cut'?'cut-range':'clear-range', sheetId: projection.activeSheetId, range };
+        else if(name==='clear')command=clearSelectionCommand(projection);
+        else if (name === 'copy' || name === 'cut') command = { type: name === 'copy' ? 'copy-range' : 'cut-range', sheetId: projection.activeSheetId, range };
         else if (['paste', 'paste-values', 'paste-formulas'].includes(name)) command = { type: 'paste-range', ...active,
-            mode: name === 'paste' ? 'all' : name === 'paste-values' ? 'values' : 'formulas' };
+            mode: name === 'paste' ? 'all' : name === 'paste-values' ? 'values' : 'formulas',
+            ...(projection.clipboard?{clipboardGeneration:projection.clipboard.generation}:{}) };
         else if (name === 'fill-down' || name === 'fill-right') command = fillSelection(projection, name === 'fill-down' ? 'down' : 'right');
         else if (name === 'autosum') { command = autoSumCommand(projection); if (!command) { showFunction('SUM'); return; } }
         else if(name.startsWith('font-family:'))command={type:'format-cells',sheetId:projection.activeSheetId,range,changes:[{path:'font.name',value:name.slice(12)}]};
@@ -998,7 +1364,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         else if(name==='decimal-increase'||name==='decimal-decrease'){const value=changeDecimals(projection.selection.numberFormat||'General',name==='decimal-increase'?1:-1);if(value===null)return;command={type:'format-range',sheetId:projection.activeSheetId,range,path:'num_fmt',value};}
         else if (name.startsWith('font-')) {
             const font = projection.selection.font;
-            if (!font || !supports('format-range')) return;
+            if (!font || !canFormatSelection('format-range')) return;
             const properties = { 'font-bold': ['font.b', font.weight >= 600], 'font-italic': ['font.i', font.italic], 'font-underline': ['font.u', font.underline] };
             const setting = properties[name];
             const resized=name==='font-grow'?adjacentFontSize(font.size_pt,1):name==='font-shrink'?adjacentFontSize(font.size_pt,-1):null;
@@ -1011,12 +1377,16 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         else if (name.startsWith('format-')) command = { type: 'format-range', sheetId: projection.activeSheetId, range,
             path: 'num_fmt', value: ({ 'format-general': 'General', 'format-number': '#,##0.00', 'format-percent': '0.00%',
                 'format-currency': '$#,##0.00', 'format-date': 'yyyy-mm-dd' })[name] };
+        if(command&&['format-range','format-cells'].includes(command.type)){
+            command=formatSelectionCommand(command,projection);
+            if(!command){status.text='Formatting is unavailable for the current selection.';return;}
+        }
         if (command) return dispatchCommand(command);
         else status.text = 'Select the source and destination cells, then choose Fill Down or Fill Right.';
     }
-    const ribbon=createSheetRibbon({sensitivityItem,sensitivityBadge,canUseSheetDataIcons:()=>Boolean(app.hostCapabilities&(1n<<26n)),canSplit:()=>{const r=selectionRange(projection);return Boolean(r&&r.firstColumn===r.lastColumn);},canMerge:()=>projection?.selection.canMerge===true,canUnmerge:()=>projection?.selection.canUnmerge===true,editorAction,fontAction,documentAction,structureAction,dataAction,action,toggle,fontSize,fontFamily,formulaBar,showAbout,
+    const ribbon=createSheetRibbon({sensitivityItem,sensitivityBadge,canClipboard:operation=>typeof engine?.clipboard?.[operation]==='function',canUseSheetDataIcons:()=>Boolean(app.hostCapabilities&(1n<<26n)),canSplit:()=>{const r=selectionRange(projection);return Boolean(r&&r.firstColumn===r.lastColumn);},canMerge:()=>projection?.selection.canMerge===true,canUnmerge:()=>projection?.selection.canUnmerge===true,editorAction,fontAction,documentAction,structureAction,dataAction,action,toggle,fontSize,fontFamily,formulaBar,showAbout,showCommandSearch:()=>commandSearch?.open(),
         canDecimal:direction=>changeDecimals(projection?.selection.numberFormat||'General',direction)!==null,canGrowFont:()=>adjacentFontSize(projection?.selection.font?.size_pt,1)!==null,canShrinkFont:()=>adjacentFontSize(projection?.selection.font?.size_pt,-1)!==null,canClearFilters:()=>Boolean(projection?.filterState?.appliedColumns),
-        showFind:()=>{void showData('find');},showFilter:()=>{void showData('filter');},clearFilters:()=>{void clearFilters();},
+        showFind:()=>{performEditorAction('find');},showFilter:()=>{void showData('filter');},clearFilters:()=>{void clearFilters();},
         exit:()=>{if(!closed&&!closePending)window.requestClose();},
         canFill:direction=>Boolean(projection&&fillSelection(projection,direction)),
         canLayout:()=>Boolean(projection?.selection.layout),
@@ -1054,6 +1424,15 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         zoom,
     ]));
     const window = createWindow({ title: "Rice Sheet", root });
+    commandSearch=createSheetCommandSearch({root,canOpen:()=>!closed&&!isBusy()&&draft===null&&!dataSession&&!dialog,
+        onOpen:()=>{functionOpen=true;updateEnabled();},onClose:()=>{functionOpen=false;if(!closed){updateEnabled();focusGrid();}}});
+    let actionRegistered=false;
+    const stopAction=bus?.subscribe&&services?.actions?.register ? bus.subscribe(desktopEventTopics(bus.owner).actionInvoked,event=>{
+        if(event.payload?.id==='sheet-commands')commandSearch.open();
+    }):()=>{};
+    if(bus?.subscribe&&services?.actions?.register)void services.actions.register({id:'sheet-commands',title:'Rice Sheet commands'})
+        .then(async()=>{actionRegistered=true;if(closed)await services.actions.unregister({id:'sheet-commands'});})
+        .catch(error=>log?.warn('Sheet action registration failed',{message:String(error.message)}));
 
     function renderProjection(next,{preserveDraft=false}={}) {
         if (projection && next.revision < projection.revision) throw new TypeError("Stale engine projection");
@@ -1061,6 +1440,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         const keepDraft=preserveDraft&&draft!==null&&previous?.revision===next.revision&&previous?.activeSheetId===next.activeSheetId;
         const editorSelection=keepDraft?(inlineEditor||formula).selection:null;
         projection = next;
+        if(projection.revision >= pendingCommittedRevision)pendingCommittedRevision=null;
         if (headerAnchor) {
             const expected=next.frame&&headerRange(next.frame,headerAnchor.axis,headerAnchor.first,headerAnchor.last),actual=selectionRange(next);
             if(headerAnchor.sheetId!==next.activeSheetId||!expected||!actual||Object.keys(expected).some(key=>expected[key]!==actual[key]))headerAnchor=null;
@@ -1084,7 +1464,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             unavailable.setProperty("visible", true);
         }
         window.title = `${next.documentTitle || "Workbook"} — Rice Sheet`;
-        address.setProperty("value", next.selection.address);
+        if(addressDraft===null||previous?.revision!==next.revision||previous?.activeSheetId!==next.activeSheetId){addressDraft=addressRevision=addressEpoch=null;address.setProperty("value", next.selection.address);}
         if(keepDraft)relocateDraftEditor(editorSelection);
         else {draft = null; draftTarget = null; pointing = null;syncFormulaReferences();clearInlineEditor();formula.setProperty("value", next.selection.formula);}
         fontSize.setProperty('value', next.selection.font ? String(next.selection.font.size_pt) : '');
@@ -1125,9 +1505,9 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         }
     }
 
-    async function readProjection({preserveDraft=false,region=viewport}={}) {
+    async function readProjection({preserveDraft=false,region=viewport,fresh=false}={}) {
         const known = viewportCache.current;
-        const cursor = known ? { view: known.view, generation: known.generation, sequence: known.sequence, revision: known.frame.revision } : null;
+        const cursor = known && !fresh ? { view: known.view, generation: known.generation, sequence: known.sequence, revision: known.frame.revision } : null;
         await presentResult(await engine.readViewport(region, cursor),{preserveDraft});
     }
 
@@ -1145,7 +1525,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         (anchor?gridStack:root).append(dialog);
     }
 
-    async function dispatchCommand(command, { fromDialog = false, expectedRevision, onValidationCancel } = {}) {
+    async function dispatchCommand(command, { fromDialog = false, expectedRevision, onValidationCancel, onCommittedChange, throwErrors=false, interactiveValidation=true } = {}) {
         while(viewportRead){try{await viewportRead;}catch{}}
         if (closed || busy || closePending || (functionOpen && !fromDialog) || !engine || !commandAvailable(command.type)) return false;
         if (expectedRevision !== undefined && projection?.revision !== expectedRevision) { status.text = 'Workbook changed. Repeat the operation on the refreshed view.'; return false; }
@@ -1158,20 +1538,23 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         try {
             const selected=activeCell();
             const noInputCheck=selected&&selected.sheetId===checked.sheetId&&selected.row===checked.row&&selected.column===checked.column&&projection.selection.validation?.checksInput===false;
-            if(checked.type==='edit-cell'&&supports('data-validation')&&!noInputCheck){
+            const selectionFill=checked.type==='fill-selection',tableRename=checked.type==='rename-table';
+            if(tableRename?interactiveValidation&&supports('data-validation'):selectionFill?interactiveValidation:checked.type==='edit-cell'&&supports('data-validation')&&!noInputCheck){
                 // The candidate, query and eventual mutation share one revision.
                 // A decision dialog never grants permission to a later workbook.
                 expectedRevision??=projection.revision;
                 validating=true;functionOpen=true;updateEnabled();
                 if(typeof engine.query!=='function')throw Error('Cell validation could not be checked.');
-                const {sheetId,row,column,input}=checked;
-                const response=await engine.query({action:'validation-cell',sheetId,row,column,input},{expectedRevision});
+                const {allowValidationWarning:_,...candidate}=checked;checked=checkedSheetCommand(candidate);
+                const {sheetId,input}=checked;
+                const target=selectionFill?{sheetId,...checked.origin}:checked;
+                const query=tableRename?{action:'validation-table-rename',table:checked.table,name:checked.name,columns:checked.columns}:selectionFill?{action:'validation-fill',sheetId,input,ranges:checked.ranges,origin:checked.origin}:{action:'validation-cell',sheetId,row:target.row,column:target.column,input};
+                const response=await engine.query(query,{expectedRevision});
                 if(closed||closePending)return false;
-                const feedback=checkedCellValidation(response,checked,expectedRevision);
+                const feedback=tableRename?checkedTableRenameValidation(response,checked.table,expectedRevision):checkedCellValidation(response,target,expectedRevision);
                 if(projection.revision!==expectedRevision)throw Error('Workbook changed. Try entering the value again.');
                 // Never trust an override supplied by a caller: only this
                 // decision can enable a warning override, never a Stop rule.
-                checked=checkedSheetCommand({type:'edit-cell',sheetId,row,column,input});
                 if(feedback.alerts.length){
                     const decision=await new Promise(resolve=>{
                         let settled=false,feedbackDialog;
@@ -1180,7 +1563,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                             if(feedbackDialog.parent)root.remove(feedbackDialog,{destroy:true});
                             resolve(value);
                         };
-                        feedbackDialog=createValidationDialog({alerts:feedback.alerts,onDecision:finish});
+                        feedbackDialog=createValidationDialog({alerts:feedback.alerts,onDecision:finish,...(tableRename?{editLabel:'Edit Headings',acceptLabel:'Keep Headings',question:'Keep these headings anyway?'}:{})});
                         dismissValidation=()=>finish('cancel');root.append(feedbackDialog);
                     });
                     if(decision==='cancel')onValidationCancel?.();
@@ -1191,15 +1574,27 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 if(projection.revision!==expectedRevision)throw Error('Workbook changed. Try entering the value again.');
             }
             const options={...(expectedRevision===undefined?{}:{expectedRevision}),...(viewport.pixelWidth?{viewport:{...viewport,followSelection:!command.type.endsWith('-chart')}}:{})};
+            if(['find-next','replace-text'].includes(checked.type))rememberFindInputs(checked.options,checked.type==='replace-text'?checked.replacement:undefined);
             const result = await engine.command(checked,Object.keys(options).length?options:undefined);
             if (!closed) {
-                if (['select-cell','select-sheet'].includes(checked.type)) { headerAnchor=null;rangeAnchor=rangeExtent=null; }
+                if (['select-cell','select-sheet','navigate-range','navigate-reference','find-next'].includes(checked.type)) { headerAnchor=null;rangeAnchor=rangeExtent=null; }
                 if (result) await presentResult(result);
                 else await readProjection();
+                if(['navigate-range','navigate-reference','find-next'].includes(checked.type))recordDestination(checked);
             }
             return !closed;
         } catch (error) {
-            if (!closed) status.text = `Engine request failed: ${String(error.message || error).slice(0, 240)}`;
+            if (!closed && isCommittedWorkbookChange(error, projection?.revision)) {
+                onCommittedChange?.(error);
+                pendingCommittedRevision=error.revision;
+                cancelDraft();
+                let refreshed=false;
+                try { await readProjection({fresh:true}); refreshed=true; }
+                catch { /* Keep the confirmed outcome; never replay the command. */ }
+                if (!closed) status.text = refreshed ? 'The change committed. Inspect the workbook before making another change; save or undo if needed.'
+                    : 'The change committed, but its view is unavailable. Save the workbook before continuing.';
+            } else if (!closed) status.text = `Engine request failed: ${String(error.message || error).slice(0, 240)}`;
+            if(throwErrors)throw error;
             return false;
         } finally { if(validating){dismissValidation?.();functionOpen=previousFunctionOpen;}busy = false; commandInFlight = false; updateEnabled();if(pendingViewport)void flushViewport();if(!inputTransaction)void drainInput(); }
     }
@@ -1235,7 +1630,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             if(!supports('select-range'))return;
             if(!await dispatchCommand({type:'select-range',sheetId:projection.activeSheetId,firstRow:row??0,lastRow:row??projection.frame.row_count-1,firstColumn:column??0,lastColumn:column??projection.frame.column_count-1}))return;
         }else if(Number.isInteger(row)&&Number.isInteger(column)) {
-            const inside=range&&row>=range.firstRow&&row<=range.lastRow&&column>=range.firstColumn&&column<=range.lastColumn;
+            const inside=(projection.selection.ranges||[range]).some(r=>r&&row>=r.firstRow&&row<=r.lastRow&&column>=r.firstColumn&&column<=r.lastColumn);
             if(!inside&&!await dispatchCommand({type:'select-cell',sheetId:projection.activeSheetId,row,column}))return;
         }else return;
         if(closed)return;
@@ -1243,8 +1638,8 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     }
     function installContextMenu() {
         if(closed||!grid||!projection?.frame)return;
-        const capabilities={cut:'cut-range',copy:'copy-range',paste:'paste-range','paste-values':'paste-range','paste-formulas':'paste-range',clear:'clear-range','toggle-filter':'toggle-autofilter','format-cells':'format-cells',sort:'sort-range','sort-ascending':'sort-range','sort-descending':'sort-range'};
-        const can=name=>name==='merge-cells'?supports(name)&&projection?.selection.canMerge===true:name==='unmerge-cells'?supports(name)&&projection?.selection.canUnmerge===true:['filter-values','clear-column-filter'].includes(name)?typeof engine?.query==='function':supports(capabilities[name]||name);
+        const capabilities={cut:'cut-range',copy:'copy-range',paste:'paste-range','paste-values':'paste-range','paste-formulas':'paste-range','paste-special-dialog':'paste-special',clear:'clear-range','toggle-filter':'toggle-autofilter','format-cells':'format-cells',sort:'sort-range','sort-ascending':'sort-range','sort-descending':'sort-range'};
+        const can=name=>canPasteAction(name)&&(name==='clear'?canClearSelection():name==='format-cells'?canFormatSelection('format-cells'):name==='merge-cells'?supports(name)&&projection?.selection.canMerge===true:name==='unmerge-cells'?supports(name)&&projection?.selection.canUnmerge===true:['filter-values','clear-column-filter'].includes(name)?typeof engine?.query==='function':supports(capabilities[name]||name));
         const filtered=projection.frame.filter_header_row!==undefined||Boolean(projection.frame.filter_columns?.length);
         if(contextMenu){contextMenu.refresh({can,filtered});return;}
         contextMenu=createSheetContextMenu({can,filtered,onAction:name=>{
@@ -1273,6 +1668,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     }
 
     async function showData(kind, targetColumn = null) {
+        if(kind==='find'&&supports('find-next'))return showWorkbookFind();
         if (closed || isBusy() || dialog || dataSession || typeof engine?.query !== 'function' || !activeCell()) return;
         const active = activeCell(), holder = { provider: null, controller: null };
         dataSession = holder; busy = true; updateEnabled(); cancelDraft();
@@ -1312,6 +1708,30 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         }
     }
 
+    async function repeatFind(direction,{throwErrors=false,expectedRevision}={}){
+        try{
+            while(viewportRead){try{await viewportRead;}catch{}}
+            if(closed||isBusy()||dialog||dataSession||!projection||!supports('find-next'))throw Error('Workbook Find is unavailable or busy');
+            if(expectedRevision!==undefined&&projection.revision!==expectedRevision)throw Error('Workbook changed before Repeat Find');
+            const ownerEpoch=documentEpoch;
+            if(draft!==null){const committed=await commitDraft('Enter',0,draftTarget);if(committed!==true||closed||draft!==null||documentEpoch!==ownerEpoch)return false;}
+            if(!lastFindOptions){await showWorkbookFind();return false;}
+            const options=checkedSheetFindOptions(lastFindOptions.within==='selection'?lastFindOptions:{...lastFindOptions,sheetId:projection.activeSheetId});
+            if(!projection.sheets.some(sheet=>sheet.id===options.sheetId))throw Error('The saved search sheet was removed. Choose Find again.');
+            return await dispatchCommand({type:'find-next',options,after:activeCell(),direction},{expectedRevision:projection.revision,throwErrors});
+        }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);if(throwErrors)throw error;return false;}
+    }
+
+    async function showWorkbookFind(initialTab='find'){
+        if(closed||isBusy()||dialog||dataSession||!projection)return;
+        if(draft!==null){const committed=await commitDraft('Enter',0,draftTarget);if(committed!==true||closed||draft!==null)return;}
+        if(isBusy())return;const initial=projection,ownerEpoch=documentEpoch;
+        cancelFormatPainter();pointerDrag=null;functionOpen=true;updateEnabled();grid?.setProperty('focused',false);
+        dialog=createWorkbookFindDialog({projection:{...initial,selection:{...initial.selection,range:selectionRange(initial)}},canReplace:supports('replace-text'),canSort:supports('find-results'),resultSort:findResultSort,onResultSortChanged:value=>{findResultSort=value;},initialTab,replacementText,onReplacementChanged:value=>{replacementText=value;},preferences:findPreferences,onPreferencesChanged:value=>{findPreferences=value;},optionsExpanded:findOptionsExpanded,onOptionsExpandedChanged:value=>{findOptionsExpanded=value;},findHistory,replacementHistory,onHistoryChanged:value=>{findHistory=value.find;replacementHistory=value.replacement;},onSearch:options=>rememberFindInputs(options),current:()=>{const active=activeCell();return {revision:projection.revision,active,activeVisible:Boolean(active&&projection.frame?.rows.some(row=>row.index===active.row&&row.clip_end>row.clip_start)&&projection.frame?.columns.some(column=>column.index===active.column&&column.clip_end>column.clip_start))};},isCurrent:()=>!closed&&documentEpoch===ownerEpoch,onClose:closeAbout,
+            apply:async(command,expectedRevision)=>{if(!await dispatchCommand(command,{fromDialog:true,expectedRevision}))throw Error(status.text||'Find did not select a match.');},
+            ...(typeof engine?.query==='function'?{query:async(request,expectedRevision)=>{busy=true;updateEnabled();try{return await engine.query(request,{expectedRevision});}finally{busy=false;if(!closed)updateEnabled();}}}:{})});root.append(dialog);
+    }
+
     async function clearFilters() {
         if (closed || isBusy() || typeof engine?.query !== 'function' || !projection) return;
         if (!(projection.filterState ? projection.filterState.appliedColumns>0 : projection.frame?.filter_columns?.some(column=>column.active))) return;
@@ -1323,20 +1743,49 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         finally { busy = false; updateEnabled(); }
     }
 
-    async function dispatchDocument(name, parameter) {
+    async function dispatchClipboard(operation,data,{throwErrors=false,expectedRevision=projection?.revision}={}){
         while(viewportRead){try{await viewportRead;}catch{}}
-        if (closed || isBusy() || typeof engine?.documents?.[name] !== 'function') return;
+        try{
+            if(closed||isBusy()||typeof engine?.clipboard?.[operation]!=='function')throw Error('Workbook clipboard workflow is unavailable or busy');
+            checkedSheetAction(`clipboard.${operation}`,data,actionOptions(expectedRevision));
+        }catch(error){if(!closed)status.text=String(error.message||error).slice(0,240);if(throwErrors)throw error;return null;}
+        busy=true;commandInFlight=true;cancelDraft();cancelFormatPainter();updateEnabled();
+        try{
+            const result=await engine.clipboard[operation](data,{expectedRevision});
+            if(closed)return null;
+            if(result?.projection)await presentResult(result.projection);
+            if(result?.written===false)status.text=`${operation==='cut'?'Cut pending':'Copied internally'}; system clipboard write failed: ${String(result.error||'not acknowledged').slice(0,200)}`;
+            return result;
+        }catch(error){
+            if(!closed&&isCommittedWorkbookChange(error,projection?.revision)){
+                pendingCommittedRevision=error.revision;
+                try{await readProjection({fresh:true});}catch{}
+                if(!closed)status.text='The paste committed. Inspect the workbook; save or undo before repeating it.';
+            }else if(!closed)status.text=`Clipboard operation failed: ${String(error.message||error).slice(0,240)}`;
+            if(throwErrors)throw error;return null;
+        }finally{busy=false;commandInFlight=false;updateEnabled();if(pendingViewport)void flushViewport();if(!inputTransaction)void drainInput();}
+    }
+    async function dispatchDocument(name, parameter, {throwErrors=false,expectedRevision}={}) {
+        while(viewportRead){try{await viewportRead;}catch{}}
+        if (closed || isBusy() || typeof engine?.documents?.[name] !== 'function') {
+            if(throwErrors)throw Error('Workbook file workflow is unavailable or busy');
+            return;
+        }
+        if(expectedRevision!==undefined&&workbookRevision()!==expectedRevision)throw Error('Workbook changed before the file operation');
         cancelFormatPainter();busy = true; updateEnabled(); cancelDraft();
         try {
             const result = await engine.documents[name](parameter);
-            if (closed || !result) return;
+            if (closed || !result) return null;
             if (result.replaced) {
-                headerAnchor=null;rangeAnchor=rangeExtent=null;pointerDrag=null;
-                projection = null; viewportCache.clear();charts.reset();
+                documentEpoch++;recentDestinations=[];lastFindOptions=null;addressDraft=addressRevision=addressEpoch=null;
+                cancelDragScroll();headerAnchor=null;rangeAnchor=rangeExtent=null;pointerDrag=null;
+                projection = null; pendingCommittedRevision=null; viewportCache.clear();charts.reset();
                 await readProjection();
             } else if (result.saved) status.text = `Saved ${result.name || 'workbook'} as ${String(engine.documents.format || 'xlsx').toUpperCase()}`;
+            return result;
         } catch (error) {
             if (!closed) status.text = `Workbook operation failed: ${String(error.message || error).slice(0,240)}`;
+            if(throwErrors)throw error;
         } finally { busy = false; updateEnabled(); }
     }
 
@@ -1350,20 +1799,36 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
             void dispatchDocument('open-grant', grant);
         } catch (error) { status.text = `${String(error.message || error).slice(0, 240)}. No file was read or changed.`; }
     });
-    const copilotActions={command:{command:'Checked Sheet command. Coordinates are zero-based; use real sheet IDs and projection.capabilities.',examples:[{type:'edit-cell',sheetId:'from projection.sheets',row:0,column:0,input:'text or =formula'},{type:'select-sheet',sheetId:'from projection.sheets'},{type:'create-sheet'},{type:'rename-sheet',sheetId:'from projection.sheets',name:'Report'},{type:'undo'},{type:'redo'}]},report:{name:'new report worksheet name',sourceSheetId:'existing worksheet ID',cells:[{row:0,column:0,input:"=SUM('Source'!B2:B20)"}]}};
+    const actionOptions=expectedRevision=>({revision:workbookRevision(),expectedRevision,viewReady:pendingCommittedRevision===null,
+        sheets:projection?.sheets||[],activeSheetId:projection?.activeSheetId,
+        capabilities:(projection?.capabilities||[]).filter(commandAvailable),query:pendingCommittedRevision===null&&typeof engine?.query==='function',
+        documents:['new','open','save','save-as','save-as-xlsx','save-as-ods','save-as-csv','save-as-tsv'].filter(name=>typeof engine?.documents?.[name]==='function'),
+        clipboard:pendingCommittedRevision===null?['copy','cut','paste','copy-text','paste-text','paste-values'].filter(name=>typeof engine?.clipboard?.[name]==='function'):[]});
+    const copilotActions=()=>({...sheetActionCatalog(actionOptions()),
+        ...(pendingCommittedRevision===null?{report:{name:'new report worksheet name',sourceSheetId:'existing worksheet ID',cells:[{row:0,column:0,input:"=SUM('Source'!B2:B20)"}]}}:{})});
     const stopCopilot=exposeAppCopilot({bus,instanceId,
         context:async query=>{
-            if(query && !isBusy() && engine?.query && projection){
-                const response=await engine.query(query,{expectedRevision:projection.revision});
-                return {app:'org.ricewm.sheet',ready:!closed&&!isBusy(),revision:projection.revision,projection,result:response.result,actions:copilotActions};
+            if(pendingCommittedRevision!==null){
+                if(query)throw Error('Refresh the workbook view before requesting cell context');
+                return {app:'org.ricewm.sheet',ready:!closed&&!isBusy()&&draft===null,revision:workbookRevision(),projection:null,recovery:{viewRequired:true},actions:copilotActions()};
             }
-            return {app:'org.ricewm.sheet',ready:!closed&&!isBusy()&&Boolean(projection)&&draft===null,revision:projection?.revision??0,projection,draft,queries:{usedRange:{action:'used-range',sheetId:'from projection.sheets'},note:'Pass a checked Sheet query as data.query to copilot.context; projection.frame contains the visible cells and selection.formula contains the active cell input.'},actions:copilotActions};
+            if(query && !isBusy() && projection){
+                const checked=checkedSheetContextQuery(query);
+                const {action:queryAction,...viewPage}=checked;
+                if(queryAction!=='view-context'&&typeof engine?.query!=='function')throw Error('Workbook queries are unavailable');
+                const response=queryAction==='view-context'?{result:sheetAutomationProjection(projection,viewPage)}:await engine.query(checked,{expectedRevision:projection.revision});
+                return sheetAutomationResponse({app:'org.ricewm.sheet',ready:!closed&&!isBusy()&&draft===null,revision:projection.revision,projection:sheetAutomationProjection(projection),result:response.result,actions:copilotActions()});
+            }
+            return {app:'org.ricewm.sheet',ready:!closed&&!isBusy()&&Boolean(projection)&&draft===null,revision:projection?.revision??0,projection:sheetAutomationProjection(projection),draft,queries:{usedRange:{action:'used-range',sheetId:'from projection.sheets'},note:'Pass a checked read-only Sheet query as data.query to copilot.context; use query.activate-filter/query.clear-filter actions for workbook mutations. projection.visibleCells contains a bounded display page and selection.formula contains the active input.'},actions:copilotActions()};
+        },
+        validate:(operation,data,expectedRevision)=>{
+            if(operation==='report')throw Error('Report validation is not yet available; validate individual named workbook commands');
+            checkedSheetAction(operation,data,actionOptions(expectedRevision));
+            return {valid:true,revision:workbookRevision(),scope:'command shape, advertised capability and current revision; workbook-dependent rules are checked again on execution'};
         },
         act:async(operation,data,expectedRevision)=>{
-            if(operation==='command'){
-                const applied=await dispatchCommand(checkedSheetCommand(data.command),{expectedRevision});
-                if(!applied)throw Error(status.text||'Sheet action was not applied');
-            }else if(operation==='report'){
+            try {
+            if(operation==='report'){
                 if(typeof data.name!=='string'||!Array.isArray(data.cells)||data.cells.length<1||data.cells.length>256)throw Error('A report needs a sheet name and 1–256 cells');
                 const source=projection.sheets.find(sheet=>sheet.id===data.sourceSheetId);
                 if(!source)throw Error('Choose a source worksheet from the active workbook');
@@ -1371,13 +1836,80 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
                 const cells=data.cells.map(cell=>checkedSheetCommand({type:'edit-cell',sheetId:source.id,row:cell.row,column:cell.column,input:cell.input}));
                 const sourceName="'"+source.name.replaceAll("'","''")+"'!";
                 if(!cells.some(cell=>cell.input.startsWith('=')&&(cell.input.includes(sourceName)||cell.input.includes(source.name+'!'))))throw Error('Report formulas must reference the source worksheet');
-                const apply=async command=>{if(!await dispatchCommand(command,{expectedRevision}))throw Error(status.text||'Report stopped; inspect the workbook before retrying');expectedRevision=projection.revision;};
+                const apply=async command=>{if(!await dispatchCommand(command,{expectedRevision,throwErrors:true}))throw Error(status.text||'Report stopped; inspect the workbook before retrying');expectedRevision=projection.revision;};
                 await apply({type:'create-sheet'});
                 const target=projection.activeSheetId;
                 await apply({type:'rename-sheet',sheetId:target,name:data.name});
                 for(const cell of cells)await apply({...cell,sheetId:target});
-            }else throw Error('Unknown Sheet AI action');
-            return {applied:true,revision:projection.revision,projection};
+            }else {
+                const action=checkedSheetAction(operation,data,actionOptions(expectedRevision));
+                if(action.kind==='find-ui'){
+                    if(action.operation==='repeat')return {applied:await repeatFind(action.direction,{throwErrors:true,expectedRevision}),revision:workbookRevision(),projection:automationProjection()};
+                    if(action.operation==='configure'){
+                        findPreferences=action.data.preferences;replacementText=action.data.replacement;findOptionsExpanded=action.data.optionsExpanded;
+                    }
+                    if(action.operation==='history'){
+                        const {kind,offset,limit}=action.data,values=kind==='find'?findHistory:replacementHistory;
+                        return {applied:false,revision:workbookRevision(),result:{kind,offset,total:values.length,items:values.slice(offset,offset+limit),nextOffset:offset+limit<values.length?offset+limit:null}};
+                    }
+                    return {applied:action.operation==='configure',revision:workbookRevision(),result:findUiState()};
+                }
+                if(action.kind==='refresh'){
+                    if(closed||isBusy())throw Error('Workbook is busy');
+                    busy=true;updateEnabled();
+                    try{await readProjection({fresh:true});return {applied:false,revision:workbookRevision(),projection:automationProjection()};}
+                    finally{busy=false;updateEnabled();}
+                }
+                if(action.kind==='scroll'){
+                    if(closed||isBusy()||draft!==null)throw Error('Finish the current workbook interaction before scrolling');
+                    busy=true;updateEnabled();
+                    try{
+                        while(viewportRead){try{await viewportRead;}catch{}}
+                        if(closed||workbookRevision()!==expectedRevision)throw Error('Workbook changed; inspect its current context');
+                        const requested={...viewport,top:Math.min(action.topRow,1048576-(viewport.pixelWidth?1:viewport.rows)),left:Math.min(action.leftColumn,16384-(viewport.pixelWidth?1:viewport.columns)),followSelection:false};
+                        viewport=requested;pendingViewport=false;
+                        const read=readProjection({preserveDraft:true,region:requested});viewportRead=read;
+                        try{await read;}finally{if(viewportRead===read)viewportRead=null;}
+                        if(closed)throw Error('Worksheet window closed');
+                        return {applied:false,viewChanged:true,revision:workbookRevision(),projection:automationProjection()};
+                    }finally{busy=false;if(!closed){updateEnabled();if(pendingViewport)void flushViewport();}}
+                }
+                if(action.kind==='view')return {applied:false,revision:projection.revision,result:sheetAutomationProjection(projection,action.query)};
+                if(action.kind==='command'){
+                    // Fill automation submits its explicit warning choice to
+                    // native validation; it cannot wait on an invisible dialog.
+                    const applied=await dispatchCommand(action.command,{expectedRevision,throwErrors:true,interactiveValidation:!['fill-selection','rename-table'].includes(action.command.type)});
+                    if(!applied)throw Error(status.text||'Sheet action was not applied');
+                    if(operation==='navigate.reference')recordDestination(action.command);
+                }else if(action.kind==='clipboard'){
+                    const result=await dispatchClipboard(action.operation,action.data,{throwErrors:true,expectedRevision});
+                    return {applied:result?.applied===true,...(typeof result?.written==='boolean'?{written:result.written}:{}),...(result?.error?{error:result.error}:{}),revision:projection?.revision??0,projection:sheetAutomationProjection(projection)};
+                }else if(action.kind==='document'){
+                    const result=await dispatchDocument(action.operation,undefined,{throwErrors:true,expectedRevision});
+                    return {applied:Boolean(result),cancelled:!result,revision:workbookRevision(),projection:automationProjection(),result};
+                }else {
+                    while(viewportRead){try{await viewportRead;}catch{}}
+                    if(closed||isBusy()||projection?.revision!==expectedRevision)throw Error('Workbook changed or is busy');
+                    busy=true;updateEnabled();
+                    try{
+                        if(['find-matches','find-results','preview-replace'].includes(action.query.action))rememberFindInputs(action.query.options,action.query.action==='preview-replace'?action.query.replacement:undefined);
+                        const response=await engine.query(action.query,{expectedRevision});
+                        if(action.query.action==='validation-fill')checkedCellValidation(response,{sheetId:action.query.sheetId,...action.query.origin},expectedRevision);
+                        if(action.query.action==='preview-selection')checkedSheetSelectionPreview(response,action.query,expectedRevision);
+                        if(action.query.action==='find-results'){checkedSheetFindResultsPage(response,action.query,expectedRevision);findResultSort=checkedSheetFindResultSort(action.query.sort);}
+                        if(action.query.action==='special-cells'){checkedSheetSpecialCellsPlan(response,action.query,expectedRevision);return sheetAutomationResponse({applied:false,revision:expectedRevision,projection:automationProjection(),result:response.result});}
+                        if(action.query.action==='validation-table-rename')checkedTableRenameValidation(response,action.query.table,expectedRevision);
+                        if(['tables','table-columns','validation-table-rename'].includes(action.query.action))return sheetAutomationResponse({applied:false,revision:expectedRevision,projection:automationProjection(),result:response.result});
+                        if(!closed)await readProjection();
+                        return sheetAutomationResponse({applied:!closed,revision:projection?.revision??expectedRevision,projection:sheetAutomationProjection(projection),result:response.result});
+                    }finally{busy=false;updateEnabled();}
+                }
+            }
+            return {applied:true,revision:projection.revision,projection:sheetAutomationProjection(projection)};
+            } catch(cause) {
+                if(isCommittedWorkbookChange(cause,expectedRevision))return sheetCommittedActionResponse(cause,expectedRevision,sheetAutomationProjection(projection));
+                throw cause;
+            }
         }});
     const stopCloseRequest = app.on(Message.APP_CLOSE_REQUEST, () => {
         if (typeof engine?.requestClose !== 'function') return true;
@@ -1392,6 +1924,7 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
     const stopClose = app.on(Message.APP_CLOSE, () => {
         if (closed) return;
         closed = true;queuedInput.length=0;
+        cancelDragScroll();cancelDragScroll(selectionGesture);cancelDragScroll(finishingPointerDrag);
         dismissValidation?.();
         viewportCache.clear();
         void charts.close().catch(()=>log?.warn("Chart cleanup failed"));
@@ -1399,6 +1932,8 @@ export function startSheetShell({ app, createWindow, log, services, bus, instanc
         stopClose();
         stopCloseRequest();
         stopCopilot();
+        stopAction();commandSearch?.close();
+        if(actionRegistered)void services.actions.unregister({id:'sheet-commands'}).catch(error=>log?.warn('Sheet action cleanup failed',{message:String(error.message)}));
         closeAbout();
         const dataCleanup = closeData();
         if (engine) {

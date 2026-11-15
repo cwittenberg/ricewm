@@ -1,4 +1,5 @@
 import {officeFace, officeFamilyFace, officeCanvasFont} from './rice-office-fonts.mjs';
+import {readableInk, rgbaColor} from './rice-native-canvas-primitives.mjs';
 import {editorGlyphAdvance} from "./rice-editor-font-metrics.mjs";
 // Office layout is authored by the native document model. No imported HTML or
 // XML is inserted into the DOM. Only bundled font assets are loaded; imported
@@ -54,22 +55,51 @@ function decode(hex='') {
     if(hex.length>512||!/^(?:[a-f0-9]{2})*$/i.test(hex))return '';
     return new TextDecoder().decode(Uint8Array.from(hex.match(/../g)||[],b=>parseInt(b,16)));
 }
+// These are viewing colors only. Native layout and saved document styles retain
+// their original colors, including explicit foregrounds and highlights.
+function viewingColors(dark) {
+    const page=dark?'#121418':'#ffffff',selection=dark?'#264f78':'#b8d6ff',cache=new Map();
+    const channels=hex=>hex.slice(1).match(/../g).map(c=>parseInt(c,16));
+    const ink=(color,background=page)=>{
+        if(!dark)return color;
+        const key=color+background;if(cache.has(key))return cache.get(key);
+        const source=channels(color),paper=channels(background),fallback=readableInk(source,paper);
+        let result=color;
+        if(fallback!==source) {
+            // Blend toward contrasting ink so colored text retains its hue.
+            const softWhite=[235,238,244];
+            const target=fallback[0]===255&&readableInk(softWhite,paper)===softWhite?softWhite:fallback.slice(0,3);
+            for(let step=1;step<=16;step++) {
+                const mixed=source.map((v,i)=>Math.round(v+(target[i]-v)*step/16));
+                if(readableInk(mixed,paper)===mixed){
+                    const chosen=fallback[0]===255&&Math.max(...source)-Math.min(...source)<32?target:mixed;
+                    result='#'+chosen.map(v=>v.toString(16).padStart(2,'0')).join('');break;
+                }
+            }
+        }
+        cache.set(key,result);return result;
+    };
+    return {page,selection,ink,workspace:dark?'#0c0e12':'#d7dbe1',border:dark?'#414854':'#aeb4bd',
+        cell:dark?'#a0aab9':'#747b86',caret:dark?'#69aaff':'#125ac4',gutter:dark?'#a0aab9':'#6b7280'};
+}
+
 export function paintOfficeEditor(context,command,presentation) {
     const layout=parseOfficeLayout(presentation.language);if(!layout)return false;
+    const colors=viewingColors(presentation.forceDarkMode);
     const {rect}=command,scale=Math.min(1,Math.max(1,rect.width-16)/layout.width)*(presentation.fontSize||12)/12,inset=8;
     const chars=Array.from(presentation.document),caret=presentation.caret??0,anchor=presentation.anchor??caret;
     const pageLeft=Math.max(inset,(rect.width-layout.width*scale)/2);
     const x=value=>rect.x+pageLeft+value*scale,y=value=>rect.y+inset+(value-layout.scroll)*scale;
     context.save();context.beginPath();context.rect(rect.x,rect.y,rect.width,rect.height);context.clip();
-    context.fillStyle=layout.printLayout?'#d7dbe1':'#ffffff';context.fillRect(rect.x,rect.y,rect.width,rect.height);
+    context.fillStyle=layout.printLayout?colors.workspace:colors.page;context.fillRect(rect.x,rect.y,rect.width,rect.height);
     const stride=layout.height+24;
     const first=Math.max(0,Math.floor(layout.scroll/stride));
     const last=Math.min(layout.pages-1,Math.ceil((layout.scroll+rect.height/scale)/stride));
     for(let page=first;layout.printLayout&&page<=last;page++) {
-        context.fillStyle='#ffffff';context.fillRect(x(0),y(page*stride),layout.width*scale,layout.height*scale);
-        context.strokeStyle='#aeb4bd';context.lineWidth=1;context.strokeRect(x(0),y(page*stride),layout.width*scale,layout.height*scale);
+        context.fillStyle=colors.page;context.fillRect(x(0),y(page*stride),layout.width*scale,layout.height*scale);
+        context.strokeStyle=colors.border;context.lineWidth=1;context.strokeRect(x(0),y(page*stride),layout.width*scale,layout.height*scale);
     }
-    context.strokeStyle='#747b86';context.lineWidth=Math.max(.5,scale);
+    context.strokeStyle=colors.cell;context.lineWidth=Math.max(.5,scale);
     for(const [cx,cy,cw,ch] of layout.cells)context.strokeRect(x(cx),y(cy),cw*scale,ch*scale);
     context.textBaseline='top';context.textAlign='left';
     // Labels are separate paint decorations. They never consume editable text
@@ -81,7 +111,7 @@ export function paintOfficeEditor(context,command,presentation) {
         const body=layout.lines.find(l=>l.y===marker.y&&l.x>marker.x);
         const shaped=body&&layout.runs.find(r=>r.start===body.start&&r.end===body.end);
         context.textBaseline=shaped?'alphabetic':'top';
-        context.fillStyle=marker.color;context.fillText(marker.text,x(marker.x),shaped?y(shaped.baseline):top);
+        context.fillStyle=colors.ink(marker.color);context.fillText(marker.text,x(marker.x),shaped?y(shaped.baseline):top);
     }
     context.textBaseline='top';
     const runs=layout.runs.filter(r=>r.end<=chars.length);
@@ -91,23 +121,44 @@ export function paintOfficeEditor(context,command,presentation) {
         if(cluster.end>chars.length)continue;
         const highlight=layout.styles.findLast(s=>s.kind==='h'&&s.start<cluster.end&&s.end>cluster.start)?.value;
         if(highlight&&highlight!=='none'){context.fillStyle='#'+highlight;context.fillRect(x(cluster.x0),y(cluster.y0),(cluster.x1-cluster.x0)*scale,(cluster.y1-cluster.y0)*scale);}
-        if(cluster.start<selectedEnd&&cluster.end>selectedStart){context.fillStyle='#b8d6ff';context.fillRect(x(cluster.x0),y(cluster.y0),(cluster.x1-cluster.x0)*scale,(cluster.y1-cluster.y0)*scale);}
+        if(cluster.start<selectedEnd&&cluster.end>selectedStart){context.fillStyle=colors.selection;context.fillRect(x(cluster.x0),y(cluster.y0),(cluster.x1-cluster.x0)*scale,(cluster.y1-cluster.y0)*scale);}
     }
     context.textBaseline='alphabetic';context.fontKerning='normal';context.textRendering='geometricPrecision';
     for(const run of runs) {
         if(y(run.baseline)+run.height*scale<rect.y||y(run.baseline)-run.height*scale>rect.y+rect.height)continue;
         const has=kind=>layout.styles.some(s=>s.kind===kind&&s.start<=run.start&&s.end>run.start);
         context.font=officeCanvasFont(officeFace(run.face),run.size*scale,has('b'));
-        context.direction=run.rtl?'rtl':'ltr';context.textAlign=run.rtl?'right':'left';context.fillStyle=run.color;
-        context.fillText(chars.slice(run.start,run.end).join(''),x(run.x+(run.rtl?run.advance:0)),y(run.baseline));
-        if(has('u'))context.fillRect(x(run.x),y(run.baseline+run.size*.1),run.advance*scale,Math.max(1,scale));
-        if(has('s'))context.fillRect(x(run.x),y(run.baseline-run.size*.3),run.advance*scale,Math.max(1,scale));
+        context.direction=run.rtl?'rtl':'ltr';context.textAlign=run.rtl?'right':'left';
+        const paint=ink=>{
+            context.fillStyle=ink;
+            context.fillText(chars.slice(run.start,run.end).join(''),x(run.x+(run.rtl?run.advance:0)),y(run.baseline));
+            if(has('u'))context.fillRect(x(run.x),y(run.baseline+run.size*.1),run.advance*scale,Math.max(1,scale));
+            if(has('s'))context.fillRect(x(run.x),y(run.baseline-run.size*.3),run.advance*scale,Math.max(1,scale));
+        };
+        const ink=colors.ink(run.color);paint(ink);
+        if(presentation.forceDarkMode) {
+            // A shaped run can cross a bright highlight or a selection. Repaint
+            // through the native cluster clips, keeping shaping and advances.
+            const overlays=new Map();
+            for(const cluster of layout.clusters) {
+                if(cluster.start>=run.end||cluster.end<=run.start)continue;
+                const highlight=layout.styles.findLast(s=>s.kind==='h'&&s.start<cluster.end&&s.end>cluster.start)?.value;
+                const background=cluster.start<selectedEnd&&cluster.end>selectedStart?colors.selection:highlight&&highlight!=='none'?'#'+highlight:colors.page;
+                const overlay=colors.ink(run.color,background);
+                if(overlay!==ink){if(!overlays.has(overlay))overlays.set(overlay,[]);overlays.get(overlay).push(cluster);}
+            }
+            for(const [overlay,clusters] of overlays) {
+                context.save();context.beginPath();
+                for(const c of clusters)context.rect(x(c.x0),y(c.y0),(c.x1-c.x0)*scale,(c.y1-c.y0)*scale);
+                context.clip();paint(overlay);context.restore();
+            }
+        }
     }
     const stop=layout.stops.find(s=>s.offset===caret&&s.affinity===layout.caretAffinity)||layout.stops.find(s=>s.offset===caret);
-    if(command.caret&&stop&&caret<=chars.length){context.fillStyle='#125ac4';context.fillRect(x(stop.x),y(stop.y0),Math.max(1,scale*2),(stop.y1-stop.y0)*scale);}
+    if(command.caret&&stop&&caret<=chars.length){context.fillStyle=colors.caret;context.fillRect(x(stop.x),y(stop.y0),Math.max(1,scale*2),(stop.y1-stop.y0)*scale);}
     context.direction='ltr';context.textAlign='left';context.textBaseline='top';
     if(presentation.lineNumbers) {
-        context.fillStyle='#6b7280';context.textAlign='right';
+        context.fillStyle=colors.gutter;context.textAlign='right';
         context.font=officeCanvasFont(officeFace(layout.runs[0]?.face??0),Math.max(6,10*scale));
         const seen=new Set();
         for(const line of layout.lines) {
@@ -126,14 +177,15 @@ export function paintOfficeEditor(context,command,presentation) {
             const styles=new Set(layout.styles.filter(s=>s.start<=index&&s.end>index).map(s=>s.kind));
             const highlight=layout.styles.findLast(s=>s.kind==='h'&&s.start<=index&&s.end>index)?.value;
             if(highlight&&highlight!=='none'){context.fillStyle='#'+highlight;context.fillRect(left,top,advance,height);}
-            if(index>=Math.min(caret,anchor)&&index<Math.max(caret,anchor)) {context.fillStyle='#b8d6ff';context.fillRect(left,top,advance,height);}
+            if(index>=Math.min(caret,anchor)&&index<Math.max(caret,anchor)) {context.fillStyle=colors.selection;context.fillRect(left,top,advance,height);}
             const font=line.font.replace(/[\x00-\x1f"\\]/g,'');
             context.font=`${styles.has('i')?'italic ':''}${styles.has('b')?700:400} ${line.size*scale}px "${font||'RiceWM Sans'}", "RiceWM CJK", sans-serif`;
-            context.fillStyle=line.color;context.fillText(chars[index]||'',left,top,advance*1.3);
+            const selected=index>=selectedStart&&index<selectedEnd;
+            context.fillStyle=colors.ink(line.color,selected?colors.selection:highlight&&highlight!=='none'?'#'+highlight:colors.page);context.fillText(chars[index]||'',left,top,advance*1.3);
             if(styles.has('u'))context.fillRect(left,top+line.size*scale,advance,Math.max(1,scale));
             if(styles.has('s'))context.fillRect(left,top+line.size*.6*scale,advance,Math.max(1,scale));
         }
-        if(command.caret&&caret>=line.start&&caret<=line.end) {context.fillStyle='#125ac4';context.fillRect(x(line.x)+(caret-line.start)*advance,top,Math.max(1,scale*2),height);}
+        if(command.caret&&caret>=line.start&&caret<=line.end) {context.fillStyle=colors.caret;context.fillRect(x(line.x)+(caret-line.start)*advance,top,Math.max(1,scale*2),height);}
     }
     context.restore();return true;
 }
@@ -144,7 +196,7 @@ export function richAttributeLayout(presentation,width) {
     if(!presentation.language.startsWith('rich')||parseOfficeLayout(presentation.language))return null;
     const chars=Array.from(presentation.document),ranges=[];
     for(const token of presentation.language.split('~').slice(0,4096)) {
-        const m=/^([fghbiusBNQACRJ])(\d+)-(\d+)(?:,([\da-f]+|none))?$/i.exec(token);
+        const m=/^([fghbiusBNQKACRJ])(\d+)-(\d+)(?:,([\da-f]+|none))?$/i.exec(token);
         if(!m)continue;
         if(m[1]==='f'&&(!/^\d+$/.test(m[4])||Number(m[4])<6||Number(m[4])>128))continue;
         if('gh'.includes(m[1])&&!/^[a-f0-9]{6}$/.test(m[4])&&!(m[1]==='h'&&m[4]==='none'))continue;
@@ -152,12 +204,12 @@ export function richAttributeLayout(presentation,width) {
         ranges.push({kind:m[1],start:Number(m[2]),end:Number(m[3]),value:m[4]});
     }
     const zoom=(presentation.fontSize||12)/12,gutter=presentation.lineNumbers?(String((presentation.lineNumberStart||1)+chars.filter(c=>c==='\n').length).length+1)*8+12:0,available=Math.max(1,(width-8)/zoom-gutter),rows=[];
-    const active=(at)=>ranges.filter(r=>r.start<=at&&(r.end>at||('BNQACRJ'.includes(r.kind)&&r.end===at)));
+    const active=(at)=>ranges.filter(r=>r.start<=at&&(r.end>at||('BNQKACRJ'.includes(r.kind)&&r.end===at)));
     let y=0,start=0,number=0,line=presentation.lineNumberStart||1;
     while(start<=chars.length) {
         let end=start;while(end<chars.length&&chars[end]!=='\n')end++;
-        const block=active(start),list=block.findLast(r=>'BNQ'.includes(r.kind))?.kind;
-        number=list==='N'?number+1:0;const marker=list==='B'?'•':list==='N'?number+'.':list==='Q'?'❝':'';
+        const block=active(start),list=block.findLast(r=>'BNQK'.includes(r.kind))?.kind;
+        number=list==='N'?number+1:0;const marker=list==='K'?(block.findLast(r=>r.kind==='K')?.value==='1'?'☑':'☐'):list==='B'?'•':list==='N'?number+'.':list==='Q'?'❝':'';
         const indent=marker?28:0,align=block.findLast(r=>'ACRJ'.includes(r.kind))?.kind;
         let at=start,first=true;
         do {
@@ -191,11 +243,14 @@ export function richAttributeLayout(presentation,width) {
 export function paintAttributedRichEditor(context,command,presentation) {
     const layout=richAttributeLayout(presentation,command.rect.width);if(!layout)return false;
     const {chars,rows,zoom,gutter}=layout,{rect}=command,caret=presentation.caret??0,anchor=presentation.anchor??caret;
+    const colors=viewingColors(presentation.forceDarkMode);
     const row=rows.find((r,i)=>caret>=r.start&&(caret<r.end||(caret===r.end&&(i===rows.length-1||rows[i+1].start>caret))))||rows.at(-1);
     const scroll=Math.max(0,row.y+row.height-(rect.height-8)/zoom);
     const x=n=>rect.x+4+(gutter+n)*zoom,y=n=>rect.y+4+(n-scroll)*zoom;
-    const color=command.color||[32,33,36,255],ink=`rgba(${color[0]},${color[1]},${color[2]},${(color[3]??255)/255})`;
+    const color=command.color||[32,33,36,255],source='#'+color.slice(0,3).map(v=>v.toString(16).padStart(2,'0')).join('');
+    const ink=presentation.forceDarkMode?colors.ink(source):rgbaColor(color);
     context.save();context.beginPath();context.rect(rect.x,rect.y,rect.width,rect.height);context.clip();context.textBaseline='alphabetic';context.textAlign='left';context.fontKerning='none';
+    if(presentation.forceDarkMode){context.fillStyle=colors.page;context.fillRect(rect.x,rect.y,rect.width,rect.height);}
     for(const r of rows) {
         if(y(r.y)+r.height*zoom<rect.y||y(r.y)>rect.y+rect.height)continue;
         if(presentation.lineNumbers&&r.line!==null){context.font='400 12px "RiceWM Mono", "RiceWM CJK", monospace';context.fillStyle=ink;context.save();context.translate(rect.x+4,y(r.y+r.height/1.5));context.scale(zoom,zoom);context.fillText(String(r.line),0,0);context.restore();}
@@ -204,8 +259,10 @@ export function paintAttributedRichEditor(context,command,presentation) {
             const has=k=>g.style.some(s=>s.kind===k),value=k=>g.style.findLast(s=>s.kind===k)?.value;
             const foreground=value('g'),highlight=value('h');
             if(highlight&&highlight!=='none'){context.fillStyle='#'+highlight.padStart(6,'0');context.fillRect(x(g.x),y(g.y),g.advance*zoom,r.height*zoom);}
-            if(g.at>=Math.min(caret,anchor)&&g.at<Math.max(caret,anchor)){context.fillStyle='#b8d6ff';context.fillRect(x(g.x),y(g.y),g.advance*zoom,r.height*zoom);}
-            context.fillStyle=foreground?'#'+foreground.padStart(6,'0'):ink;
+            if(g.at>=Math.min(caret,anchor)&&g.at<Math.max(caret,anchor)){context.fillStyle=colors.selection;context.fillRect(x(g.x),y(g.y),g.advance*zoom,r.height*zoom);}
+            const selected=g.at>=Math.min(caret,anchor)&&g.at<Math.max(caret,anchor);
+            const background=selected?colors.selection:highlight&&highlight!=='none'?'#'+highlight:colors.page;
+            context.fillStyle=presentation.forceDarkMode?colors.ink(foreground?'#'+foreground:source,background):foreground?'#'+foreground:ink;
             context.font=`${has('i')?'italic ':''}${has('b')?700:400} ${g.size}px "RiceWM Sans", "RiceWM CJK", sans-serif`;
             const textY=g.y+r.height/1.5;
             context.save();context.translate(x(g.x),y(textY));context.scale(zoom,zoom);context.fillText(chars[g.at],0,0);if(has('b'))context.fillText(chars[g.at],Math.max(.6,Math.min(1,g.size/16)),0);context.restore();
@@ -213,6 +270,6 @@ export function paintAttributedRichEditor(context,command,presentation) {
             if(has('s'))context.fillRect(x(g.x),y(textY-g.size*.3),g.advance*zoom,Math.max(1,zoom));
         }
     }
-    if(command.caret&&row){const g=row.glyphs.find(g=>g.at===caret),last=row.glyphs.at(-1),cx=g?.x??(last?last.x+last.advance:row.x),size=g?.size??last?.size??12;context.fillStyle=ink;context.fillRect(x(cx),y(row.y+row.height/1.5-size),Math.max(1,zoom),size*1.2*zoom);}
+    if(command.caret&&row){const g=row.glyphs.find(g=>g.at===caret),last=row.glyphs.at(-1),cx=g?.x??(last?last.x+last.advance:row.x),size=g?.size??last?.size??12;context.fillStyle=presentation.forceDarkMode?colors.caret:ink;context.fillRect(x(cx),y(row.y+row.height/1.5-size),Math.max(1,zoom),size*1.2*zoom);}
     context.restore();return true;
 }

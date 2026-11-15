@@ -1,4 +1,5 @@
 use super::*;
+use rice_native_app_protocol::PatchValue;
 
 fn fixture() -> (NativeUiHost, Constraints) {
     let mut host = NativeUiHost::default();
@@ -68,6 +69,64 @@ fn inline_menu_action_lays_out_passive_preview_and_keyboard_dismisses() {
     click(&mut host, constraints, 3);
     host.key_event(app(), window(), true, 9, 0, None).expect("Escape");
     assert!(!visible(&mut host, constraints, 8));
+}
+
+#[test]
+fn menu_disclosure_keys_focus_enabled_choices_and_preserve_hold_default_action() {
+    let enabled = WidgetState::ENABLED;
+    for hold in [false, true] {
+        let mut host = NativeUiHost::default();
+        host.apply_patch(&UiPatchEnvelope { app: app(), window: window(), sequence: 1,
+            patches: vec![
+                create(1, None, 0, WidgetKind::ToolBar, enabled, None),
+                create(2, Some(1), 0, WidgetKind::Menu,
+                    if hold { enabled | WidgetState::KEY_NAVIGATION } else { enabled }, Some("Options")),
+                create(3, Some(2), 0, WidgetKind::MenuItem, WidgetState::empty(), Some("Unavailable")),
+                create(4, Some(2), 1, WidgetKind::MenuItem, enabled, Some("menu:separator")),
+                create(5, Some(2), 2, WidgetKind::MenuItem, enabled, Some("Execute alternative")),
+            ] }).unwrap();
+        let size = Size { width: 640, height: 480 };
+        let constraints = Constraints { min: size, max: size };
+        // Pointer disclosure and Escape leave focus on the ordinary menu.
+        // A hold-style menu instead receives focus through its short click.
+        click(&mut host, constraints, 2);
+        if !hold { host.key_event(app(), window(), true, 9, 0, None).unwrap(); }
+        for (key, text, modifiers) in [(116, None, 0), (116, None, 8), (36, None, 0), (65, Some(" ".into()), 0)] {
+            let event = host.key_event(app(), window(), true, key, modifiers, text).unwrap().unwrap();
+            if hold && matches!(key, 36 | 65) {
+                assert_eq!(event.target, widget(2));
+                assert!(matches!(event.event, UiEvent::Key { .. }), "SDK retains the hold default command");
+                assert!(host.render(app(), window(), constraints).unwrap().popup.is_none());
+                continue;
+            }
+            assert_eq!(event.target, widget(5), "disabled rows and separators never receive focus");
+            assert_eq!(event.event, UiEvent::Focus { focused: true });
+            assert!(host.render(app(), window(), constraints).unwrap().popup.is_some());
+            let event = host.key_event(app(), window(), true, 36, 0, None).unwrap().unwrap();
+            assert_eq!(event.target, widget(5));
+            assert_eq!(event.event, UiEvent::Activate);
+            assert!(host.render(app(), window(), constraints).unwrap().popup.is_none());
+            assert_eq!(host.windows[&(app(), window())].focused, Some(widget(2)));
+        }
+        host.key_event(app(), window(), false, 116, 0, None).unwrap();
+        host.key_event(app(), window(), true, 40, 0, Some("d".into())).unwrap();
+        assert!(host.render(app(), window(), constraints).unwrap().popup.is_none(), "printable X11 keycodes are not DOM arrows");
+    }
+}
+
+#[test]
+fn empty_menu_keeps_its_keyboard_anchor_and_disabled_menu_cannot_disclose() {
+    let (mut host, constraints) = fixture();
+    click(&mut host, constraints, 3);
+    host.key_event(app(), window(), true, 9, 0, None).unwrap();
+    let focus = host.key_event(app(), window(), true, 116, 0, None).unwrap().unwrap();
+    assert_eq!(focus.target, widget(3), "a compound gallery has no direct command rows");
+    host.key_event(app(), window(), true, 9, 0, None).unwrap();
+    host.apply_patch(&UiPatchEnvelope { app: app(), window: window(), sequence: 2,
+        patches: vec![UiPatch::Update { id: widget(3), state: PatchValue::Set(WidgetState::empty().bits()),
+            text: PatchValue::Keep, icon: PatchValue::Keep }] }).unwrap();
+    host.key_event(app(), window(), true, 116, 0, None).unwrap();
+    assert!(host.render(app(), window(), constraints).unwrap().popup.is_none());
 }
 
 #[test]
@@ -271,4 +330,109 @@ fn document_page_fits_intrinsic_ratio_and_keeps_pointer_coordinates_on_resize() 
         assert!(matches!(event.event,UiEvent::Pointer{x,y,..} if (x-800).abs()<=4 && (y-450).abs()<=4),"page center maps to document center");
         host.pointer_event(app(),window(),PointerEventKind::Up,point,1,0).unwrap();
     }
+}
+
+
+#[test]
+fn popup_gaps_own_pointer_input_above_an_enabled_scene_and_keep_children_reachable() {
+    let mut host = NativeUiHost::default();
+    let enabled = WidgetState::ENABLED;
+    let mut patches = vec![
+        create(1, None, 0, WidgetKind::Column, enabled, None),
+        create(2, Some(1), 0, WidgetKind::ToolBar, enabled, None),
+        create(3, Some(2), 0, WidgetKind::Menu, enabled, Some("Paint")),
+        create(4, Some(1), 1, WidgetKind::SceneSurface, enabled, None),
+        create(5, Some(3), 0, WidgetKind::ScrollView, enabled, Some("viewport:160|0/0")),
+        create(6, Some(5), 0, WidgetKind::Column, enabled, Some("panel:fixed:flush:gap=8")),
+    ];
+    for index in 0..16_u64 {
+        patches.push(create(20 + index, Some(6), index as u32, WidgetKind::MenuItem,
+            enabled, Some("color-swatch:#123456")));
+    }
+    host.apply_patch(&UiPatchEnvelope { app: app(), window: window(), sequence: 1, patches }).unwrap();
+    let size = Size { width: 640, height: 480 };
+    let constraints = Constraints { min: size, max: size };
+    click(&mut host, constraints, 3);
+    let snapshot = host.render(app(), window(), constraints).unwrap();
+    let popup = snapshot.popup.as_ref().unwrap().rect;
+    let state = &host.windows[&(app(), window())];
+    let first = state.geometry[&widget(20)];
+    let scroll = state.geometry[&widget(5)];
+    let scene = state.geometry[&widget(4)];
+    let gap = Point { x: first.origin.x + (first.size.width / 2) as i32,
+        y: first.origin.y + first.size.height as i32 + 2 };
+    assert!(popup.contains(gap) && scroll.contains(gap) && scene.contains(gap));
+    let target = host.hit_test(app(), window(), gap).unwrap();
+    assert_eq!(target.widget, widget(3), "a gap belongs to the painted popup, not the scene");
+    assert!(!target.activatable && !target.focusable, "background is not a menu disclosure");
+    let focused = snapshot.focused;
+    for point in [gap, Point { x: popup.origin.x + 1, y: popup.origin.y + 1 }] {
+        for kind in [PointerEventKind::Move, PointerEventKind::Down, PointerEventKind::Up] {
+            assert!(host.pointer_event(app(), window(), kind, point, 1, 0).unwrap().is_none(),
+                "popup background never activates or leaks a pointer gesture");
+        }
+        let current = host.render(app(), window(), constraints).unwrap();
+        assert!(current.popup.is_some());
+        assert_eq!(current.focused, focused, "gap clicks retain keyboard focus");
+        assert_eq!(host.windows[&(app(), window())].opened_menu, Some(widget(3)));
+    }
+    let event = host.pointer_event(app(), window(), PointerEventKind::Wheel, gap, 5, 0)
+        .unwrap().expect("wheel over a popup gap scrolls the gallery");
+    assert_eq!(event.target, widget(5));
+    assert!(matches!(event.event, UiEvent::ValueChanged(ref value) if value.starts_with("96/")));
+    let outside = Point { x: scene.origin.x + scene.size.width as i32 - 2,
+        y: scene.origin.y + scene.size.height as i32 - 2 };
+    assert!(!popup.contains(outside));
+    let event = host.pointer_event(app(), window(), PointerEventKind::Wheel, outside, 5, 0)
+        .unwrap().expect("the scene still owns its wheel input outside the popup");
+    assert_eq!(event.target, widget(4));
+    let event = click(&mut host, constraints, 20).expect("the foreground swatch remains active");
+    assert_eq!(event.target, widget(20));
+    assert!(matches!(event.event, UiEvent::Activate));
+    assert!(host.render(app(), window(), constraints).unwrap().popup.is_none());
+}
+
+
+#[test]
+fn submenu_background_keeps_the_root_chain_and_never_promotes_its_menu() {
+    let mut host = NativeUiHost::default();
+    let enabled = WidgetState::ENABLED;
+    host.apply_patch(&UiPatchEnvelope { app: app(), window: window(), sequence: 1,
+        patches: vec![
+            create(1, None, 0, WidgetKind::ScrollView, enabled, Some("viewport:360|0/0")),
+            create(8, Some(1), 0, WidgetKind::Column, enabled, None),
+            create(2, Some(8), 0, WidgetKind::ToolBar, enabled, None),
+            create(3, Some(2), 0, WidgetKind::Menu, enabled, Some("Paint")),
+            create(4, Some(3), 0, WidgetKind::MenuItem, enabled, Some("Options")),
+            create(5, Some(4), 0, WidgetKind::Menu, enabled, None),
+            create(6, Some(5), 0, WidgetKind::MenuItem, enabled, Some("Apply")),
+            create(7, Some(8), 1, WidgetKind::SceneSurface, enabled, Some("panel:fixed:accessory-height=700")),
+        ] }).unwrap();
+    let size = Size { width: 640, height: 480 };
+    let constraints = Constraints { min: size, max: size };
+    click(&mut host, constraints, 3);
+    click(&mut host, constraints, 4);
+    let snapshot = host.render(app(), window(), constraints).unwrap();
+    let state = &host.windows[&(app(), window())];
+    assert_eq!(state.opened_menu, Some(widget(3)));
+    assert_eq!(state.opened_submenus, vec![widget(5)]);
+    let rect = super::super::render::menu_popup_rect(&state.tree, widget(5), &state.geometry, &host.theme).unwrap();
+    let gap = Point { x: rect.origin.x + 1, y: rect.origin.y + 1 };
+    let target = host.hit_test(app(), window(), gap).unwrap();
+    assert_eq!(target.widget, widget(5));
+    assert!(!target.activatable && !target.focusable);
+    for kind in [PointerEventKind::Move, PointerEventKind::Down, PointerEventKind::Up] {
+        assert!(host.pointer_event(app(), window(), kind, gap, 1, 0).unwrap().is_none());
+        let current = host.render(app(), window(), constraints).unwrap();
+        assert_eq!(current.focused, snapshot.focused);
+        let state = &host.windows[&(app(), window())];
+        assert_eq!(state.opened_menu, Some(widget(3)));
+        assert_eq!(state.opened_submenus, vec![widget(5)]);
+    }
+    assert!(host.pointer_event(app(), window(), PointerEventKind::Wheel, gap, 5, 0).unwrap().is_none(),
+        "unscrollable submenu padding never scrolls an ancestor outside the popup");
+    let event = click(&mut host, constraints, 6).expect("foreground submenu action");
+    assert_eq!(event.target, widget(6));
+    assert!(matches!(event.event, UiEvent::Activate));
+    assert!(host.render(app(), window(), constraints).unwrap().popup.is_none());
 }

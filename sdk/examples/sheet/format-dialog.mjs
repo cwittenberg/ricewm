@@ -1,11 +1,11 @@
 import {Button,CheckBox,ColorPalette,Column,Container,Dialog,Label,Menu,MenuItem,Message,Row,ScrollView,Stack,State,TextField,VirtualGrid} from '@ricewm/app';
-import {selectionRange} from './editor-actions.mjs';
+import {selectionRange,formatSelectionCommand} from './editor-actions.mjs';
 import {checkedSheetCommand} from './command-contract.mjs';
 import {borderPreviewFrame,borderPreviewEdge} from './border-preview.mjs';
 
 const categories=[['General','General'],['Number','#,##0.00'],['Currency','$#,##0.00'],['Percentage','0.00%'],['Date','yyyy-mm-dd'],['Time','hh:mm:ss'],['Scientific','0.00E+00'],['Text','@']];
 /** Draft-only format editor. OK sends one transaction; Cancel sends none. */
-export function createFormatDialog({projection,initialTab='number',themeColors=[],isCurrent,apply,onClose}) {
+export function createFormatDialog({projection,initialTab='number',themeColors=[],isCurrent,apply,onClose,conditional=false}) {
     const range=selectionRange(projection),font=projection.selection.font||{},format=projection.selection.format||{};
     const changes=new Map(),borders=new Map(),pages=new Map(),tabs=new Map();let closed=false,acting=false;
     const status=new Label({name:'format-status',text:''});
@@ -22,14 +22,14 @@ export function createFormatDialog({projection,initialTab='number',themeColors=[
     const category=new Menu({name:'format-number-category',text:'Category',state:State.START_ALIGNED|State.TRAILING_ICON});
     for(const [label,code]of categories){const item=new MenuItem({name:`format-category-${label.toLowerCase()}`,text:label});item.on(Message.ACTIVATE,()=>{number.input.setProperty('value',code);change('num_fmt',code);category.text=label;});category.append(item);}
     pages.set('number',new Column({text:'panel:flush:tight-stack'},[category,number.control]));
-    pages.set('alignment',new Column({text:'panel:flush:tight-stack'},[
+    if(!conditional)pages.set('alignment',new Column({text:'panel:flush:tight-stack'},[
         choice('horizontal','Horizontal',format.horizontal||'general',[['general','General'],['left','Left'],['center','Center'],['right','Right']],'alignment.horizontal'),
         choice('vertical','Vertical',format.vertical||'bottom',[['top','Top'],['center','Center'],['bottom','Bottom']],'alignment.vertical'),
         toggle('wrap','Wrap text',format.wrapText,'alignment.wrap_text'),
     ]));
     pages.set('font',new Column({text:'panel:flush:tight-stack'},[
-        field('font-family','Font',font.family||'Arial','font.name').control,
-        field('font-size','Size',font.size_pt||12,'font.size').control,
+        ...(!conditional?[field('font-family','Font',font.family||'Arial','font.name').control,
+        field('font-size','Size',font.size_pt||12,'font.size').control]:[]),
         new Row({text:'panel:fixed:flush'},[toggle('bold','Bold',font.weight>=600,'font.b'),toggle('italic','Italic',font.italic,'font.i'),toggle('underline','Underline',font.underline,'font.u')]),
         palette('font-color',format.fontColor,'font.color','Automatic'),
     ]));
@@ -69,14 +69,14 @@ export function createFormatDialog({projection,initialTab='number',themeColors=[
     pages.set('fill',palette('fill-color',format.fillColor,'fill.color','No fill'));
     const tabRow=new Row({text:'panel:fixed:flush'}),body=new Stack({text:'panel:flush'},[...pages.values()]);
     const selectTab=name=>{for(const [key,page]of pages)page.setProperty('visible',key===name);for(const [key,tab]of tabs)tab.setProperty('checked',key===name);};
-    for(const [name,label]of[['number','Number'],['alignment','Alignment'],['font','Font'],['border','Border'],['fill','Fill']]){const tab=new Button({name:`format-tab-${name}`,text:label});tab.on(Message.ACTIVATE,()=>selectTab(name));tabs.set(name,tab);tabRow.append(tab);}
+    for(const [name,label]of[['number','Number'],['alignment','Alignment'],['font','Font'],['border','Border'],['fill','Fill']]){if(!pages.has(name))continue;const tab=new Button({name:`format-tab-${name}`,text:label});tab.on(Message.ACTIVATE,()=>selectTab(name));tabs.set(name,tab);tabRow.append(tab);}
     selectTab(pages.has(initialTab)?initialTab:'number');
     const cancel=new Button({name:'format-cancel',text:'Cancel'}),ok=new Button({name:'format-apply',text:'OK'});
-    const dialog=new Dialog({name:'format-cells-dialog',text:'Format Cells',modal:true},[tabRow,new ScrollView({text:'viewport:340|0/0',state:State.EXPANSIVE},[body]),new Container({text:'panel:fixed:flush'},[status,new Row({text:'panel:actions'},[cancel,ok])])]);
+    const dialog=new Dialog({name:'format-cells-dialog',text:conditional?'Format Conditional Rule':'Format Cells',modal:true},[tabRow,new ScrollView({text:'viewport:340|0/0',state:State.EXPANSIVE},[body]),new Container({text:'panel:fixed:flush'},[status,new Row({text:'panel:actions'},[cancel,ok])])]);
     function close(){if(closed||acting)return;closed=true;onClose();}
     async function submit(){
         if(closed||acting)return;if(!changes.size&&!borders.size){close();return;}
-        let command;try{if(!isCurrent())throw Error('Workbook changed. Reopen Format Cells.');command=checkedSheetCommand({type:'format-cells',sheetId:projection.activeSheetId,range,...(changes.size?{changes:[...changes].map(([path,value])=>({path,value}))}:{}),...(borders.size?{borders:[...borders.values()]}:{})});}catch(error){status.text=String(error.message||error);return;}
+        let command;try{if(!isCurrent())throw Error('Workbook changed. Reopen Format Cells.');const intent={type:'format-cells',sheetId:projection.activeSheetId,range,...(changes.size?{changes:[...changes].map(([path,value])=>({path,value}))}:{}),...(borders.size?{borders:[...borders.values()]}:{})};command=checkedSheetCommand(conditional?intent:formatSelectionCommand(intent,projection));}catch(error){status.text=String(error.message||error);return;}
         acting=true;body.setProperty('enabled',false);tabRow.setProperty('enabled',false);ok.setProperty('enabled',false);cancel.setProperty('enabled',false);
         try{if(await apply(command,projection.revision)){acting=false;close();}}catch(error){status.text=String(error.message||error).slice(0,240);}
         finally{acting=false;if(!closed){body.setProperty('enabled',true);tabRow.setProperty('enabled',true);ok.setProperty('enabled',true);cancel.setProperty('enabled',true);}}

@@ -889,7 +889,7 @@ fn places_are_start_aligned_and_alt_zoom_updates_the_footer_control() {
             request(2),
         )
         .expect("Alt+ zoom");
-    assert_eq!(actor.view_zoom_permille, 1_100);
+    assert_eq!(actor.view_zoom_permille, 1_350);
     let [Message::UiPatch(zoomed)] = zoomed.as_slice() else {
         panic!("zoom patch");
     };
@@ -897,7 +897,7 @@ fn places_are_start_aligned_and_alt_zoom_updates_the_footer_control() {
         matches!(
             patch,
             UiPatch::Create { id, text: Some(text), .. }
-            if *id == widget_id(ZOOM_SLIDER) && text == "600/4500"
+            if *id == widget_id(ZOOM_SLIDER) && text == "600/1250"
         )
     }));
 }
@@ -910,7 +910,7 @@ fn yellow_jacket_uses_compact_zoom_and_other_themes_restore_normal_zoom() {
         request(1),
     )
     .expect("Yellow Jacket RiceFiles");
-    assert_eq!(yellow_actor.view_zoom_permille, 650);
+    assert_eq!(yellow_actor.view_zoom_permille, 750);
 
     let (mut actor, _) = loaded_actor();
     actor
@@ -928,7 +928,7 @@ fn yellow_jacket_uses_compact_zoom_and_other_themes_restore_normal_zoom() {
             request(2),
         )
         .expect("activate Yellow Jacket");
-    assert_eq!(actor.view_zoom_permille, 650);
+    assert_eq!(actor.view_zoom_permille, 750);
 
     actor
         .handle_host_event(
@@ -942,7 +942,7 @@ fn yellow_jacket_uses_compact_zoom_and_other_themes_restore_normal_zoom() {
             request(3),
         )
         .expect("leave Yellow Jacket");
-    assert_eq!(actor.view_zoom_permille, 1_000);
+    assert_eq!(actor.view_zoom_permille, 1_250);
 }
 
 #[test]
@@ -1742,4 +1742,51 @@ fn videos_place_navigates_to_capitalized_home_directory() {
     assert!(messages.iter().any(|message| matches!(message,
         Message::VfsRequest(VfsRequest { operation: VfsOperation::ReadDirectory { path, .. }, .. }) if path == "/root/Videos"
     )));
+}
+
+#[test]
+fn theme_layout_selects_real_folder_tree_and_independent_persistent_view_defaults() {
+    use rice_native_app_protocol::{SettingEntry,SettingsResponse,SettingsResult,HostEvent,HostEventKind};
+    let (mut actor,_)=loaded_actor();
+    let values=|sidebar:&str,view:&str|vec![
+        SettingEntry {key:"ricefiles.sidebar.view".into(),value:sidebar.into()},
+        SettingEntry {key:"ricefiles.default-view".into(),value:view.into()},
+    ];
+    actor.handle_settings_response(&SettingsResponse {request:request(1),result:SettingsResult::Values(values("treeview","details"))}).unwrap();
+    assert!(actor.folder_tree);
+    assert_eq!(actor.pane().unwrap().view,ViewMode::Details);
+    assert!(actor.tree.get(widget_id(files_view::PLACES_LIST)).is_some_and(|widget|widget.kind==WidgetKind::Tree));
+    actor.change_view(ViewMode::Icons).unwrap();
+    // Unrelated/repeated preference refreshes preserve a manual View choice.
+    super::files_preferences::load(&mut actor,request(40));
+    actor.handle_settings_response(&SettingsResponse {request:request(40),result:SettingsResult::Values(values("treeview","details"))}).unwrap();
+    assert_eq!(actor.pane().unwrap().view,ViewMode::Icons);
+    actor.open_tab_at(GuestPath::absolute("/root/Documents").unwrap(),request(41)).unwrap();
+    assert_eq!(actor.pane().unwrap().view,ViewMode::Details);
+    let changed=actor.handle_host_event(&HostEvent {app:app(),event:HostEventKind::RiceBus {topic:"org.ricewm.settings/changed".into(),payload:r#"{"values":{"ricefiles.default-view":"compact"}}"#.into()}},request(42)).unwrap();
+    assert!(changed.iter().any(|message|matches!(message,Message::SettingsRequest(_))));
+    actor.handle_settings_response(&SettingsResponse {request:request(42),result:SettingsResult::Values(values("places","compact"))}).unwrap();
+    assert!(!actor.folder_tree);
+    assert_eq!(actor.pane().unwrap().view,ViewMode::Compact);
+    super::files_preferences::load(&mut actor,request(43));
+    actor.handle_settings_response(&SettingsResponse {request:request(43),result:SettingsResult::Values(values("auto","auto"))}).unwrap();
+    assert!(!actor.folder_tree);
+    assert_eq!(actor.pane().unwrap().view,ViewMode::Icons);
+}
+
+#[test]
+fn theme_zoom_and_automation_update_the_real_native_slider() {
+    use rice_native_app_protocol::{SettingEntry,SettingsResponse,SettingsResult};
+    let (mut actor,_)=loaded_actor();
+    actor.handle_settings_response(&SettingsResponse{request:request(1),result:SettingsResult::Values(vec![SettingEntry{key:"ricefiles.zoom".into(),value:"125".into()}])}).unwrap();
+    assert_eq!(actor.copilot_context()["zoomPercent"],125);
+    assert_eq!(actor.tree.get(widget_id(ZOOM_SLIDER)).unwrap().kind,WidgetKind::Slider);
+    actor.copilot_action("zoom",&serde_json::json!({"percent":200}),request(40)).unwrap();
+    assert_eq!(actor.view_zoom_permille,2000);
+    super::files_preferences::load(&mut actor,request(41));
+    actor.handle_settings_response(&SettingsResponse{request:request(41),result:SettingsResult::Values(vec![SettingEntry{key:"ricefiles.zoom".into(),value:"125".into()}])}).unwrap();
+    assert_eq!(actor.view_zoom_permille,2000,"unrelated preference refresh preserves the interactive zoom");
+    actor.handle_event(&event(ZOOM_SLIDER,UiEvent::ValueChanged("1000/1000".into())),request(42)).unwrap();
+    assert_eq!(actor.view_zoom_permille,2000);
+    for percent in [0,74,201] {assert!(actor.copilot_action("zoom",&serde_json::json!({"percent":percent}),request(43)).is_err());}
 }

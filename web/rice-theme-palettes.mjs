@@ -1,3 +1,4 @@
+import {validateSurfaceSkins} from './rice-theme-customization.mjs';
 const groups = {
     taskbar: ['taskbar.bar','taskbar.ridge','taskbar.start','taskbar.task','taskbar.tray','taskbar.text','accent'],
     menu: ['menu.background','menu.alternate','menu.separator','menu.hover','menu.selected','menu.text'],
@@ -20,6 +21,8 @@ export function validateThemePalettes(bundle) {
         for (const [key,value] of Object.entries(palette.appearance)) {
             if (!colorKeys.has(key) || typeof value !== 'string' || !/^#?[a-f\d]{6}$/i.test(value)) throw new TypeError('Invalid palette color: '+key);
         }
+        if (palette.surfaceSkins !== undefined) validateSurfaceSkins(palette.surfaceSkins);
+        if (palette.settings !== undefined && (!palette.settings || typeof palette.settings !== 'object' || Array.isArray(palette.settings) || Object.entries(palette.settings).some(([key,value]) => !/^appearance\.frosted_ice\.(opacity|blur|refraction|thickness|chroma|window_border|widget_border)$/.test(key) || typeof value !== 'string' || !/^(?:100|[0-9]{1,2})$/.test(value)))) throw new TypeError('Palette settings must be bounded glass appearance values');
         if (palette.terminalPalette !== undefined) {
             const terminal = palette.terminalPalette;
             const rgb = value => Number.isInteger(value) && value >= 0 && value <= 0xffffff;
@@ -41,6 +44,8 @@ export function resolveThemePalette(source, requested) {
     theme.icon = color('icon') ?? theme.icon;
     theme.iconHover = color('icon.hover') ?? theme.iconHover;
     theme.paletteId = palette.id;
+    if (palette.surfaceSkins) bundle.surfaceSkins = structuredClone(palette.surfaceSkins);
+    if (palette.settings) bundle.settings = {...bundle.settings, ...palette.settings};
     if (palette.terminalPalette) theme.terminalTheme = structuredClone(palette.terminalPalette);
     if (bundle.surface && color('accent') !== undefined) bundle.surface.edge = '#'+color('accent').toString(16).padStart(6,'0');
     if (palette.wallpaper) {

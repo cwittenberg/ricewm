@@ -13,7 +13,7 @@ export function createSheetContextMenu({x,y,can,filtered,onAction,onClose}) {
     const submenu=(name,text,entries)=>{const control=new MenuItem({name:`context-${name}-submenu`,text,icon:sheetIcons[name]??null,enabled:entries.some(([action])=>can(action))},[new Menu({name:`context-${name}-items`},entries.map(([name,text])=>item(name,text)))]);branches.push([control,entries]);return control;};
     const dialog=new ContextMenu({name:'sheet-context-menu'},[
             item('cut','Cut'),item('copy','Copy'),item('paste','Paste'),
-            submenu('paste-special','Paste Special',[['paste-values','Values'],['paste-formulas','Formulas']]),
+            submenu('paste-special','Paste Special',[['paste-values','Values'],['paste-formulas','Formulas'],['paste-special-dialog','Paste Special…']]),
             submenu('insert','Insert',[['insert-rows','Rows Above'],['insert-columns','Columns Before']]),
             submenu('delete','Delete',[['delete-rows','Selected Rows…'],['delete-columns','Selected Columns…']]),
             item('clear','Clear Contents'),

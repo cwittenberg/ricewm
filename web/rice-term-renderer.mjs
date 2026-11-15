@@ -1,4 +1,47 @@
 // Ordinary compositor paint; invisible image resources only supply animated pixels.
+// Activity belongs to the presentation owner, never to paint/telemetry ticks.
+// No idle polling timer is needed: the existing animation clock stops itself.
+export class RiceDecorativeMotion {
+    constructor({document = globalThis.document, now = () => performance.now(),
+        idleMs = 8000, onWake = () => {}} = {}) {
+        this.document = document;
+        this.now = now;
+        this.idleMs = idleMs;
+        this.onWake = onWake;
+        this.lastActivity = now();
+        this.closed = false;
+        this.motionQuery = document?.defaultView?.matchMedia?.('(prefers-reduced-motion: reduce)');
+        this.activity = event => {
+            if (!event.isTrusted || this.closed) return;
+            const wasActive = this.active;
+            this.lastActivity = this.now();
+            if (!wasActive && this.active) this.onWake();
+        };
+        this.visibility = () => {
+            if (!document.hidden && !this.closed) {
+                this.lastActivity = this.now();
+                this.onWake();
+            }
+        };
+        this.preference = () => { if (!this.closed) this.onWake(); };
+        this.events = ['pointermove', 'pointerdown', 'keydown', 'wheel'];
+        for (const type of this.events) document?.addEventListener(type, this.activity, {capture:true, passive:true});
+        document?.addEventListener('visibilitychange', this.visibility);
+        this.motionQuery?.addEventListener('change', this.preference);
+    }
+    get active() {
+        return !this.closed && !this.document?.hidden && !this.motionQuery?.matches &&
+            this.now() - this.lastActivity < this.idleMs;
+    }
+    dispose() {
+        this.closed = true;
+        for (const type of this.events) this.document?.removeEventListener(type, this.activity, true);
+        this.document?.removeEventListener('visibilitychange', this.visibility);
+        this.motionQuery?.removeEventListener('change', this.preference);
+        this.onWake = () => {};
+    }
+}
+
 const color = value => `#${value.toString(16).padStart(6, "0")}`;
 export function terminalContrast(a, b) {
     const luminance = value => [16,8,0].reduce((sum, shift, index) => {
@@ -158,26 +201,48 @@ function animateImages(now) {
     const due = now - lastImageFrame >= imageFrameInterval - .5;
     if (due) lastImageFrame = now;
     for (const entry of animatedImages) {
+        // Only the bundled decorative logo opts into inactivity suspension.
+        // Other animated terminal images retain their playback semantics.
+        let idle = false;
+        if (entry.decorative && entry.motionOwners.size) {
+            for (const [notify, motion] of entry.motionOwners) {
+                if (motion && !motion.active) entry.damage.delete(notify);
+            }
+            idle = entry.damage.size === 0;
+        }
         // Renewed only by compositor paints, so cleared/scrolled-away images
         // cannot keep a desktop repainting. RAF also pauses in background tabs.
-        if (now - entry.lastPaint > 250 || document.hidden ||
+        if (idle || now - entry.lastPaint > 250 || document.hidden ||
             imageMotionReduced()) {
             entry.image.remove();
-            for (const raster of entry.rasters.values()) if (!raster.loop?.ready) clearImageLoop(raster);
+            if (idle) entry.pausedAt = entry.frameTime;
+            // Idle retains the last raster, so ordinary scene updates cannot
+            // restart the SVG clock or change its frozen pixels.
+            if (!idle) for (const raster of entry.rasters.values()) if (!raster.loop?.ready) clearImageLoop(raster);
             entry.damage.clear();
+            entry.motionOwners.clear();
             animatedImages.delete(entry);
         } else if (due) {
             entry.version++;
             entry.frameTime = now;
+            entry.motionOwners.clear();
             notifyDamage(entry.damage, true);
         }
     }
     if (animatedImages.size && imageFrame === null) imageFrame = requestAnimationFrame(animateImages);
 }
-function animateImage(entry, onDamage, damage, raster) {
+function animateImage(entry, onDamage, damage, raster, motion) {
     if (!entry.animated || !globalThis.document?.body || document.hidden ||
         typeof requestAnimationFrame !== 'function' ||
-        imageMotionReduced()) return;
+        imageMotionReduced() || entry.decorative && motion && !motion.active) return;
+    if (entry.pausedAt !== undefined) {
+        const now = performance.now();
+        for (const variant of entry.rasters.values()) {
+            if (variant.loop?.ready) variant.loop.start += now - entry.pausedAt;
+        }
+        entry.frameTime = now;
+        delete entry.pausedAt;
+    }
     if (!raster.loop?.ready && !entry.image.isConnected) {
         // Chromium freezes detached SVG image resources. This invisible image
         // only advances its clock; visible pixels stay in the normal compositor.
@@ -190,6 +255,7 @@ function animateImage(entry, onDamage, damage, raster) {
     }
     entry.lastPaint = performance.now();
     mergeDamage(entry.damage, onDamage, damage);
+    entry.motionOwners.set(onDamage, motion);
     animatedImages.add(entry);
     if (imageFrame === null) imageFrame = requestAnimationFrame(animateImages);
 }
@@ -219,6 +285,7 @@ function discardImage(entry) {
     entry.image.remove();
     entry.listeners.clear();
     entry.damage.clear();
+    entry.motionOwners.clear();
     clearImageRaster(entry);
     animatedImages.delete(entry);
     const variants = imageSources.get(entry.source);
@@ -256,8 +323,9 @@ function preparedImage(source, accent) {
         resource = 'data:image/svg+xml;base64,' + btoa(svg);
     }
     const image = new Image();
-    entry = { image, source, accent, listeners: new Map(), damage: new Map(), version: 0,
+    entry = { image, source, accent, listeners: new Map(), damage: new Map(), motionOwners: new Map(), version: 0,
         rasters: new Map(),
+        decorative: svg.includes('<title id="title">riceWM logo</title>'),
         loopDuration: svgLoopDuration(svg),
         animated: /<(?:[\w.-]+:)?(?:animate(?:Transform|Motion|Color)?|set)\b|@(?:-webkit-)?keyframes\b|\banimation(?:-[\w-]+)?\s*:/i.test(svg) };
     let variants = imageSources.get(source);
@@ -363,7 +431,7 @@ function imageRaster(entry) {
     }
     return entry.bitmap || entry.raster;
 }
-function paintImage(context, rect, row, onDamage, damageOrigin = null, imageVisible = null, capture = null, captureOnly = false) {
+function paintImage(context, rect, row, onDamage, damageOrigin = null, imageVisible = null, capture = null, captureOnly = false, motion = null) {
     const spec = row.image;
     if (!spec || typeof Image !== 'function') return;
     const size = row.font_size || 13, cw = Math.ceil(size * 8 / 13), ch = size + 5;
@@ -404,7 +472,7 @@ function paintImage(context, rect, row, onDamage, damageOrigin = null, imageVisi
             width:Math.ceil(Math.max(...xs))+1-dx,height:Math.ceil(Math.max(...ys))+1-dy};
     }
     const rasterState = imageRasterState(entry,width,height,transform);
-    animateImage(entry, onDamage, animationDamage, rasterState);
+    animateImage(entry, onDamage, animationDamage, rasterState, motion);
     const raster = imageRaster(rasterState);
     if (capture && damage && transform.a > 0 && transform.b === 0 && transform.c === 0 && transform.d > 0 && context.globalAlpha === 1 &&
         context.globalCompositeOperation === 'source-over' && (!context.filter || context.filter === 'none')) {
@@ -414,7 +482,7 @@ function paintImage(context, rect, row, onDamage, damageOrigin = null, imageVisi
                 target.save();
                 try {
                     target.setTransform(transform.a,0,0,transform.d,e-(origin?.x || 0),f-(origin?.y || 0));
-                    paintImage(target, rect, row, onDamage, origin, imageVisible);
+                    paintImage(target, rect, row, onDamage, origin, imageVisible, null, false, motion);
                 } finally { target.restore(); }
             }});
     }
@@ -427,10 +495,10 @@ function paintImage(context, rect, row, onDamage, damageOrigin = null, imageVisi
         left, top, right - left, bottom - top);
     context.restore();
 }
-export function renderTerminalRow(context, rect, row, theme = null, onDamage = () => {}, motionRasterScale = null, damageOrigin = null, imageVisible = null) {
+export function renderTerminalRow(context, rect, row, theme = null, onDamage = () => {}, motionRasterScale = null, damageOrigin = null, imageVisible = null, motion = null) {
     if (theme) row = {...row, theme};
     renderTerminalRowText(context, rect, row, motionRasterScale);
-    paintImage(context, rect, row, onDamage, damageOrigin, imageVisible);
+    paintImage(context, rect, row, onDamage, damageOrigin, imageVisible, null, false, motion);
 }
 function renderTerminalRowText(context, rect, row, motionRasterScale) {
     const cached = cachedRow(context, rect, row, motionRasterScale);
@@ -444,7 +512,7 @@ function renderTerminalRowText(context, rect, row, motionRasterScale) {
 // then copy each image once across its adjacent slices. This preserves normal
 // compositor transforms/occlusion without ten bitmap draws and subscriptions
 // for a single spinning logo. Gaps and differing images keep separate draws.
-export function renderTerminalRows(context, commands, theme = null, onDamage = () => {}, motionRasterScale = null, damageOrigin = null, imageVisible = null, capture = null) {
+export function renderTerminalRows(context, commands, theme = null, onDamage = () => {}, motionRasterScale = null, damageOrigin = null, imageVisible = null, capture = null, motion = null) {
     for (let index = 0; index < commands.length;) {
         const {rect, row: original} = commands[index];
         const row = theme ? {...original, theme} : original;
@@ -475,7 +543,7 @@ export function renderTerminalRows(context, commands, theme = null, onDamage = (
             renderTerminalRowText(context, command.rect, theme ? {...command.row, theme} : command.row, motionRasterScale);
         }
         if (integralSlices || end === index + 1) {
-            paintImage(context, {...rect, height: rect.height * (end - index)}, row, onDamage, damageOrigin, imageVisible, capture);
+            paintImage(context, {...rect, height: rect.height * (end - index)}, row, onDamage, damageOrigin, imageVisible, capture, false, motion);
         } else {
             // Empty image cells have no row-local overlays. Their text can be
             // retained together, while fractional SVG slices keep their exact
@@ -488,7 +556,7 @@ export function renderTerminalRows(context, commands, theme = null, onDamage = (
                         transform.e+(damageOrigin?.x||0)-(origin?.x||0),
                         transform.f+(damageOrigin?.y||0)-(origin?.y||0));
                     for(const command of sliceCommands)paintImage(target,command.rect,
-                        theme ? {...command.row,theme} : command.row,onDamage,origin,imageVisible);
+                        theme ? {...command.row,theme} : command.row,onDamage,origin,imageVisible,null,false,motion);
                 } finally {target.restore();}
             };
             const following = commands[end];
@@ -512,7 +580,7 @@ export function renderTerminalRows(context, commands, theme = null, onDamage = (
                             renderTerminalRowText(canvas,following.rect,theme ? {...following.row,theme} : following.row,motionRasterScale);
                         }
                     } finally {canvas.restore();}
-                }}),true);
+                }}),true,motion);
             paintSlices(context,damageOrigin);
         }
         index = end;

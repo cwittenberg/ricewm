@@ -43,9 +43,12 @@ export function parsePresentation(value) {
     const baseLanguage = languageSize?.[1] || encodedLanguage;
     const viewportToken = /~V(\d+),(\d+),(\d+),([01]),([01])(?:,([01]))?$/.exec(baseLanguage);
     const viewport = viewportToken ? {offset:Number(viewportToken[1]), extent:Number(viewportToken[2]), digits:Number(viewportToken[3]), continuation:viewportToken[4]==='1', caretVisible:viewportToken[5]==='1', caretUpstream:viewportToken[6]==='1'} : null;
+    const projectedLanguage = viewportToken ? baseLanguage.slice(0, viewportToken.index) : baseLanguage;
+    const syntaxTheme = projectedLanguage.endsWith('~monokai') ? 'monokai' : null;
     return {
         viewport,
-        language: viewportToken ? baseLanguage.slice(0, viewportToken.index) : baseLanguage,
+        language: syntaxTheme ? projectedLanguage.slice(0, -8) : projectedLanguage,
+        syntaxTheme,
         syntaxStyle: match[8] || "adaptive",
         wrap: match[2],
         lineNumbers: match[3] === "lines",
@@ -308,6 +311,12 @@ export class RiceNativeEditorRenderer {
                 selection: [60, 125, 220, 255],
             };
         }
+        if (presentation.syntaxTheme === 'monokai') {
+            command = {...command, color: [248, 248, 242, 255]};
+            chrome = {...chrome, body: [39, 40, 34, 255], border: [65, 67, 57, 255], selection: [73, 72, 62, 255], active: [166, 226, 46, 255]};
+            context.fillStyle = rgbaColor(chrome.body);
+            context.fillRect(rect.x, rect.y, rect.width, rect.height);
+        }
         const formatting = richFormatting(presentation.language);
         const rich = formatting !== null;
         context.font = editorFont(size, rich);
@@ -406,7 +415,10 @@ export class RiceNativeEditorRenderer {
                 rect.height,
             );
         }
-        const palette = syntaxPalette(presentation.syntaxStyle, command, chrome);
+        const palette = presentation.syntaxTheme === 'monokai' ? {
+            text: [248, 248, 242, 255], keyword: [249, 38, 114, 255],
+            string: [230, 219, 116, 255], number: [174, 129, 255, 255], comment: [117, 113, 94, 255],
+        } : syntaxPalette(presentation.syntaxStyle, command, chrome);
         const caret = Math.max(0, Math.min(
             Array.from(presentation.document).length,
             presentation.caret ?? 0,

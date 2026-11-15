@@ -6,8 +6,9 @@
   "sdk": { "version": "1.0.0" },
   "description": "Prepare a feature request and review it on GitHub.",
   "entry": "app.mjs",
-  "iconName": "dialog-information",
-  "window": { "width": 580, "height": 620 },
+  "iconName": "star",
+  "icon": "icons/request-feature-symbolic.png",
+  "window": { "width": 560, "height": 540 },
   "categories": ["Documentation", "Utility"],
   "permissions": { "services": ["host.openExternal"], "bus": {} }
 }

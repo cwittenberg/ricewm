@@ -16,7 +16,8 @@ import {checkedViewport} from './viewport-contract.mjs';
  * must call releaseOwner() on caller teardown and close() on service shutdown;
  * the SDK does not currently deliver a peer-disconnected event to a service.
  */
-import { copyRiceBusPayload } from '@ricewm/app';
+import { copyRiceBusPayload, WorkbookContracts } from '@ricewm/app';
+const { isCommittedWorkbookChange } = WorkbookContracts;
 import { checkedEnginePort, checkedProjection } from './engine-port.mjs';
 import { checkedSheetCommand, checkedCapabilities } from './command-contract.mjs';
 import { checkedQueryRequest, checkedQueryResult } from './query-contract.mjs';
@@ -144,6 +145,7 @@ export function exposeSheetEngineService({ bus, service = SHEET_ENGINE_SERVICE, 
     async function request({ source, request: input }) {
         let entry;
         let mutationStarted = false;
+        let confirmedCommit = false;
         try {
             if (stopped) throw error('CLOSED', 'Sheet engine service is closed');
             const req = bounded(input);
@@ -250,7 +252,11 @@ export function exposeSheetEngineService({ bus, service = SHEET_ENGINE_SERVICE, 
             catch (cause) {
                 // A command might have partially applied, or opening might have
                 // completed after timeout. Retire the capability; never retry it.
-                if (entry.backend?.version === 2 && cause.rejectedBeforeMutation === true &&
+                confirmedCommit = input.operation === 'commands' && !entry.closed &&
+                    entry.backend?.version === 2 && isCommittedWorkbookChange(cause, input.expectedRevision) &&
+                    entry.backend.revision === cause.revision;
+                if (confirmedCommit) mutationStarted = false;
+                if (cause.code !== 'COMMITTED_CHANGE' && entry.backend?.version === 2 && cause.rejectedBeforeMutation === true &&
                     Number.isSafeInteger(cause.revision) && cause.revision >= input.expectedRevision) {
                     mutationStarted = false;
                 }
@@ -266,7 +272,8 @@ export function exposeSheetEngineService({ bus, service = SHEET_ENGINE_SERVICE, 
             // serialization, which otherwise only guarantees a message field.
             return { version: VERSION, operation: 'error', code: String(cause.code || 'BACKEND_FAILURE').slice(0,128),
                 message: String(cause.message || 'Sheet backend failed').slice(0,1024),
-                ...(cause.rejectedBeforeMutation === true ? { rejectedBeforeMutation: true, revision: cause.revision } : {}) };
+                ...(confirmedCommit ? { session:entry.session, workbook:entry.workbook, rejectedBeforeMutation:false, revision:cause.revision }
+                    : cause.code !== 'COMMITTED_CHANGE' && cause.rejectedBeforeMutation === true ? { rejectedBeforeMutation: true, revision: cause.revision } : {}) };
         }
     }
     const unexpose = bus.expose(service, request);
@@ -304,10 +311,17 @@ export async function connectSheetEnginePort({ bus, service = SHEET_ENGINE_SERVI
     let pending = 0;
     let lastViewport = DEFAULT_VIEWPORT;
     let lastCursor = null;
+    let recoveryPending = false;
     async function rpc(operation, extra = {}) {
         const reply = await bus.call(service, envelope(session, workbook, operation, extra));
         if (reply?.version !== VERSION) throw error('PROTOCOL', 'Invalid Sheet protocol version');
-        if (reply.operation === 'error') throw Object.assign(error(reply.code, reply.message), { rejectedBeforeMutation: reply.rejectedBeforeMutation === true, revision: reply.revision });
+        if (reply.operation === 'error') {
+            if (reply.code === 'COMMITTED_CHANGE' && (operation !== 'commands' || workbook === null ||
+                reply.session !== session || reply.workbook !== workbook || !isCommittedWorkbookChange(reply, extra.expectedRevision))) {
+                throw error('PROTOCOL', 'Invalid committed-change outcome or workbook identity');
+            }
+            throw Object.assign(error(reply.code, reply.message), { rejectedBeforeMutation: reply.rejectedBeforeMutation === true ? true : reply.rejectedBeforeMutation === false ? false : undefined, revision: reply.revision });
+        }
         if (reply.session !== session || !token(reply.workbook) || (workbook !== null && reply.workbook !== workbook)) {
             throw error('PROTOCOL', 'Sheet reply belongs to a different session or workbook');
         }
@@ -340,7 +354,11 @@ export async function connectSheetEnginePort({ bus, service = SHEET_ENGINE_SERVI
             if (closing || poisoned) throw error('CLOSED', 'Sheet engine port is closed or requires reconnection');
             try { return await operation(); }
             catch (cause) {
-                if (!(cause.rejectedBeforeMutation === true && Number.isSafeInteger(cause.revision)
+                if (isCommittedWorkbookChange(cause, currentRevision)) {
+                    currentRevision = cause.revision;
+                    lastCursor = null;
+                    recoveryPending = true;
+                } else if (!(cause.rejectedBeforeMutation === true && Number.isSafeInteger(cause.revision)
                     && cause.revision >= currentRevision)) poisoned = true;
                 throw cause;
             }
@@ -350,7 +368,7 @@ export async function connectSheetEnginePort({ bus, service = SHEET_ENGINE_SERVI
     }
     async function execute(operation, region, batch, viewCursor = null) {
         const expected = currentRevision;
-        const reply = await rpc(operation, { expectedRevision: expected, viewport: region, cursor: viewCursor, ...(batch ? { commands: batch } : {}) });
+        const reply = await rpc(operation, { expectedRevision: expected, viewport: region, cursor: recoveryPending ? null : viewCursor, ...(batch ? { commands: batch } : {}) });
         if (closing) throw error('CLOSED', 'Late Sheet reply discarded after close');
         if (reply.operation !== 'result' || revision(reply.revision) < expected) {
             throw error('STALE_REPLY', 'Sheet response has an unexpected revision');
@@ -365,6 +383,7 @@ export async function connectSheetEnginePort({ bus, service = SHEET_ENGINE_SERVI
         currentRevision = reply.revision;
         lastViewport = region;
         lastCursor = nextCursor;
+        recoveryPending = false;
         return value;
     }
     return Object.freeze({

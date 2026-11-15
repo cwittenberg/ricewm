@@ -267,6 +267,7 @@ impl DisplayServer {
                     0 => self.minimize_managed_window(client),
                     1 => self.toggle_maximized(client, 2),
                     2 => self.request_close_window(client),
+                    3 => {self.activate_managed_window(client);let (_,_,top,_)=self.managed_frame_insets(client);self.show_wm_window_menu(WmTaskTarget::X11(client),root_x,clamp_i16(origin_y+i32::from(top)));},
                     _ => return false,
                 }
                 return true;
@@ -278,7 +279,8 @@ impl DisplayServer {
             return true;
         }
         let resize_edges = frame.as_ref().map_or(0, |frame| {
-            let border = WM_RESIZE_HIT_WIDTH;
+            if self.wm_window_chrome.is_some(){return self.custom_frame_resize_edges(frame.width,frame.height,local_x,local_y);}
+            let border = self.wm_window_chrome.map_or(WM_RESIZE_HIT_WIDTH,|v|WM_RESIZE_HIT_WIDTH.max(v[1].max(v[2]).max(v[3])as i32));
             let mut edges = 0;
             if local_x < border {
                 edges |= WM_RESIZE_LEFT;
@@ -473,6 +475,7 @@ impl DisplayServer {
                 }
                 Some(
                     row @ (WmMenuRow::WindowClose
+                    | WmMenuRow::WindowLogoutQuit
                     | WmMenuRow::WindowMaximize
                     | WmMenuRow::WindowMinimize
                     | WmMenuRow::WindowRestore

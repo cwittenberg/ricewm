@@ -1,4 +1,5 @@
-import { MAX_SCENE_BYTES, copySceneFrame } from './scene-surface.mjs';
+import { MAX_SCENE_BYTES, copySceneFrame, validateOwnedSceneFrame } from './scene-surface.mjs';
+import { finalizeSceneImageCommands } from './scene-image-resource.mjs';
 
 const finite = value => {
     if (!Number.isFinite(value) || !Number.isFinite(Math.fround(value))) throw new RangeError('Scene coordinate must be finite f32');
@@ -141,6 +142,28 @@ export class SceneBuilder {
             view.setFloat32(24, width, true); view.setUint32(28, color32(color), true);
         });
     }
+    /** Expand a dashed stroke into the existing native line protocol. The
+     * caller owns its coordinate scale; no browser paint or native ABI change
+     * is required. Reject excessive work/budget before appending any segment. */
+    dashedLine(from, to, width, color, {dash=4,gap=3,offset=0}={}) {
+        from=coordinates(from,2);to=coordinates(to,2);color=color32(color);
+        if(finite(width)<0||finite(dash)<=0||finite(gap)<0||!Math.fround(dash)||!Number.isFinite(offset))throw RangeError('Invalid dashed line');
+        const dx=to[0]-from[0],dy=to[1]-from[1],length=Math.hypot(dx,dy);
+        if(!length)return this;
+        if(!gap)return this.line(from,to,width,color);
+        const period=dash+gap,phase=((offset%period)+period)%period,count=Math.ceil((length+phase)/period);
+        if(!Number.isSafeInteger(count)||count>4096)throw RangeError('Dashed line exceeds 4096 segments');
+        const segments=[];
+        for(let n=0;n<count;n++) {
+            const start=Math.max(0,n*period-phase),end=Math.min(length,n*period-phase+dash);
+            if(end<=start)continue;
+            const point=at=>at===0?from:at===length?to:[from[0]+dx*at/length,from[1]+dy*at/length];
+            segments.push([coordinates(point(start),2),coordinates(point(end),2)]);
+        }
+        if(this.bytes+segments.length*36>this.maximumBytes)throw RangeError('Scene exceeds builder budget');
+        for(const [a,b]of segments)this.line(a,b,width,color);
+        return this;
+    }
     ellipse(rect, color, { filled = true, width = 1 } = {}) {
         if (finite(width) < 0) throw new RangeError('Invalid ellipse width');
         return this.command(13, 36, view => {
@@ -212,9 +235,10 @@ export class SceneBuilder {
         return this;
     }
     finish() {
-        const displayList = new Uint8Array(this.bytes);
+        const frame = finalizeSceneImageCommands(this.commands);
+        const displayList = new Uint8Array(frame.bytes);
         let offset = 0;
-        for (const command of this.commands) { displayList.set(command, offset); offset += command.length; }
-        return copySceneFrame({ width: this.width, height: this.height, displayList });
+        for (const command of frame.commands) { displayList.set(command, offset); offset += command.length; }
+        return validateOwnedSceneFrame({ width: this.width, height: this.height, displayList });
     }
 }

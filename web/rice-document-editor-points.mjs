@@ -33,7 +33,7 @@ export class DocumentEditorPointRequests {
         if(!this.owners.has(owner))this.owners.set(owner,{});
         const lifetime=this.owners.get(owner);
         for(const command of snapshot.commands){
-            if(!isDocumentEditor(command))continue;
+            if(!isDocumentEditor(command)||command.shapedEditorPending)continue;
             const metadata=documentEditorMetadata(command),request=metadata?.point;if(!request||!metadata.id)continue;
             const {rect}=command,x=Math.max(rect.x,Math.min(rect.x+rect.width-1,rect.x+rect.width*request.x)),y=Math.max(rect.y,Math.min(rect.y+rect.height-1,rect.y+rect.height*request.y));
             const target=metadata.id,hit=bridge.hitTest(snapshot.app,snapshot.window,x,y),capture=bridge.editorPointer.capture.get(`${snapshot.app}:${snapshot.window}`);

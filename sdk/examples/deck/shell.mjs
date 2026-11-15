@@ -1,13 +1,15 @@
+import {deckCopilotContext} from './copilot-context.mjs';
+import {deckDesignCatalog} from './design-presets.mjs';
 import {composeDeck} from './copilot-compose.mjs';
 import {exposeAppCopilot} from '@ricewm/app';
-import {deckCopilotActions,validateDeckCopilot} from './copilot-contract.mjs';
+import {deckCopilotActions,validateDeckCopilot,deckFileWorkflowContract,deckTextEditingContract} from './copilot-contract.mjs';
 import { createSensitivityDialog, sensitivityCaption } from '@ricewm/app';
 import { createHyperlinkTools } from './hyperlink-tools.mjs';
 import { supportedLink, webLink } from './hyperlink-contract.mjs';
 import { cellKey } from './table-values.mjs';
 import {
-    Button, Column, Dialog, DocumentViewport, Label, Menu, MenuBar, MenuItem, Message, Row,
-    ScrollView, SplitPane, StatusBar, TextEditor, SceneBuilder, SceneSurface, State, ToolBar, ZoomControl,
+    Button, Column, Dialog, DocumentViewport, Icons, Label, Menu, MenuBar, MenuItem, Message, Row, documentFontResource,
+    ScrollView, SplitPane, StatusBar, TextEditor, SceneBuilder, SceneSurface, SceneHandleOverlay, State, ToolBar, ZoomControl, EditorWorkspace, CommandRegistry, CommandPalette,
 } from "@ricewm/app";
 import { createAboutDialog } from './about.mjs';
 import { createCanvasEditor } from './canvas-editor.mjs';
@@ -27,6 +29,8 @@ import { createDeckContextMenu } from './context-menu.mjs';
 import { createLayoutTools } from './layout-tools.mjs';
 import { createSpeakerNotes } from './speaker-notes.mjs';
 import { createInlineTableEditor } from './inline-table-editor.mjs';
+import { createInlineShapeEditor } from './inline-shape-editor.mjs';
+import { createWorkspaceViews } from './workspace-views.mjs';
 
 const PAGE = 32;
 const fitsEditor = text => new TextEncoder().encode(text).length <= 16_000;
@@ -67,19 +71,24 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     let closed = false, busy = false, uncertain = false;
     let projection = null, revision = null, slideIndex = 0, startText = 0;
     let selected = null, draft = null, pendingGrant = null, discardDialog = null, resolveDiscard = null;
-    let textObjects = [], refreshingScene = false, selectedSlideId = null, documentName = null;
-    let renderedScene = null, renderedFrames = new Map(), renderedPictures = new Map();
+    let textObjects = [], refreshingScene = false, selectedSlideId = null, documentName = null, documentGeneration = 0;
+    let renderedScene = null, renderedFrames = new Map(), renderedPictures = new Map(), renderDiagnostics=[];
     let transitionPreview = null, animationPreview = null, animations = null, renderedTimeline = null;
     let initialBlankRevision = null;
     let textCommitTimer = null, textCommit = null, committingText = false;
-    let clipboardTextTarget = null, clipboardTextBusy = false;
+    let clipboardTextTarget = null, clipboardTextBusy = false, clipboardScope='canvas';
     let closeDecision = null, closeDialog = null, finishCloseDecision = null, closeApproved = false;
     const idleWaiters = new Set();
     let thumbnailWork = null, notes = null, overview = false;
+    let workspace = null, workspaceViews = null, currentMode = 'normal', commandSearch = null, documentTitle = null;
+    let viewRequest = 0;
+    const viewButtons = new Map();
     const controls = new Map();
     const shortcutControls = new WeakSet();
     const status = new Label({ name: "status-text", state: State.EXPANSIVE, text: port ? "Reading presentation…" : "Presentation engine unavailable." });
-    status.on(Message.CHANGE, event => { if (event.detail?.property === 'text') status.setProperty('visible', Boolean(status.text)); });
+    const statusFooter=new Label({name:'deck-operation-status',state:State.EXPANSIVE,visible:false});
+    const syncStatusFooter=()=>{statusFooter.text=status.text;statusFooter.setProperty('tooltip',status.text);statusFooter.visible=currentMode!=='normal'&&Boolean(status.text);};
+    status.on(Message.CHANGE, event => { if (event.detail?.property === 'text'){status.setProperty('visible', Boolean(status.text));syncStatusFooter();} });
     const heading = new Label({ name: "slide-heading", text: "No presentation open" });
     const runLabel = new Label({ name: "run-heading", text: "Select a text box" });
     const runs = new Column({ name: "text-object-list" });
@@ -117,7 +126,11 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             }
         } catch (error) { status.text = `Could not open link: ${String(error.message).slice(0,200)}`; if (audience) throw error; }
     }
-    let inline = null;
+    let inline = null, shapeInline = null;
+    const inlineEditing=()=>Boolean(inline?.active||shapeInline?.active);
+    const rangeEditor=()=>inline?.rich?inline:shapeInline?.rich?shapeInline:null;
+    const pendingRanges=()=>Boolean(inline?.hasPending||shapeInline?.hasPending);
+    const discardRanges=()=>{inline?.discard();shapeInline?.discard();};
     let tools = null, properties = null, sceneReady = false, presenter = null, mainWindow = null;
     function cellTarget() {
         const active = canvas.selectedTableCell;
@@ -125,17 +138,19 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             tableObject: active.object.id, row: active.row, column: active.column, index: 0,
             text: active.cell.text?.text || '', editable: active.cell.editable } : null;
     }
-    const canvas = createCanvasEditor({ surface, openHyperlink,
+    const canvas = createCanvasEditor({ surface, openHyperlink,selectionTheme:()=>app.theme,
+        editTextStyle: (style,options) => rangeEditor() ? formatInlineText(style,options) : null,
+        editParagraphFormat:format=>rangeEditor()?formatInlineParagraph(format):null,
         apply: commands => perform(async () => {
             const reply = await port.apply(commands); canvas.created(reply); await read(); return reply;
         }),
-        beforePointer: () => { animationPreview?.cancel(); transitionPreview?.cancel(); return inline?.active ? finishCellEditing() : null; },
+        beforePointer: () => {clipboardScope='canvas';animationPreview?.cancel(); transitionPreview?.cancel(); return inlineEditing() ? finishCellEditing() : null; },
         renderPreview: port?.renderText ? scene => port.renderText(scene) : null,
         beginTableInput: ({bounds,size,columns,rows}) => inline.beginPending(bounds,size,columns,rows),
         tableInputKey: key => inline.input([key]),
         changed: objects => {
             if (!refreshingScene) animationPreview?.cancel();
-            if (!inline?.active) clipboardTextTarget = null;
+            if (!inlineEditing()) clipboardTextTarget = null;
             tools?.setState({ selected: objects });
             if (!refreshingScene && draft === null) {
                 const target = cellTarget() || (objects.length === 1 ? textObjects.find(item => item.id === objects[0].id) : null);
@@ -143,60 +158,115 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             }
             updateEnabled();
         },
-        editText: (object, keys = [], pointer = null) => {
+        editText: async (object, keys = [], pointer = null) => {
+          try {
             if (closed) return;
             const target = object?.tableCell ? cellTarget() : textObjects.find(item => item.id === object?.id);
             if (!target || (draft !== null && target.id !== selected?.id)) return;
             if (target.id !== selected?.id) showSelected(target);
             if(target.tableObject) {
                 const preserve=inline.active && (inline.pending || inline.key===target.id);
-                if(!inline.begin(canvas.selectedTableCell,renderedScene.size,{pointer,preserve,value:target.text})) {
+                if(!await inline.begin(canvas.selectedTableCell,renderedScene.size,{pointer,preserve,value:target.text,scene:renderedScene})) {
                     canvas.setEditingCell(null);status.text='This cell’s imported formatting cannot be edited in place.';return;
                 }
-                canvas.setEditingCell(target.id);updateEnabled();inline.input(keys);installShowShortcuts(inline.overlay);return;
+                canvas.setEditingCell(target.id);clipboardTextTarget=inline.editor;updateEnabled();inline.input(keys);installShowShortcuts(inline.overlay);return;
             }
-            surface.setProperty("focused", false);
-            clipboardTextTarget = editor;
-            editor.setProperty("focused", true);
-            for (const key of keys) editor.sendMessage(Message.KEY, key);
+            const preserve=shapeInline.active&&shapeInline.key===target.id;
+            if(await shapeInline.begin(object,renderedScene,{pointer,keys,preserve,value:target.text})) {
+                if(closed||!shapeInline.active)return;
+                canvas.setEditingTextObject(target.id);clipboardTextTarget=shapeInline.editor;
+                updateEnabled();installShowShortcuts(shapeInline.overlay);return;
+            }
+            // Unsupported affine/paint/rich-layout combinations retain their
+            // actual source. The existing inspector remains a visible editor.
+            showFormatPane('selection');properties.selectTab('text');
+            status.text='Edit this text in Text Options; its imported layout is retained.';
+            surface.setProperty("focused", false);clipboardTextTarget = editor;
+            editor.setProperty("focused", true);for (const key of keys) editor.sendMessage(Message.KEY, key);
+          } catch(error) { status.text=`Text editing unavailable: ${String(error.message).slice(0,180)}.`; }
         },
         notice: text => { status.text = text; },
     });
     inline=createInlineTableEditor({surface,viewport,
+        renderText:port?.renderText?(scene,options)=>port.renderText(scene,options):null,
+        selectionChanged:()=>updateEnabled(),notice:text=>{status.text=text;},
         change:(value,pending)=>{if(!pending)changedText(value);},
         navigate:moveCell,
         exit:finishCellEditing,
     });
-    viewport.onViewChanged(view=>canvas.setViewScale(view.percent/100));
+    shapeInline=createInlineShapeEditor({surface,viewport,stack:inline.stack,
+        onParagraphFormat:format=>formatInlineParagraph(format),
+        renderText:port?.renderText ? (scene,options)=>port.renderText(scene,options) : null,
+        selectionChanged:()=>updateEnabled(),
+        change:changedText,exit:async()=>{
+            if(!await flushText())return false;
+            canvas.setEditingTextObject(null);return true;
+        },notice:text=>{status.text=text;}});
+    const selectionHandles=inline.stack.append(new SceneHandleOverlay({name:'selection-handle-inputs',surface,onPointer:(_handle,event)=>canvas.handleOverlayPointer(event)}));
+    canvas.setHandleOverlay(selectionHandles);
+    viewport.onViewChanged(()=>canvas.setViewScale(viewport.dimensions().scale));
+    const stopCanvasTheme=app.on(Message.THEME_CHANGED,()=>canvas.repaint());
     async function finishCellEditing() {
-        if(!inline.active)return true;
+        if(!inlineEditing())return true;
         if(inline.pending)await canvas.flushPendingTextInput();
         if(!await flushText())return false;
-        inline.close();canvas.setEditingCell(null);surface.setProperty('focused',true);return true;
+        inline.close();shapeInline.close();canvas.setEditingCell(null);canvas.setEditingTextObject(null);surface.setProperty('focused',true);return true;
+    }
+    function refreshShapeEditing(object,scene) {
+        if(!shapeInline.active||shapeInline.refresh(object,scene))return;
+        const value=shapeInline.value;shapeInline.close();canvas.setEditingTextObject(null);
+        if(draft!==null){editor.value=value;showFormatPane('selection');properties.selectTab('text');editor.setProperty('focused',true);clipboardTextTarget=editor;}
     }
     async function moveCell(backwards) {
         if(inline.pending)await canvas.flushPendingTextInput();
-        if(!await flushText())return;
-        const active=canvas.selectedTableCell;if(!active)return;
+        if(!await flushText())return false;
+        const active=canvas.selectedTableCell;if(!active)return false;
         const cells=active.object.table.cells.filter(cell=>!cell.covered);
         const index=cells.findIndex(cell=>cell.row===active.row&&cell.column===active.column);
         let next=cells[index+(backwards?-1:1)];
         if(!next && !backwards && active.object.table.canEditStructure && active.object.table.rows<128) {
             const row=active.object.table.rows;
             await canvas.tableStructure('insert-table-rows',row,1);
+            if(closed||uncertain||canvas.selectedTableCell?.object.table.rows<=row)return false;
             next={row,column:0};
         }
-        if(!next) {inline.editor.setProperty('focused',true);return;}
-        canvas.selectTableCell(active.object.id,next.row,next.column);canvas.beginText();
+        if(!next) {inline.selectAll();inline.editor.setProperty('focused',true);return false;}
+        if(!canvas.selectTableCell(active.object.id,next.row,next.column))return false;
+        await canvas.beginText();if(inline.active)inline.selectAll();return inline.active;
     }
-    const slides = createSlideNavigation({ port, navigate: (index, id) => navigate(index, 0, id),
+    const slides = createSlideNavigation({ port, dialogRoot: root, navigate: (index, id) => navigate(index, 0, id),
+        formatBackground: async target => {
+            const document = documentGeneration;
+            await navigate(target.index, 0, target.slide);
+            if (closed || document !== documentGeneration || renderedScene?.slideId !== target.slide) return;
+            slides.selectOnly(target.slide);
+            design.openBackground();
+        },
+        clipboardScope:()=>{clipboardScope='slides';clipboardTextTarget=null;if(tools)updateEnabled();},
+        clipboard:{...(port?.copySlides?{copy:()=>slideClipboardAction('copy'),cut:()=>slideClipboardAction('cut')}:{}),
+            ...(port?.pasteSlides?{paste:()=>slideClipboardAction('paste')}:{}),can:slideClipboardAvailable},
+        openSlide:async(index,id)=>{await navigate(index,0,id);await switchView('normal');},
         selectionChanged: () => { if (tools) updateEnabled(); },
         mutate: (type, target) => mutateSlide(type, 'title-content', target),
         previewWork: scheduleThumbnailWork });
+    const sorterZoomControl=new ZoomControl({name:'sorter-zoom',viewport:slides.sorterZoom,min:50,max:300,compact:true,label:'Sorter zoom percent',visible:false});
     const slideActions = [...slides.toolbar.children];
     for (const control of slideActions) slides.toolbar.remove(control);
-    const design = createDesignTools({ root,
-        apply: commands => perform(async () => { await port.apply(commands); await read(); }),
+    function showFormatPane(kind = 'selection') {
+        if (!workspace) return;
+        animations.close();
+        workspace.find('properties-scroll').visible = kind === 'selection';
+        workspace.find('background-properties-scroll').visible = kind === 'background';
+        workspace.setInspectorVisible(true);
+    }
+    const design = createDesignTools({ root, openBackground: () => showFormatPane('background'), closeBackground: () => workspace?.setInspectorVisible(false),
+        apply: async commands => {
+            let accepted = false;
+            await perform(async () => { await port.apply(commands); await read(); accepted = true; });
+            if (!accepted) throw Error(status.text || 'Slide design could not be applied');
+            return true;
+        },
+        importTheme:port?.importTheme?options=>perform(async()=>{const result=await port.importTheme(options);if(result)await read();return result;}):null,
         backgroundPicture: port?.backgroundPicture ? options => perform(async () => {
             const reply = await port.backgroundPicture(options);
             if (reply) await read();
@@ -251,7 +321,12 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             });
         },
         selectObject: id => { animationPreview.cancel(); canvas.select([id]); },
-        onPaneVisibility: visible => properties?.control.parent?.setProperty('visible', !visible),
+        onPaneVisibility: visible => {
+            if (!workspace) return;
+            workspace.find('properties-scroll').visible = !visible;
+            workspace.find('background-properties-scroll').visible = false;
+            if (visible) workspace.setInspectorVisible(true);
+        },
         notice: text => { status.text = text; },
     });
     const layouts = createLayoutTools({ onApply: layout => perform(async () => {
@@ -260,8 +335,12 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     }), onInsert: layout => mutateSlide('insert-slide', layout), notice: text => { status.text = text; } });
     const insertLayouts = createLayoutTools({ namePrefix: 'insert-', onInsert: layout => mutateSlide('insert-slide', layout), notice: text => { status.text = text; } });
     const showControls = [action('show-start', 'From beginning', () => perform(() => beginShow(0))), action('show-current', 'From current slide', () => perform(() => beginShow()))];
+    const viewControls = [['normal', 'Normal', 40], ['outline', 'Outline', 140], ['sorter', 'Slide Sorter', 41], ['notesPage', 'Notes Page', 140], ['reading', 'Reading View', 82]].map(([mode, text, icon]) => {
+        const button = new Button({ name: `view-${mode}`, text, icon, state: State.START_ALIGNED });
+        button.on(Message.ACTIVATE, () => switchView(mode)); viewButtons.set(mode, [button]); return button;
+    });
     showControls.forEach(control => control.setProperty('state', State.START_ALIGNED));
-    for (const control of [editor, inline.editor, notes.editor]) {
+    for (const control of [editor, ...inline.editors, ...shapeInline.editors, notes.editor]) {
         control.on(Message.FOCUS, () => { clipboardTextTarget = control; updateEnabled(); });
         control.on(Message.TEXT_SELECTION, updateEnabled);
         // TextEditorController applies keyboard selections in windowProc
@@ -270,13 +349,17 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         // Shift+navigation, and disable them again when selection collapses.
         control.on(Message.KEY, event => { if (event.detail?.pressed) updateEnabled(); });
     }
-    surface.on(Message.FOCUS, () => { if (!inline.active) clipboardTextTarget = null; });
+    surface.on(Message.FOCUS, () => {clipboardScope='canvas';if (!inlineEditing()) clipboardTextTarget = null; });
     hyperlinks = createHyperlinkTools({ root, open: openHyperlink, slides: () => slides.hyperlinkSlides,
         apply: commands => perform(async () => { await port.apply(commands); await read(); }), notice: text => { status.text = text; } });
-    tools = createAuthoringTools({ hyperlinkControls: hyperlinks.controls, root, canvas, shadowsSupported: Boolean(BigInt(app.hostCapabilities || 0) & (1n << 27n)), slideActions, showControls, layoutControls: [layouts.newSlideMenu, layouts.layoutMenu], insertSlideControl: insertLayouts.newSlideMenu, designControls: design.controls, transitionControls: transitions.controls, animationControls: animations.controls,
+    tools = createAuthoringTools({paragraphSelection:()=>{
+        const owner=rangeEditor();return owner?{enabled:owner.paragraphFormatting,target:owner.rangeTarget,range:owner.range,paragraphs:owner.paragraphs().map(p=>p.paragraphFormat).filter(Boolean)}:null;
+    },restoreTextFocus:()=>{const owner=rangeEditor();if(owner?.active)owner.editor.setProperty('focused',true);},textStyleSelection:()=>{
+        const styles=rangeEditor()?.styles();return styles?[{text:{editable:true,runs:styles.map(style=>({text:'selected',style}))}}]:null;
+    }, hyperlinkControls: hyperlinks.controls, root, canvas, viewControls, openInspector: () => showFormatPane(), shadowsSupported: Boolean(BigInt(app.hostCapabilities || 0) & (1n << 27n)), slideActions, showControls, layoutControls: [layouts.newSlideMenu, layouts.layoutMenu, slides.sectionMenu], insertSlideControl: insertLayouts.newSlideMenu, designControls: design.controls, designGroups:design.groups, transitionControls: transitions.controls, animationControls: animations.controls,
         clipboardActions: {
-            ...(port?.copySelection || port?.writeClipboardText ? { copy: () => clipboardAction('copy'), cut: () => clipboardAction('cut') } : {}),
-            ...(port?.pasteSelection || port?.readClipboardText ? { paste: () => clipboardAction('paste') } : {}),
+            ...(port?.copySlides || port?.copySelection || port?.writeClipboardText ? { copy: () => clipboardAction('copy'), cut: () => clipboardAction('cut') } : {}),
+            ...(port?.pasteSlides || port?.pasteSelection || port?.readClipboardText ? { paste: () => clipboardAction('paste') } : {}),
             can: clipboardAvailable,
         }, picture: port?.picture ? insertPicture : undefined, notice: text => { status.text = text; } });
     function finishDiscard(accepted) {
@@ -326,9 +409,9 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         sensitivityItem.setProperty('visible',Boolean(labelText));
         sensitivityItem.setProperty('enabled',!busy&&!uncertain&&draft===null&&!presenter?.active);
         sensitivityBadge.setProperty('enabled',sensitivityItem.getProperty('enabled'));
-        const operationBusy=busy&&!committingText;
+        const operationBusy=busy&&!committingText||shapeInline?.formatting||inline?.formatting;
         authoring.setProperty('enabled', closeDecision === null && !closeApproved);
-        const showing = Boolean(presenter?.active), idleDraft = (draft === null || inline?.active) && !showing;
+        const showing = Boolean(presenter?.active), idleDraft = (draft === null || inlineEditing()) && !showing && currentMode !== 'reading';
         const usable = projection && !uncertain;
         enable("new", idleDraft && typeof port?.documents?.new === "function");
         enable("open", idleDraft && typeof port?.documents?.open === "function");
@@ -337,36 +420,42 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         for (const name of ["save", "save-as"]) enable(name, !showing &&
             (draft === null || (selected?.editable && fitsEditor(draft))) &&
             (projection?.loaded ?? Boolean(projection?.slideCount)) && usable && typeof port?.documents?.[name] === "function");
-        for (const name of ['show-start', 'show-current', 'status-show-start', 'status-show-current']) enable(name, idleDraft && usable && sceneReady && projection.slideCount > 0);
-        enable("undo", idleDraft && usable && (projection.canUndo || notes?.dirty));
-        enable("redo", idleDraft && usable && projection.canRedo);
+        for (const name of ['show-start', 'show-current', 'status-show-current', 'deck-present']) enable(name, idleDraft && usable && sceneReady && projection.slideCount > 0);
+        enable("undo", idleDraft && usable && (projection.canUndo || notes?.dirty || inlineEditing()&&draft!==null));
+        enable("redo", idleDraft && usable && draft===null && projection.canRedo);
+        enable('notes-toggle', !showing && usable && projection?.slide && typeof port?.speakerNotes === 'function' && currentMode !== 'notesPage');
         enable("previous-text", idleDraft && usable && sceneReady && startText > 0);
         enable("next-text", idleDraft && usable && sceneReady && startText + PAGE < textObjects.length);
         enable("apply", usable && sceneReady && draft !== null && selected?.editable && fitsEditor(draft));
         enable("discard", draft !== null);
         enable("refresh", Boolean(port) && !showing);
         slides.setState({ disabled: closed || (operationBusy && !notes?.committing) || !idleDraft || uncertain || Boolean(closeDecision) || closeApproved, loaded: projection?.loaded ?? Boolean(projection?.slideCount), index: slideIndex, count: projection?.slideCount || 0 });
-        contextMenu?.setState({ ready: Boolean(usable && sceneReady), busy: closed || operationBusy || !idleDraft || uncertain, selected: canvas.selected,
-            canUndo: Boolean(projection?.canUndo), canRedo: Boolean(projection?.canRedo), background: renderedScene?.background });
+        contextMenu?.setState({ scope: [documentGeneration, renderedScene?.slideId ?? null], ready: Boolean(usable && sceneReady), busy: closed || operationBusy || !idleDraft || uncertain, selected: canvas.selected,
+            canUndo: Boolean(projection?.canUndo), canRedo: Boolean(projection?.canRedo), background: renderedScene?.background,
+            editingText:Boolean(rangeEditor()?.active),paragraphFormatting:Boolean(rangeEditor()?.paragraphFormatting||canvas.selected.some(o=>o.text?.paragraphFormatEditable)) });
         hyperlinks?.setState({ ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft), scene: renderedScene, revision, selected: canvas.selected });
-        canvas.setLocked(closed || operationBusy || (!idleDraft && !inline?.active) || uncertain || !sceneReady);
-        tools?.setState({ ready: Boolean(usable && sceneReady), busy: closed || operationBusy || !idleDraft || uncertain,
-            clipboardReady: Boolean(usable && sceneReady && !closed && !operationBusy && !uncertain) });
-        properties?.setState({ objects: canvas.selected, ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft), scene: renderedScene, editingText: draft !== null });
-        design.setState({ current: renderedScene, ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft) });
+        canvas.setLocked(closed || operationBusy || (!idleDraft && !inlineEditing()) || uncertain || !sceneReady || currentMode === 'notesPage');
+        tools?.setState({ scope: [documentGeneration, renderedScene?.slideId ?? null], ready: Boolean(usable && sceneReady), busy: closed || operationBusy || !idleDraft || uncertain,
+            theme:renderedScene?.backgroundTheme??null,clipboardReady: Boolean(usable && (sceneReady||projection?.loaded) && !closed && !operationBusy && !uncertain) });
+        properties?.setState({ scope: documentGeneration, objects: canvas.selected, ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft),
+            busy: closed || operationBusy || !idleDraft || uncertain, scene: renderedScene, editingText: draft !== null });
+        design.setState({ current: renderedScene, ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft), scope: documentGeneration });
         transitions.setState({ current: renderedScene, selectedSlides: slides.selectedSlides,
             ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft) });
         animations?.setState({ current: renderedScene, timeline: renderedTimeline, selected: canvas.selected,
             ready: Boolean(usable && sceneReady && !closed && !operationBusy && idleDraft), previewing: animationPreview?.active === true });
         layouts.setState({ ready: Boolean(usable && (projection?.loaded ?? projection?.slideCount)), canApply: sceneReady, busy: closed || operationBusy || !idleDraft || uncertain, selectedLayout: renderedScene?.layoutId || null, pageSize: renderedScene?.size });
         insertLayouts.setState({ ready: Boolean(usable && (projection?.loaded ?? projection?.slideCount)), canApply: false, busy: closed || operationBusy || !idleDraft || uncertain, selectedLayout: renderedScene?.layoutId || null, pageSize: renderedScene?.size });
-        const editable = Boolean(!showing && !closed && (!busy || committingText || clipboardTextBusy) && !uncertain && sceneReady && selected?.editable && fitsEditor(selected.text));
+        const editable = Boolean(currentMode !== 'reading' && !showing && !closed && (!busy || committingText || clipboardTextBusy) && !uncertain && sceneReady && selected?.editable && fitsEditor(selected.text));
         editor.setProperty("enabled", editable);
         editor.setProperty("readOnly", !editable);
-        inline?.editor.setProperty('enabled',Boolean(inline.active && !closed && !uncertain && (inline.pending || selected?.tableObject && selected.editable)));
+        inline?.editor.setProperty('enabled',Boolean(inline.active && !closed && !uncertain && (inline.pending || (!operationBusy||clipboardTextBusy||inline.formatting)&&selected?.tableObject && selected.editable)));
         inline?.editor.setProperty('readOnly',Boolean(closed || uncertain));
-        notes?.setState({ enabled: Boolean(!closed && (!busy || notes.committing || clipboardTextBusy) && !uncertain && !showing && !closeApproved && projection?.slide),
+        shapeInline?.editor.setProperty('enabled',Boolean(shapeInline.active && !closed && !uncertain && (!operationBusy||clipboardTextBusy||shapeInline.formatting) && selected?.editable));
+        shapeInline?.editor.setProperty('readOnly',Boolean(closed || uncertain));
+        notes?.setState({ enabled: Boolean(currentMode !== 'reading' && !closed && (!busy || notes.committing || clipboardTextBusy) && !uncertain && !showing && !closeApproved && projection?.slide),
             visible: !overview && !showing });
+        for (const [mode, buttons] of viewButtons) for (const button of buttons) button.enabled = Boolean(!closed && (!operationBusy || notes?.committing) && !showing && !uncertain && projection?.slideCount && (mode !== 'outline' || port?.outline) && (mode !== 'notesPage' || port?.speakerNotes));
         for (const button of runs.children) button.setProperty("enabled", !closed && !operationBusy && idleDraft && !uncertain && sceneReady);
     }
     function showSelected(target) {
@@ -374,6 +463,10 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         // still pending. Its previous object's focus request must not steal
         // canvas keys before editText finishes replaying the buffered input.
         if (target?.id !== selected?.id || target?.slideId !== selected?.slideId) editor.setProperty('focused', false);
+        if(shapeInline?.active&&(target?.id!==shapeInline.key||target?.slideId!==selected?.slideId)){
+            shapeInline.close();canvas.setEditingTextObject(null);
+        }
+        if(inline?.active&&!inline.pending&&!inline.waiting&&target?.id!==inline.key){inline.close();canvas.setEditingCell(null);}
         selected = target;
         const fits = target && fitsEditor(target.text);
         editor.setProperty("value", target ? (fits ? target.text : "This text box exceeds the native editor size limit; its source is preserved.") : "");
@@ -381,7 +474,7 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         const table = Boolean(target?.tableObject);
         if(table && inline?.pending) {
             const value=inline.value;
-            inline.begin(canvas.selectedTableCell,renderedScene.size,{value,preserve:true});
+            inline.begin(canvas.selectedTableCell,renderedScene.size,{value,preserve:true,scene:renderedScene});
             canvas.setEditingCell(target.id);
             draft=value!==target.text?value:null;
             scheduleTextCommit();
@@ -413,7 +506,8 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         const same = cell?.id === old?.id && cell?.slideId === old?.slideId ? cell : textObjects.find(item => item.id === old?.id && item.slideId === old?.slideId);
         if (preserveDraft && draft !== null) {
             selected = same || old;
-            if(same?.tableObject)inline.refresh(canvas.selectedTableCell,scene.size);
+            if(same?.tableObject)inline.refresh(canvas.selectedTableCell,scene.size,scene);
+            else if(same&&shapeInline.active)refreshShapeEditing(scene.objects.find(o=>o.id===same.id),scene);
             if (!same) {
                 uncertain = true;
                 status.text = "The selected text box is no longer available. Your draft has been retained; discard it and refresh to select another box.";
@@ -429,8 +523,12 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         else startText = Math.min(startText, Math.max(0, Math.floor((textObjects.length - 1) / PAGE) * PAGE));
         renderTextList(); showSelected(target || null);
         if(target?.tableObject && inline.active) {
-            inline.refresh(canvas.selectedTableCell,scene.size);
+            inline.refresh(canvas.selectedTableCell,scene.size,scene);
             if(!preserveDraft && draft===null && inline.value!==target.text)inline.editor.setProperty('value',target.text);
+        }
+        if(target&&!target.tableObject&&shapeInline.active){
+            refreshShapeEditing(scene.objects.find(o=>o.id===target.id),scene);
+            if(!preserveDraft&&draft===null&&shapeInline.value!==target.text)shapeInline.editor.value=target.text;
         }
         if (target && !active.length) canvas.select([target.id]);
     }
@@ -453,6 +551,7 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     }
     function updateTitle() {
         if (mainWindow) mainWindow.title = documentName ? `${projection?.dirty || notes?.dirty ? '* ' : ''}${documentName} — Rice Deck` : 'Rice Deck';
+        if (documentTitle) documentTitle.text = `${documentName || 'Presentation'}${projection?.dirty || notes?.dirty ? ' — Edited' : ''}`;
     }
     async function read(preserveDraft = false, preserveNotesDraft = false) {
         let response = await port.project({ slide: port.outline ? 0 : slideIndex, startRun: 0, limit: PAGE });
@@ -481,11 +580,15 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             if (!closed) notes.bind(reply.result, { preserveDraft: preserveNotesDraft });
         } else notes.bind(null);
         installShowShortcuts(authoring);
+        if (workspaceViews) await workspaceViews.refresh({ revision, selectedId: selectedSlideId, slides: slides.outlineItems,
+            frame: currentMode === 'notesPage' && renderedScene ? geometryFrame(renderedScene, { textFrames: renderedFrames, imageFrames: renderedPictures }).frame : null });
     }
     async function readScene(preserveDraft) {
         try {
             const scene = await loadDeckScene(port, { index: slideIndex, revision, cancelled: () => closed });
-            const text = port.renderText ? await port.renderText(scene, { placeholderPrompts: true }) : { frames: new Map(), notices: [] };
+            let text = port.renderText ? await port.renderText(scene, { placeholderPrompts: true }) : { frames: new Map(), notices: [] };
+            if(port.renderText&&text.diagnostics?.some(item=>item.message))
+                text=await port.renderText(scene,{placeholderPrompts:true});
             const pictures = port.renderImages ? await port.renderImages(scene) : { frames: new Map(), notices: [] };
             const timeline = await loadAnimationTimeline(port, { scene, revision, cancelled: () => closed });
             const catalog = scene.animationTimeline?.editable && port.animationCatalog ? await port.animationCatalog(revision) : null;
@@ -493,11 +596,13 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             animations.setCatalog(catalog?.result.effects || []);
             renderedTimeline = timeline;
             sceneReady = true; renderedScene = scene; renderedFrames = text.frames; renderedPictures = pictures.frames;
+            renderDiagnostics=[...(text.diagnostics||[]),...(pictures.diagnostics||[])].slice(0,8);
             refreshingScene = true;
             try { canvas.setScene(scene, text.frames, pictures.frames); } finally { refreshingScene = false; }
             presentText(scene, preserveDraft); surface.setProperty('visible', true);
-            sceneNotice.text = '';
-            sceneNotice.setProperty('visible', false);
+            const textFailed=(text.diagnostics||[]).some(item=>item.message);
+            sceneNotice.text = textFailed ? 'Some text could not be displayed. Try another font or reopen the presentation.' : '';
+            sceneNotice.setProperty('visible', textFailed);
         } catch (error) {
             sceneReady = false; surface.setProperty('visible', false);
             if (error.code && error.rejectedBeforeMutation !== true) uncertain = true;
@@ -510,14 +615,22 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         // Thumbnail reads do not disable authoring. A user operation takes the
         // normal lock, cancelling the preview at its next await, then waits for
         // the one in-flight port request before it accesses the document.
-        const pending = Promise.resolve().then(work);
+        // Thumbnail and inspection reads share the same source lane. A user
+        // operation claims busy before awaiting the entire lane, cancelling
+        // queued reads and draining the one native request already in flight.
+        const pending = Promise.resolve(thumbnailWork).catch(()=>{}).then(()=>{
+            if(closed||busy||uncertain||draft!==null||closeDecision||closeApproved||presenter?.active)return null;
+            return work();
+        });
         thumbnailWork = pending;
         return pending.finally(() => { if (thumbnailWork === pending) thumbnailWork = null; });
     }
-    async function perform(operation, flushNotes = true, retainPresentation = false) {
+    async function perform(operation, flushNotes = true, retainPresentation = false, recoverRejected = false, textCommitOperation = false) {
         transitionPreview?.cancel(); animationPreview?.cancel();
         if (closed || !port) return;
-        if(inline?.active && !committingText && !await flushText())return;
+        // Toolbar gestures wait for typing already being committed. Only the
+        // text commit itself skips this barrier, so it cannot await itself.
+        if(inlineEditing() && !textCommitOperation && !await flushText())return;
         if (busy) {
             if (!flushNotes || !notes?.committing || !await notes.flush()) return;
         }
@@ -530,8 +643,8 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         try { updateEnabled(); await thumbnailWork; if (!closed) return await operation(); }
         catch (error) {
             if (!closed) {
-                uncertain = true;
-                status.text = `Operation failed: ${String(error?.message || error).slice(0, 240)}. Refresh before retrying; your draft is retained.`;
+                if(!recoverRejected||error.rejectedBeforeMutation!==true)uncertain = true;
+                status.text = `Operation failed: ${String(error?.message || error).slice(0, 240)}. ${uncertain?'Refresh before retrying; your draft is retained.':'Your document is unchanged.'}`;
             }
         } finally {
             try {
@@ -563,21 +676,45 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         });
     }
     async function mutateSlide(type, layout = 'title-content', target = null) {
-        if (!await finishCellEditing() || draft !== null || uncertain || !port?.outline) return;
-        await perform(async () => {
+        if (!await finishCellEditing() || draft !== null || uncertain || !port?.outline) return false;
+        return await perform(async () => {
             const command = await slides.command(type, target?.slide ?? selectedSlideId, target?.index ?? slideIndex, projection.slideCount, revision, target);
             if (type === 'insert-slide') command.layout = layout;
             const reply = await port.apply([command]);
             const created = reply?.result?.createdSlides;
-            if (Array.isArray(created) && created.length) selectedSlideId = created[0];
+            if (Array.isArray(created) && created.length) selectedSlideId = created.at(-1);
             else if (target?.slide) { selectedSlideId = target.slide; slideIndex = target.index; }
             selected = null; startText = 0;
             await read();
-        });
+            if(Array.isArray(created)&&created.length)slides.selectSlides(created);
+            if(command.type==='move-slide')slides.selectOnly(command.slide);
+            return true;
+        }, true, false, true)===true;
     }
     function clipboardEditor() {
-        const target = inline?.active ? inline.editor : clipboardTextTarget;
-        return target?.getProperty('visible') && target.getProperty('enabled') ? target : null;
+        const shown=target=>{
+            if(!target?.getProperty('enabled'))return false;
+            for(let owner=target;owner;owner=owner.parent)if(!owner.getProperty('visible'))return false;
+            return true;
+        };
+        const candidates=[shapeInline?.active?shapeInline.editor:null,inline?.active?inline.editor:null,notes?.editor,editor];
+        const focused=candidates.find(target=>shown(target)&&target.getProperty('focused'));
+        if(focused){clipboardTextTarget=focused;return focused;}
+        return shown(clipboardTextTarget)?clipboardTextTarget:null;
+    }
+    function textEditingContext() {
+        const control=clipboardEditor();
+        const font=control?.getProperty('documentFont');
+        const kind=!control?'none':control===shapeInline.editor?'shape':control===inline.editor?'table-cell':control===notes.editor?'speaker-notes':'inspector';
+        return {contract:deckTextEditingContract,kind,object:kind==='none'||kind==='speaker-notes'?null:selected?.tableObject||selected?.id||null,
+            slide:projection?.slide?.id||null,selection:control?.selection||null,
+            font:font?documentFontResource(font.family,font.weight,font.italic):null,
+            mode:rangeEditor()&&(kind==='shape'||kind==='table-cell')?'source-ranges':'plain-value',
+            range:kind==='shape'||kind==='table-cell'?rangeEditor()?.range||null:null,
+            cell:kind==='table-cell'&&selected?.tableObject?{row:selected.row,column:selected.column}:null,
+            typingStyle:rangeEditor()&&(kind==='shape'||kind==='table-cell')?rangeEditor().typingStyle:null,
+            paragraphFormats:rangeEditor()&&(kind==='shape'||kind==='table-cell')?rangeEditor().paragraphs().map(p=>p.paragraphFormat??null):null,
+            pendingText:draft!==null,shapeEditorOpen:shapeInline.active,tableEditorOpen:inline.active};
     }
     function clipboardAvailable(kind) {
         const target = clipboardEditor();
@@ -586,12 +723,48 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             return kind === 'paste' ? Boolean(port?.readClipboardText && !target.getProperty('readOnly'))
                 : Boolean(port?.writeClipboardText && range.anchor !== range.caret && (kind !== 'cut' || !target.getProperty('readOnly')));
         }
-        return kind === 'paste' ? Boolean(port?.pasteSelection) : Boolean(port?.copySelection && canvas.selected.length &&
+        if(clipboardScope==='slides')return slideClipboardAvailable(kind);
+        return kind === 'paste' ? Boolean(port?.pasteSelection||port?.pasteSlides&&slides.clipboardSupported) : Boolean(port?.copySelection && canvas.selected.length &&
             (kind !== 'cut' || canvas.selected.every(object => object.edit?.canDelete)));
+    }
+    function slideClipboardAvailable(kind) {
+        return slides.clipboardSupported&&(kind==='paste'?Boolean(port?.pasteSlides):Boolean(port?.copySlides&&slides.selectedSlides.length&&slides.selectedSlides.length<=32));
+    }
+    async function slideClipboardAction(kind) {
+        if(closed||uncertain||!slideClipboardAvailable(kind)||!await flushText())return true;
+        if((notes.dirty||notes.committing)&&!await notes.flush())return true;
+        if(closed||busy||uncertain)return true;
+        const ids=[...slides.selectedSlides],titles=slides.clipboardTitles;
+        busy=true;updateEnabled();let dispatched=false;
+        try {
+            await thumbnailWork;if(closed)return true;
+            let reply;
+            if(kind==='paste') {
+                dispatched=true;reply=await port.pasteSlides({after:projection?.slide?.id??null});
+                if(reply===null)return false;
+            } else {
+                dispatched=kind==='cut';reply=await port.copySlides({slides:ids,text:new TextEncoder().encode(titles).length<=16000?titles:'Selected slides',cut:kind==='cut'});
+                if(kind==='copy'){status.text=`Copied ${ids.length} slide${ids.length===1?'':'s'}`;return true;}
+            }
+            if(closed)return true;
+            const created=reply?.result?.createdSlides;
+            if(created?.length)selectedSlideId=created.at(-1);
+            selected=null;startText=0;await read();
+            if(created?.length)slides.selectSlides(created);
+            clipboardScope='slides';return true;
+        } catch(error) {
+            if(dispatched&&error.rejectedBeforeMutation!==true)uncertain=true;
+            status.text=`Cannot ${kind} slides: ${String(error?.message||error).slice(0,240)}`;return true;
+        } finally {
+            busy=false;
+            if(!closed){updateEnabled();for(const resolve of idleWaiters)resolve();idleWaiters.clear();if(pendingGrant&&!closeDecision)queueMicrotask(openPendingGrant);}
+        }
     }
     async function clipboardAction(kind) {
         const target = clipboardEditor();
         if (target) return textClipboardAction(kind, target);
+        if(clipboardScope==='slides')return slideClipboardAction(kind);
+        if(kind==='paste'&&slideClipboardAvailable(kind)&&await slideClipboardAction(kind))return;
         if (closed || uncertain || !sceneReady || !(await flushText())) return;
         if ((notes.dirty || notes.committing) && !await notes.flush()) return;
         if (closed || busy || uncertain || !sceneReady) return;
@@ -672,16 +845,25 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     async function documentAction(name) {
         if(inline.pending)await canvas.flushPendingTextInput();
         if (!(await flushText())) return;
-        await perform(async () => {
+        const focusOwner=shapeInline.active?shapeInline:inline.active?inline:null;
+        const textFocus=focusOwner?{owner:focusOwner,editor:focusOwner.editor,key:focusOwner.key}:null;
+        // File dialogs temporarily own native focus. Release the retained
+        // request before disabling the source editor, then restore it after
+        // the document operation has enabled the same editor again.
+        textFocus?.editor.setProperty('focused',false);
+        try { await perform(async () => {
             const result = await port.documents[name]();
             if (closed || !result) return;
             initialBlankRevision = null;
             if (result.name) documentName = result.name;
-            if (result.replaced) { inline.close();canvas.setEditingCell(null);slides.reset(); revision = null; projection = null; selected = null; slideIndex = 0; startText = 0; selectedSlideId = null; uncertain = false; }
+            if (result.replaced) { documentGeneration++; inline.close();shapeInline.close();canvas.setEditingCell(null);canvas.setEditingTextObject(null);slides.reset(); revision = null; projection = null; selected = null; slideIndex = 0; startText = 0; selectedSlideId = null; uncertain = false; }
             await read();
             if (name === 'new' || name === 'new-odp') canvas.select([]);
             if (result.startShow) await beginShow(0);
-        });
+        }); } finally {
+            if(textFocus&&!closed&&!uncertain&&textFocus.owner.active&&textFocus.owner.key===textFocus.key&&textFocus.owner.editor===textFocus.editor)
+                textFocus.editor.setProperty('focused',true);
+        }
     }
     async function beginShow(index = slideIndex) {
         if (!presenter || !await finishCellEditing() || draft !== null || uncertain || !sceneReady || !projection?.slideCount) return;
@@ -705,14 +887,17 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         if (busy) { scheduleTextCommit(); return; }
         const text = draft, target = selected.tableObject ? { slide: selected.slideId, object: selected.tableObject, row: selected.row, column: selected.column } : { slide: selected.slideId, object: selected.id };
         const type = selected.tableObject ? "set-table-cell-text" : "set-object-text";
+        const owner=rangeEditor(),rangeBatch=owner?.capture();
+        if(owner&&!rangeBatch){draft=null;return;}
         committingText = true;
         textCommit = perform(async () => {
-            await port.apply([{ type, ...target, text }]);
+            await port.apply(rangeBatch?rangeBatch.commands:[{ type, ...target, text }]);
+            if(rangeBatch)owner.acknowledge(rangeBatch);
             // Keep the native editor and its caret intact while refreshing the
             // authoritative slide. Keystrokes during compute stay in the draft.
             await read(true);
-            if (!uncertain && draft === text) draft = null;
-        });
+            if (!uncertain && draft === text && !pendingRanges()) draft = null;
+        },true,false,false,true);
         try { await textCommit; }
         finally {
             textCommit = null; committingText = false;
@@ -721,12 +906,45 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     }
     async function flushText() {
         cancelTextCommit();
+        while(shapeInline?.layoutWaiting||inline?.layoutWaiting)await(shapeInline.layoutWaiting||inline.layoutWaiting);
         while (!closed && !uncertain && (draft !== null || textCommit)) {
             if (busy && !committingText) return false;
             if (draft !== null && !fitsEditor(draft)) return false;
             await applyDraft();
         }
         return !closed && !uncertain;
+    }
+    function formatInlineText(style,{toggle=null}={}) {
+        const owner=rangeEditor();if(!owner)return Promise.resolve(false);
+        return owner.format(async()=>{
+            if(!await flushText()||rangeEditor()!==owner)return false;
+            const range=owner.range;
+            if(!range)return false;
+            if(['bold','italic','underline'].includes(toggle))style={[toggle]:!owner.styles().every(style=>style[toggle]===true)};
+            const {align,...characters}=style;
+            if(range.start===range.end&&Object.keys(characters).length)owner.setTypingStyle(characters);
+            if(range.start!==range.end||align){
+                const commandStyle=range.start===range.end?{align}:style;
+                await perform(async()=>{
+                    await port.apply([{type:'set-text-range-style',...owner.rangeTarget,range,style:commandStyle}]);
+                    await read();
+                });
+                while(owner.layoutWaiting)await owner.layoutWaiting;
+            }
+            if(owner.active)owner.editor.setProperty('focused',true);
+            return !uncertain;
+        });
+    }
+    function formatInlineParagraph(format){
+        const owner=rangeEditor();if(!owner?.paragraphFormatting)return Promise.resolve(false);
+        return owner.format(async()=>{
+            if(!await flushText()||rangeEditor()!==owner)return false;
+            const range=owner.range;if(!range)return false;
+            await perform(async()=>{await port.apply([{type:'set-paragraph-format',...owner.rangeTarget,range,format}]);await read();});
+            while(owner.layoutWaiting)await owner.layoutWaiting;
+            if(owner.active)owner.editor.setProperty('focused',true);
+            return !uncertain;
+        });
     }
     const menus = new MenuBar({ name: 'deck-file-menu', text: 'panel:office-ribbon-heading:flush:fixed' }, [
         new Menu({ name: 'file-menu', text: "File", icon: 2 }, [action("new", "New", () => documentAction("new"), true),
@@ -753,7 +971,13 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         button.on(Message.ACTIVATE, () => { if (button.getProperty('enabled')) source.sendMessage(Message.ACTIVATE); });
         quick.append(button);
     }
-    tools.control.setHeader({ leading: [menus], trailing: [sensitivityBadge, quick] });
+    documentTitle = new Label({ name: 'deck-document-title', text: 'Presentation', state: State.EXPANSIVE | State.CENTER_ALIGNED });
+    const presentButton = new Button({ name: 'deck-present', text: 'Present', icon: 82, accent: true });
+    presentButton.on(Message.ACTIVATE, () => perform(() => beginShow())); controls.set('deck-present', presentButton);
+    const searchButton = new Button({ name: 'deck-command-search', icon: Icons.Search, accessibleName: 'Search commands', tooltip: 'Search commands' });
+    searchButton.on(Message.ACTIVATE, openCommandSearch);
+    authoring.append(new Row({ name: 'deck-title-row', text: 'panel:office-ribbon-heading:flush:accessory-height=38:gap=4' }, [quick, documentTitle, sensitivityBadge, presentButton, searchButton]));
+    tools.control.setHeader({ leading: [menus], trailing: [] });
     authoring.append(tools.control);
     const textOutline = new Column({ name: 'text-outline', visible: false }, [
         new ScrollView({ name: 'outline-scroll', text: 'viewport:180|0/0' }, [runs]),
@@ -763,31 +987,38 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     outlineToggle.on(Message.ACTIVATE, () => textOutline.setProperty('visible', !textOutline.getProperty('visible')));
     const textPanel = new Column({ name: 'text-panel', text: 'panel:tight-stack' }, [
         runLabel, editor,
-        new Row({ text: "panel:actions" }, [action("apply", "Apply text", applyDraft), action("discard", "Discard draft", () => { cancelTextCommit(); draft = null; showSelected(selected); })]),
+        new Row({ text: "panel:actions" }, [action("apply", "Apply text", applyDraft), action("discard", "Discard draft", () => { cancelTextCommit(); discardRanges(); draft = null; showSelected(selected); })]),
         action("refresh", "Refresh", () => perform(async () => { uncertain = false; await read(true, true); }, false)),
         outlineToggle, textOutline,
     ]);
-    properties = createSelectionProperties({ canvas, tools, textPanel });
-    const navigationHost = new Column({ name: 'navigation-host', text: 'panel:flush:gap=0' }, [slides.control]);
-    const overviewHost = new Column({ name: 'slide-overview', text: 'panel:flush:gap=4', state: State.EXPANSIVE, visible: false });
-    const workspace = new SplitPane({ name: 'slide-workspace', text: 'split:260:trailing:min-width=220:max-width=340', state: State.EXPANSIVE }, [
-        new SplitPane({ name: 'slides-canvas', text: 'split:180:min-width=180:max-width=260', state: State.EXPANSIVE }, [
-            navigationHost, new Column({ name: 'canvas-panel', text: 'panel:flush:gap=0' }, [status, sceneNotice,
-                viewport, notes.control]),
-        ]), new Column({ name: 'context-pane', text: 'panel:flush:gap=0', state: State.EXPANSIVE }, [
-            new ScrollView({ name: 'properties-scroll' }, [properties.control]), animations.pane]),
-    ]);
-    authoring.append(workspace); authoring.append(overviewHost);
+    properties = createSelectionProperties({ canvas, tools, textPanel, shadowsSupported: Boolean(BigInt(app.hostCapabilities || 0) & (1n << 27n)) });
+    workspaceViews = createWorkspaceViews({ port, notes, navigate, notice: text => { status.text = text; } });
+    workspace = new EditorWorkspace({ name: 'slide-workspace', navigation: slides.control,
+        document: new Column({ name: 'canvas-panel', text: 'panel:flush:gap=0' }, [status, sceneNotice, viewport, notes.control]),
+        inspector: new Column({ name: 'context-pane', text: 'panel:flush:gap=0', state: State.EXPANSIVE }, [new ScrollView({ name: 'properties-scroll' }, [properties.control]), new Column({ name: 'background-properties-scroll',text:'panel:flush:gap=0',state:State.EXPANSIVE, visible: false }, [design.pane]), animations.pane]),
+        outline: workspaceViews.outline, notesPage: workspaceViews.notesPage,
+        beforeChange: () => !closed && !uncertain && finishCellEditing(),
+        onChange: async (mode, previous) => {
+            currentMode = mode; overview = mode === 'sorter';syncStatusFooter();slides.setOverview(overview);
+            await workspaceViews.change(mode, previous); zoom.visible = mode !== 'notesPage'&&!overview;sorterZoomControl.visible=overview;
+            for (const [id, buttons] of viewButtons) for (const button of buttons) button.setProperty('selected', mode === id);
+            await perform(() => read());
+        },
+    });
+    authoring.append(workspace);
+    workspace.setInspectorVisible(false);
+    async function switchView(mode) {
+        if (!workspace || closed || uncertain) return false;
+        const request = ++viewRequest, document = documentGeneration;
+        // Notes can be committing when a native view button is pressed. Keep
+        // that intent and finish its draft instead of silently dropping input.
+        if ((notes.dirty || notes.committing) && !await notes.flush()) return false;
+        if (busy) await waitForIdle();
+        if (closed || uncertain || busy || document !== documentGeneration || request !== viewRequest) return false;
+        try { return await workspace.setMode(mode); } catch (error) { status.text = String(error.message); return false; }
+    }
     async function setOverview(value) {
-        if (closed || uncertain || !(await flushText())) return;
-        await perform(async () => {
-            overview = value;
-            slides.control.parent.remove(slides.control);
-            (overview ? overviewHost : navigationHost).append(slides.control);
-            overviewHost.setProperty('visible', overview); workspace.setProperty('visible', !overview);
-            overviewButton.setProperty('selected', overview); normalButton.setProperty('selected', !overview);
-            slides.setOverview(overview); await read();
-        });
+        return switchView(value ? 'sorter' : 'normal');
     }
     const viewButton = (name, icon, tooltip, callback) => {
         const button = new Button({ name, icon, tooltip, accessibleName: tooltip, text: 'panel:fixed:accessory-height=26:width=26:flush' });
@@ -795,12 +1026,17 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     };
     const normalButton = viewButton('normal-view', 40, 'Normal view', () => void setOverview(false));
     const overviewButton = viewButton('slide-overview-toggle', 41, 'Slide overview', () => void setOverview(true));
+    viewButtons.get('normal').push(normalButton); viewButtons.get('sorter').push(overviewButton);
+    const outlineButton = viewButton('outline-view', 140, 'Outline view', () => switchView('outline'));
+    const notesPageButton = viewButton('notes-page-view', 140, 'Notes page', () => switchView('notesPage'));
+    const presentCurrent = viewButton('status-show-current', 82, 'Present from current slide', () => void perform(() => beginShow()));
+    controls.set('status-show-current',presentCurrent);
+    viewButtons.get('outline').push(outlineButton); viewButtons.get('notesPage').push(notesPageButton);
+    const inspectorButton = viewButton('format-pane-toggle', 182, 'Format pane', () => workspace.setInspectorVisible(!workspace.inspectorVisible));
     normalButton.setProperty('selected', true);
-    const playBeginning = viewButton('status-show-start', 82, 'Play from beginning', () => void perform(() => beginShow(0)));
-    const playCurrent = viewButton('status-show-current', 104, 'Play from current slide', () => void perform(() => beginShow()));
-    controls.set('status-show-start', playBeginning); controls.set('status-show-current', playCurrent);
     const notesButton = new Button({ name: 'notes-toggle', text: 'Notes', icon: 140, tooltip: 'Speaker notes', accessibleName: 'Speaker notes',
         visible: Boolean(port?.speakerNotes), state: State.START_ALIGNED });
+    controls.set('notes-toggle', notesButton);
     notesButton.on(Message.ACTIVATE, () => { void perform(async () => {
         if (!projection?.slide || !port.speakerNotes) return;
         const opening = !notes.opened;
@@ -808,14 +1044,39 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         notes.setOpen(opening); notesButton.setProperty('selected', opening);
     }).then(() => { notes.focus(); }); });
     heading.setProperty('state', State.EXPANSIVE);
-    authoring.append(new StatusBar({ name: 'deck-status-bar', text: 'panel:status-bar:accessory-height=30:flush:gap=4' }, [heading, notesButton, normalButton, overviewButton, zoom, playBeginning, playCurrent]));
-    contextMenu = createDeckContextMenu({ owner: viewport, notice: text => { status.text = text; }, actions: {
+    authoring.append(new StatusBar({ name: 'deck-status-bar', text: 'panel:status-bar:accessory-height=28:flush:gap=4' }, [heading,statusFooter, notesButton, inspectorButton, normalButton, outlineButton, overviewButton, notesPageButton, presentCurrent, zoom, sorterZoomControl, workspaceViews.notesZoom]));
+    function openCommandSearch() {
+        if (commandSearch || closed) return;
+        const found = new Map();
+        function collect(control) {
+            if (control.name && [12, 32].includes(control.kind) && control.listeners.has(Message.ACTIVATE) && !control.name.startsWith('ribbon-tab-') && !control.name.startsWith('slide-choice-')) {
+                const label = control.getProperty('accessibleName') || control.getProperty('tooltip') || control.text;
+                if (label && !label.startsWith('panel:') && !found.has(control.name)) found.set(control.name, { control, label });
+            }
+            for (const child of control.children) collect(child);
+        }
+        collect(authoring);
+        const records = [...found].map(([name, value], index) => ({ id: `deck-control-${index}`, name, ...value }));
+        const commands = new CommandRegistry(records.map(({ id, name, control, label }) => ({ id, label, keywords: name,
+            enabled: control.enabled, run: () => { if (!control.enabled) return false; return control.sendMessage(Message.ACTIVATE); } })));
+        const subscriptions = records.map(({ id, control }) => control.on(Message.CHANGE, () => commands.update(id, { enabled: control.enabled })));
+        let dialog;
+        const close = () => { for (const stop of subscriptions) stop(); commands.dispose(); if (dialog?.parent) root.remove(dialog, { destroy: true }); commandSearch = null; surface.setProperty('focused', true); };
+        const palette = new CommandPalette({ name: 'deck-palette', commands, onClose: close });
+        dialog = new Dialog({ name: 'deck-command-palette', text: 'Search commands', modal: true }, [palette]);
+        commandSearch = { close }; root.append(dialog); palette.input.setProperty('focused', true);
+    }
+    contextMenu = createDeckContextMenu({ owner: viewport, can:name=>['copy','cut','paste'].includes(name)?clipboardAvailable(name):true, notice: text => { status.text = text; }, actions: {
         undo: () => perform(async () => { await port.undo(); await read(); }),
         redo: () => perform(async () => { await port.redo(); await read(); }),
         editLink: () => hyperlinks.edit(), openLink: () => hyperlinks.open(), removeLink: () => hyperlinks.remove(),
         editText: () => canvas.beginText(), addText: () => canvas.beginText(),
-        ...(port?.copySelection ? { copy: () => clipboardAction('copy') } : {}),
-        ...(port?.pasteSelection ? { paste: () => clipboardAction('paste') } : {}),
+        cut:()=>clipboardAction('cut'),selectAll:()=>{const target=clipboardEditor();if(target){target.setSelection(0,Array.from(target.value).length);void restoreClipboardFocus(target);updateEnabled();}},
+        bulletFormat:()=>tools.openParagraphFormat('bullet'),numberFormat:()=>tools.openParagraphFormat('number'),listFormat:()=>tools.openParagraphFormat(),
+        alignLeft:()=>canvas.style({align:'left'}),alignCenter:()=>canvas.style({align:'center'}),alignRight:()=>canvas.style({align:'right'}),
+        decreaseIndent:()=>canvas.paragraphFormat({levelDelta:-1}),increaseIndent:()=>canvas.paragraphFormat({levelDelta:1}),
+        ...(port?.copySelection||port?.writeClipboardText ? { copy: () => clipboardAction('copy') } : {}),
+        ...(port?.pasteSelection||port?.readClipboardText ? { paste: () => clipboardAction('paste') } : {}),
         ...(canvas.group ? { group: () => canvas.group() } : {}),
         ...(canvas.ungroup ? { ungroup: () => canvas.ungroup() } : {}),
         ...(canvas.reorder ? {
@@ -823,12 +1084,17 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             sendBackward: () => canvas.reorder('backward'), sendToBack: () => canvas.reorder('back'),
         } : {}),
         duplicate: () => canvas.duplicate(), delete: () => canvas.remove(),
-        positionSize: () => tools.position(), rotate: () => tools.selectTab('format'),
-        formatShape: () => tools.selectTab('format'), formatPicture: () => tools.selectTab('picture'),
+        positionSize: () => tools.position(), rotate: () => { showFormatPane(); properties.selectTab('size'); },
+        formatShape: () => { showFormatPane(); tools.selectTab('format'); }, formatPicture: () => { showFormatPane(); properties.selectTab('picture'); tools.selectTab('picture'); },
         fill: color => canvas.fill(color), strokeColor: color => canvas.strokeColor(color), style: style => canvas.style(style),
-        slideBackground: () => tools.selectTab('design'),
+        slideBackground: () => design.openBackground(),
         backgroundColor: color => perform(async () => { await port.apply([{ type: 'set-slide-background', slide: renderedScene.slideId, color }]); await read(); }),
     } });
+    // The page and its surrounding workspace have separate native hit targets.
+    // A secondary click in the gutter must not reuse a shape's old context.
+    for (const owner of [viewport, viewport.clip]) owner.on(Message.POINTER, event => {
+        if (event.target===owner && event.detail?.kind === 'down' && event.detail.button === 3 && sceneReady && !busy && !uncertain) canvas.select([]);
+    });
     presenter = createPresentationView({ port, openHyperlink: link => openHyperlink(link, true), getWindow: () => mainWindow,
         changed(active) {
             authoring.setProperty('visible', !active);
@@ -841,6 +1107,15 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         },
     });
     root.append(authoring); root.append(presenter.control);
+    root.on(Message.KEY, event => {
+        const key = event.detail;
+        if (!key?.pressed) return;
+        if (key.modifiers === 8 && (String(key.key || key.text || '').toLowerCase() === 'q' || key.keyCode === 24)) {
+            event.preventDefault(); event.stopPropagation(); openCommandSearch();
+        } else if (currentMode === 'reading' && (key.key === 'Escape' || key.keyCode === 9)) {
+            event.preventDefault(); event.stopPropagation(); void switchView('normal');
+        }
+    });
     mainWindow = createWindow({ title: "Rice Deck", root });
     function showShortcut(event) {
         const key = event.detail;
@@ -848,11 +1123,29 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             transitionPreview.cancel();
             if (event.target === surface || key.key === 'Escape' || key.keyCode === 9) animationPreview.cancel();
         }
-        if (event.target !== surface && event.target !== editor && event.target !== inline.editor && canvas.capturePendingText(event)) return;
+        if (event.target !== surface && event.target !== editor && event.target !== inline.editor && event.target !== shapeInline.editor && canvas.capturePendingText(event)) return;
         if (key?.pressed && (key.key === 'Escape' || key.keyCode === 9) && canvas.formatPainter?.active && !presenter.active) {
             canvas.cancelFormatPainter(); event.preventDefault(); return;
         }
-        if (event.defaultPrevented || !key?.pressed || presenter.active || (busy && !notes.committing) || closed || uncertain) return;
+        const textHistory=key?.pressed&&(key.modifiers&4)&&!(key.modifiers&8)&&([52,29].includes(key.keyCode)||['z','y'].includes(key.key?.toLowerCase()));
+        if(textHistory&&!event.defaultPrevented&&!closed&&!uncertain&&!presenter.active&&(event.target===shapeInline.editor||event.target===inline.editor)){
+            event.preventDefault();
+            const document=documentGeneration,redo=key.keyCode===29||key.key?.toLowerCase()==='y'||Boolean(key.modifiers&1);
+            void(async()=>{if(await flushText()&&!closed&&!uncertain&&!busy&&document===documentGeneration&&projection?.[redo?'canRedo':'canUndo'])controls.get(redo?'redo':'undo')?.emit(Message.ACTIVATE);})();
+            return;
+        }
+        const saveShortcut=key?.pressed&&(key.modifiers&4)&&!(key.modifiers&8)&&(key.keyCode===39||key.key?.toLowerCase()==='s');
+        if(saveShortcut&&!event.defaultPrevented&&!closed&&!uncertain&&!presenter.active&&(!busy||committingText||notes.committing)){
+            event.preventDefault();
+            const document=documentGeneration,name=key.modifiers&1?'save-as':'save';
+            void(async()=>{
+                if(!await flushText()||closed||uncertain||document!==documentGeneration)return;
+                if((notes.dirty||notes.committing)&&!await notes.flush())return;
+                if(!closed&&!busy&&!uncertain&&document===documentGeneration&&controls.get(name)?.enabled)await documentAction(name);
+            })().catch(error=>{if(!closed)status.text=`Could not save: ${String(error?.message||error).slice(0,240)}`;});
+            return;
+        }
+        if (event.defaultPrevented || !key?.pressed || presenter.active || (busy && !notes.committing && !committingText) || closed || uncertain) return;
         const pageDirection = ({ PageUp: -1, PageDown: 1 })[key.key] || ({ 112: -1, 117: 1 })[key.keyCode];
         if (!(key.modifiers & (4 | 8 | 64)) && pageDirection) {
             const next = slideIndex + pageDirection;
@@ -867,17 +1160,7 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
         }
         if (!(key.modifiers & 4) || key.modifiers & 8) return;
         const letter = ({ 54: 'c', 53: 'x', 55: 'v', 40: 'd', 39: 's', 52: 'z', 29: 'y', 56: 'b', 31: 'i', 30: 'u', 32: 'o', 57: 'n', 45: 'k' })[key.keyCode] || key.key?.toLowerCase();
-        if (letter === 's') {
-            event.preventDefault();
-            void (async () => {
-                if (draft !== null) await applyDraft();
-                const name = key.modifiers & 1 ? 'save-as' : 'save';
-                if (draft === null && controls.get(name)?.getProperty('enabled')) await documentAction(name);
-            })();
-            return;
-        }
-        if (draft !== null && !inline.active) return;
-        if(event.target===inline.editor && ['z','y'].includes(letter))return;
+        if (draft !== null && !inlineEditing()) return;
         if (event.target === surface && ((['c', 'x'].includes(letter) && port?.copySelection) || (letter === 'v' && port?.pasteSelection))) {
             event.preventDefault(); void clipboardAction(letter === 'c' ? 'copy' : letter === 'x' ? 'cut' : 'paste'); return;
         }
@@ -901,10 +1184,10 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
     }
     installShowShortcuts(authoring);
     function changedText(value) {
-        if (closed || (busy && !committingText && !clipboardTextBusy && !inline.active) || uncertain || !selected?.editable) return;
+        if (closed || (busy && !committingText && !clipboardTextBusy && !inlineEditing()) || uncertain || !selected?.editable) return;
         if (!selected.slideId) selected = { ...selected, slideId: projection.slide.id };
         draft = value;
-        if (draft === selected.text && !committingText) draft = null;
+        if (draft === selected.text && !committingText && !pendingRanges()) draft = null;
         updateEnabled(); scheduleTextCommit();
     }
     editor.on(Message.VALUE_CHANGED, event => changedText(String(event.detail?.value ?? editor.getProperty('value'))));
@@ -915,7 +1198,7 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             void flushText().then(ok => { if (ok) canvas.nextTableCell(backwards); }); return;
         }
         if (event.detail?.pressed && (event.detail.key === "Escape" || event.detail.keyCode === 9) && !busy) {
-            cancelTextCommit(); draft = null; showSelected(selected); event.preventDefault();
+            cancelTextCommit(); discardRanges(); draft = null; showSelected(selected); event.preventDefault();
         }
     });
     async function openPendingGrant() {
@@ -1035,16 +1318,19 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             let extra=null;
             if(query&&!busy){
                 const operation=query.operation||'outline',args=query.operation?query.arguments||{}:query;
-                if(!['outline','scene','speaker-notes'].includes(operation))throw Error('Deck queries support outline, scene and speaker-notes');
-                const method=operation==='speaker-notes'?'speakerNotes':operation;
+                if(!['outline','scene','speaker-notes','section-outline','section-name','table-cells'].includes(operation))throw Error('Deck queries support outline, scene, speaker-notes, section-outline, section-name and table-cells');
+                const method={'speaker-notes':'speakerNotes','section-outline':'sectionOutline','section-name':'sectionName','table-cells':'tableCells'}[operation]||operation;
                 if(typeof port?.[method]!=='function')throw Error('This Deck query is unavailable');
-                extra=await port[method](args,revision);
+                extra=await scheduleThumbnailWork(()=>port[method](args,revision));
             }
             // A targeted read must not duplicate the selected slide, controls and authoring catalog.
             if(query)return {app:'org.ricewm.deck',revision:revision??'0',ready:!closed&&!busy&&!uncertain&&!closeDecision&&!closeApproved&&draft===null&&!notes?.dirty&&!presenter?.active,name:documentName,queryResult:extra?.result||null,outline:(!query.operation||query.operation==='outline')?extra?.result||null:null};
-            const speakerNotes=!busy&&projection?.slide&&port?.speakerNotes?await port.speakerNotes({slide:projection.slide.id},revision):null;
-            return {app:'org.ricewm.deck',revision:revision??'0',ready:!closed&&!busy&&!uncertain&&!closeDecision&&!closeApproved&&draft===null&&!notes?.dirty&&!presenter?.active,
-                name:documentName,projection,scene:renderedScene,selection:canvas.selected,speakerNotes:speakerNotes?.result||null,outline:(!query?.operation||query.operation==='outline')?extra?.result||null:null,queryResult:extra?.result||null,queries:{outline:{operation:'outline',arguments:{startSlide:0,limit:32}},scene:{operation:'scene',arguments:{slide:0,startObject:0,limit:32}},speakerNotes:{operation:'speaker-notes',arguments:{slide:projection?.slide?.id}}},actions:deckCopilotActions()};
+            const speakerNotes=!busy&&projection?.slide&&port?.speakerNotes?await scheduleThumbnailWork(()=>port.speakerNotes({slide:projection.slide.id},revision)):null;
+            const queryTable=canvas.selected.find(object=>object.table)||renderedScene?.objects.find(object=>object.table);
+            const tableQueries=port?.tableCells&&queryTable&&projection?.slide?{tableCells:{operation:'table-cells',arguments:{slide:projection.slide.id,object:queryTable.id,startCell:0,limit:8}}}:{};
+            return deckCopilotContext({app:'org.ricewm.deck',revision:revision??'0',ready:!closed&&!busy&&!uncertain&&!closeDecision&&!closeApproved&&draft===null&&!notes?.dirty&&!presenter?.active,
+                textEditing:textEditingContext(),
+                name:documentName,fileWorkflow:{...deckFileWorkflowContract,...port?.fileWorkflow},renderDiagnostics,projection,scene:renderedScene,selection:canvas.selected,tableSelection:canvas.selectedTableCell?{object:canvas.selectedTableCell.object.id,range:canvas.selectedTableCell.range,active:{row:canvas.selectedTableCell.row,column:canvas.selectedTableCell.column}}:null,speakerNotes:speakerNotes?.result||null,outline:(!query?.operation||query.operation==='outline')?extra?.result||null:null,queryResult:extra?.result||null,queries:{outline:{operation:'outline',arguments:{startSlide:0,limit:32}},scene:{operation:'scene',arguments:{slide:0,startObject:0,limit:32}},speakerNotes:{operation:'speaker-notes',arguments:{slide:projection?.slide?.id}},...tableQueries,...(projection?.sectionSupport?{sections:{operation:'section-outline',arguments:{startSection:0,limit:32}},sectionName:{operation:'section-name',arguments:{section:'actual GUID from section-outline'}}}:{})},designCatalog:deckDesignCatalog(),actions:deckCopilotActions({slideClipboard:slides.clipboardSupported&&Boolean(port?.copySlides&&port?.pasteSlides)})});
         },
         validate:validateDeckCopilot,
         act:async(operation,data,expectedRevision)=>{
@@ -1053,18 +1339,22 @@ export function startDeckShell({ app, createWindow, log, services, bus, instance
             let applied=false,result;
             await perform(async()=>{
                 if(revision!==expectedRevision)throw Error('Presentation changed before the AI edit');
-                result=operation==='compose'?await composeDeck(port,data,{expectedRevision,onProgress:p=>{status.text=`Creating slides · ${p.completed} of ${p.total}`;},onDraft:async()=>{selectedSlideId=null;slideIndex=0;await read();}}):operation==='apply'?await port.apply(data.commands):operation==='undo'?await port.undo():await port.redo();
-                if(operation==='apply')canvas.created(result);
-                await read();applied=true;
-            });
+                if(['copy-slides','cut-slides','paste-slides'].includes(operation)) {
+                    if(!slides.clipboardSupported)throw Object.assign(Error('Slide clipboard transfer is unavailable for this presentation format'),{rejectedBeforeMutation:true});
+                    result=operation==='paste-slides'?await port.pasteSlides(data):await port.copySlides({...data,text:'Selected slides',cut:operation==='cut-slides'});
+                    if(result===null)throw Object.assign(Error('The clipboard does not contain presentation slides'),{rejectedBeforeMutation:true});
+                } else result=operation==='compose'?await composeDeck(port,data,{expectedRevision,onProgress:p=>{status.text=`Creating slides · ${p.completed} of ${p.total}`;},onDraft:async()=>{selectedSlideId=null;slideIndex=0;await read();}}):operation==='apply'?await port.apply(data.commands):operation==='undo'?await port.undo():await port.redo();
+                if(['apply','paste-slides'].includes(operation)){canvas.created(result);if(result?.result?.createdSlides?.length)selectedSlideId=result.result.createdSlides.at(-1);}
+                await read();if(['apply','paste-slides'].includes(operation)&&result?.result?.createdSlides?.length)slides.selectSlides(result.result.createdSlides);applied=true;
+            },true,false,true);
             if(!applied)throw Error(status.text||'Presentation action was not applied');
             return operation==='compose'?{applied,revision,...result}:{applied,revision,projection,result};
         }});
     const stopClose = app.on(Message.APP_CLOSE, () => {
         if (closed) return;
-        closed = true; transitionPreview.cancel(); animationPreview.cancel(); animations.close(); transitions.close(); cancelTextCommit(); canvas.cancel(); finishCloseDecision?.(false);
+        closed = true; transitionPreview.cancel(); animationPreview.cancel(); animations.close(); transitions.close(); cancelTextCommit(); inline.close();shapeInline.close();canvas.cancel(); finishCloseDecision?.(false);
         for (const resolve of idleWaiters) resolve(); idleWaiters.clear();
-        stopCopilot(); notes.close(); closeAbout(); contextMenu?.destroy(); void presenter?.close(); slides.close(); finishDiscard(false); stopOpen(); stopRequest(); stopClose();
+        stopCopilot();stopCanvasTheme(); commandSearch?.close(); workspaceViews?.close(); notes.close(); closeAbout(); contextMenu?.destroy(); void presenter?.close(); slides.close(); finishDiscard(false); stopOpen(); stopRequest(); stopClose();
         try { Promise.resolve(port?.close()).catch(() => log?.warn("Deck engine cleanup failed")); }
         catch { log?.warn("Deck engine cleanup failed"); }
     });

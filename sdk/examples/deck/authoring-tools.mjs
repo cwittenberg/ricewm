@@ -1,6 +1,7 @@
 import { canReorderObjects, objectOrderingActions } from './object-ordering.mjs';
-import { Button, ColorMenu, Menu, MenuItem, Message, Ribbon, State } from '@ricewm/app';
+import { Button, ColorMenu, ComboBox, Menu, MenuItem, Message, Ribbon, State,createParagraphListControls } from '@ricewm/app';
 import { selectedTextStyle } from './text-selection-style.mjs';
+import {deckFontFamilies} from './font-choices.mjs';
 import { createAuthoringDialogs } from './authoring-dialogs.mjs';
 import { createShapeGallery } from './shape-gallery.mjs';
 import { createTextLayoutTools } from './text-layout-tools.mjs';
@@ -12,23 +13,26 @@ import { createShadowTools } from './shadow-tools.mjs';
 
 /** Native RiceUI supplies the chrome, interaction and theme. Document commands
  * remain independent of the reusable ribbon and palette components. */
-export function createAuthoringTools({ root, canvas, notice, picture, shadowsSupported = false, clipboardActions = {}, insertSlideControl = null, slideActions = [], designControls = [], transitionControls = [], animationControls = [], layoutControls = [], showControls = [], hyperlinkControls = [] }) {
+export function createAuthoringTools({ root, canvas, notice, picture, textStyleSelection=()=>null,paragraphSelection=()=>null,restoreTextFocus=()=>{}, shadowsSupported = false, clipboardActions = {}, insertSlideControl = null, slideActions = [], designControls = [], designGroups=null, transitionControls = [], animationControls = [], layoutControls = [], showControls = [], hyperlinkControls = [], viewControls = [], reviewControls = [], openInspector = () => {} }) {
     let active = false, locked = false, selection = [], clipboardReadyOverride;
     let currentStyle = selectedTextStyle([]);
+    let fontSelection = null, paintSelection = null, selectionScope = null,tableTheme=null;
     let alignmentReference = 'auto';
     const controls = [], palettes = [];
-    const dialogs = createAuthoringDialogs({ root, canvas, notice, selected: () => selection });
+    const dialogs = createAuthoringDialogs({ root, canvas, notice, selected: () => selection, context: () => selectionScope });
     const textLayout = createTextLayoutTools({ root, canvas, notice });
     const paragraphSpacing = createParagraphSpacingTools({ root, canvas, notice });
+    const paragraphLists=createParagraphListControls({name:'paragraph',root,onDialogClose:restoreTextFocus,onChange:format=>canvas.paragraphFormat(format),onError:error=>notice(error.message)});
     const rotation = createRotationTools({ root, canvas, notice });
     const tables = createTableTools({ root, insert: size => canvas.insertTable(size), notice });
-    const tableFormat = createTableFormatTools({ root, canvas, notice });
+    const tableFormat = createTableFormatTools({ root, canvas, notice,restoreTextFocus });
     const shadows = shadowsSupported ? ['home-shadow', 'shape-shadow', 'picture-shadow'].map(name =>
         createShadowTools({ root, canvas, name, notice })) : [];
     function textSelection() {
+        const sourceRange=textStyleSelection();if(sourceRange)return sourceRange;
         const cell = canvas.selectedTableCell;
         return selection.length === 1 && selection[0].table && cell?.object?.id === selection[0].id
-            ? cell.cell?.editable && cell.cell.text ? [{ ...selection[0], text: { ...cell.cell.text, editable: true } }] : []
+            ? (cell.cells||[cell.cell]).every(c=>c?.editable&&c.text)?(cell.cells||[cell.cell]).map(c=>({...selection[0],text:{...c.text,editable:true}})):[]
             : selection;
     }
     function tracked(control, requires = 'document') { controls.push({ control, requires }); return control; }
@@ -48,7 +52,7 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
         return control;
     }
     function palette(name, label, icon, callback, requires, value, allowNone = true) {
-        const control = tracked(new ColorMenu({ name, label, icon, allowNone,
+        const control = tracked(new ColorMenu({ name, label, icon, allowNone, columns: 10,
             noneLabel: name.endsWith('shape-outline') ? 'No outline' : 'No fill', enabled: false }), requires);
         const role = name.replace(/^home-/u, '');
         control.on(Message.VALUE_CHANGED, event => {
@@ -69,22 +73,25 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
         control.children.forEach(homeNames);
     }
     homeNames(homeGallery.control); tracked(homeGallery.control);
-    const bold = button('format-bold', 'Bold', 126, () => canvas.style({ bold: currentStyle.bold !== true }), 'text');
-    const italic = button('format-italic', 'Italic', 127, () => canvas.style({ italic: currentStyle.italic !== true }), 'text');
-    const underline = button('format-underline', 'Underline', 128, () => canvas.style({ underline: currentStyle.underline !== true }), 'text');
+    const bold = button('format-bold', 'Bold', 126, () => canvas.style({ bold: currentStyle.bold !== true },{toggle:'bold'}), 'text');
+    const italic = button('format-italic', 'Italic', 127, () => canvas.style({ italic: currentStyle.italic !== true },{toggle:'italic'}), 'text');
+    const underline = button('format-underline', 'Underline', 128, () => canvas.style({ underline: currentStyle.underline !== true },{toggle:'underline'}), 'text');
     const painter = button('format-painter', 'Format Painter — double-click to keep painting', 514, () => canvas.paintFormat(), 'paint-format');
-    const family = menu('font-family', 'Font', ['Arial', 'Liberation Sans', 'Manrope', 'Noto Sans Arabic', 'Noto Sans JP']
-        .map(fontFamily => [fontFamily, () => canvas.style({ fontFamily })]), 'text');
-    const size = menu('font-size', 'Size', [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72]
-        .map(points => [`${points} pt`, () => canvas.style({ fontSize: points * 96 / 72 })]), 'text');
-    // A native toolbar treats unaligned menus as icon-only commands. Font
-    // selectors display document values and therefore use textual dropdowns.
-    for (const [control, label] of [[family, 'Font family'], [size, 'Font size']]) {
-        control.setProperty('state', State.START_ALIGNED | State.TRAILING_ICON);
-        control.setProperty('icon', 74);
-        control.setProperty('tooltip', label);
-        control.setProperty('accessibleName', label);
-    }
+    const family = tracked(new ComboBox({ name: 'font-family', text: 'panel:flush:fixed:gap=0:width=160',
+        accessibleName: 'Font family', tooltip: 'Font family', enabled: false,
+        items: deckFontFamilies,
+        validate: value => new TextEncoder().encode(value).byteLength <= 128 ? null : 'Font family is too long',
+        onCommit: fontFamily => canvas.style({ fontFamily }) }), 'text');
+    const size = tracked(new ComboBox({ name: 'font-size', text: 'panel:flush:fixed:gap=0:width=96',
+        accessibleName: 'Font size in points', tooltip: 'Font size in points', enabled: false,
+        items: [10, 12, 14, 16, 18, 20, 24, 28, 32, 40, 48, 60, 72].map(String),
+        parse: value => {
+            if (!/^(?:\d+(?:\.\d*)?|\.\d+)(?:\s*pt)?$/iu.test(value)) throw TypeError('Enter a font size in points');
+            const points = Number(value.replace(/\s*pt$/iu, ''));
+            if (!Number.isFinite(points) || points < .75 || points > 384) throw RangeError('Font size must be between 0.75 and 384 points');
+            return String(points);
+        },
+        onCommit: points => canvas.style({ fontSize: Number(points) * 96 / 72 }) }), 'text');
     const changeFontSize = grow => {
         const points = currentStyle.fontSize * 72 / 96;
         const steps = [1, 8, 9, 10, 11, 12, 14, 16, 18, 20, 24, 28, 32, 36, 40, 44, 48, 54, 60, 66, 72, 80, 88, 96, 120, 144, 192, 288, 384];
@@ -142,6 +149,22 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
     for (const [name, label, degrees, relative] of [['right', 'Rotate right 90°', 90, true], ['left', 'Rotate left 90°', -90, true], ['reset', 'Reset rotation', 0, false]]) arrangeItem(homeRotate, `home-rotate-${name}`, label, 195, () => canvas.rotate(degrees, relative), 'rotate');
     arrangeItem(arrange, 'home-group', 'Group', 239, () => canvas.group(), 'group');
     arrangeItem(arrange, 'home-ungroup', 'Ungroup', 240, () => canvas.ungroup(), 'ungroup');
+    const tableArrange = tracked(new Menu({ name: 'table-arrange', text: 'Arrange', icon: 189, state: State.START_ALIGNED,
+        accessibleName: 'Arrange', tooltip: 'Arrange', enabled: false }), 'selection');
+    orderingItems(tableArrange, 'table');
+    arrangeItem(tableArrange, 'table-object-position', 'Position and size…', 189, dialogs.position, 'single-transform');
+    const tableAlign = new Menu({ name: 'table-align-objects-menu' });
+    tableArrange.append(tracked(new MenuItem({name:'table-align-objects',text:'Align',icon:190,enabled:false},[tableAlign]),'transform'));
+    for (const [label, direction, icon] of [['Left','left',230],['Center','center',231],['Right','right',232],['Top','top',233],['Middle','middle',234],['Bottom','bottom',235]])
+        arrangeItem(tableAlign, `table-object-align-${direction}`, `Align ${label.toLowerCase()}`, icon, () => canvas.align(direction, alignmentReference), 'transform');
+    for (const scope of ['slide','selection']) {
+        const item = new MenuItem({name:`table-align-to-${scope}`,text:scope==='slide'?'Align to slide':'Align selected objects'});
+        item.on(Message.ACTIVATE,()=>{if(item.enabled){alignmentReference=scope;update();}});
+        tableAlign.append(item); alignmentScopes.push(item);
+    }
+    for (const [name,label,degrees,relative] of [['right','Rotate right 90°',90,true],['left','Rotate left 90°',-90,true],['reset','Reset rotation',0,false]])
+        arrangeItem(tableArrange, `table-rotate-${name}`, label, 195, () => canvas.rotate(degrees, relative), 'rotate');
+    tableFormat.tabs.find(tab => tab.id === 'table-layout').groups.push({id:'table-arrange',title:'Arrange',controls:[tableArrange]});
     const clipboard = [['paste', 'Paste', 24], ['cut', 'Cut', 22], ['copy', 'Copy', 23]]
         .filter(([kind]) => typeof clipboardActions[kind] === 'function')
         .map(([kind, label, icon]) => button(`clipboard-${kind}`, label, icon, () => clipboardActions[kind](), `clipboard-${kind}`));
@@ -151,13 +174,13 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
         control.setProperty('state', State.DISPLAY); control.setProperty('tooltip', label); control.setProperty('accessibleName', label);
     });
     if (layoutControls[0]) layoutControls[0].text = 'New Slide';
-    const ribbon = new Ribbon({ name: 'authoring-ribbon', presentation: 'office', controlHeight: 32, activeTab: 'home', tabs: [
+    const ribbon = new Ribbon({ name: 'authoring-ribbon', presentation: 'office', density: 'compact', collapseOnActiveTab: true, controlHeight: 30, activeTab: 'home', tabs: [
         { id: 'home', title: 'Home', icon: 5, groups: [
             group('clipboard', 'Clipboard', [...clipboard, painter], clipboard[0]?.name === 'clipboard-paste' ? 1 : 0),
-            group('layouts', 'Slides', layoutControls, 0, Math.min(1, layoutControls.length)),
+            group('layouts', 'Slides', layoutControls, Math.min(1, layoutControls.length), Math.min(1, Math.max(0, layoutControls.length - 1))),
             group('font', 'Font', [family, size, growFont, shrinkFont, bold, italic, underline, color], 0, 2),
-            group('paragraph', 'Paragraph', [...[['left', 151], ['center', 152], ['right', 153]].map(([align, icon]) =>
-                button(`paragraph-${align}`, `Align text ${align}`, icon, () => canvas.style({ align }), 'text')), paragraphSpacing.control, ...textLayout.controls]),
+            group('paragraph', 'Paragraph', [...paragraphLists.controls,paragraphSpacing.control,...[['left', 151], ['center', 152], ['right', 153]].map(([align, icon]) =>
+                button(`paragraph-${align}`, `Align text ${align}`, icon, () => canvas.style({ align }), 'text')), ...textLayout.controls],0,5),
             group('drawing', 'Drawing', [homeGallery.control, arrange, homeFill, homeOutline,
                 ...(shadows[0] ? [shadows[0].control] : []),
                 button('delete-object', 'Delete selected objects', 25, () => canvas.remove(), 'delete')]),
@@ -173,16 +196,21 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
             ...(hyperlinkControls.length ? [group('links', 'Links', hyperlinkControls)] : []),
             group('text', 'Text', [button('insert-text', 'Draw text box', 194, () => canvas.insert('text'))]),
         ] },
-        { id: 'presentation', title: 'Presentation', icon: 104, groups: [
-            group('slides', 'Slides', slideActions),
-            group('page', 'Page', designControls),
-            ...(transitionControls.length ? [group('transitions', 'Transitions', transitionControls)] : []),
-            ...(animationControls.length ? [group('animations', 'Animations', animationControls)] : []),
-            ...(showControls.length ? [group('present', 'Present', showControls, 0, 1)] : []),
-        ] },
-        { id: 'format', title: 'Format', icon: 182, visible: false, groups: [
+        { id: 'draw', title: 'Draw', icon: 183, groups: [group('drawing-tools', 'Drawing tools', [
+            button('draw-line', 'Line', 183, () => canvas.insert('line')),
+            button('draw-freeform', 'Freeform', 518, () => canvas.insert('polygon')),
+            button('draw-polyline', 'Polyline', 519, () => canvas.insert('polyline')),
+        ])] },
+        { id: 'design', title: 'Design', icon: 104, groups: designGroups??[group('page', 'Page', designControls)] },
+        ...(transitionControls.length ? [{ id: 'transitions', title: 'Transitions', groups: [group('transitions', 'Transitions', transitionControls)] }] : []),
+        ...(animationControls.length ? [{ id: 'animations', title: 'Animations', groups: [group('animations', 'Animations', animationControls)] }] : []),
+        ...(showControls.length ? [{ id: 'show', title: 'Slide Show', groups: [group('present', 'Present', showControls, 0, 1)] }] : []),
+        ...(reviewControls.length ? [{ id: 'review', title: 'Review', groups: [group('review', 'Review', reviewControls)] }] : []),
+        ...(viewControls.length ? [{ id: 'view', title: 'View', groups: [group('views', 'Presentation views', viewControls)] }] : []),
+        { id: 'format', title: 'Shape Format', icon: 182, visible: false, groups: [
             group('appearance', 'Shape style', [fill, outline, width, ...(shadows[1] ? [shadows[1].control] : [])]),
             group('arrange', 'Arrange', [
+                button('show-format-pane', 'Format Pane', 182, openInspector, 'selection'),
                 formatArrange, align,
                 button('distribute-horizontal', 'Distribute horizontally', 191, () => canvas.align('distribute-horizontal', alignmentReference), 'distribute'),
                 button('distribute-vertical', 'Distribute vertically', 192, () => canvas.align('distribute-vertical', alignmentReference), 'distribute'),
@@ -192,7 +220,7 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
                 button('ungroup-object', 'Ungroup', 240, () => canvas.ungroup(), 'ungroup'),
             ]),
         ] },
-        { id: 'picture', title: 'Picture', icon: 71, visible: false, groups: [
+        { id: 'picture', title: 'Picture Format', icon: 71, visible: false, groups: [
             group('picture', 'Picture', [
                 button('insert-placeholder-picture', 'Insert picture into placeholder', 71, () => picture?.(), 'picture-placeholder'),
                 button('replace-picture', 'Replace picture', 71, () => picture?.(selection[0].id), 'replace-picture'),
@@ -208,15 +236,18 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
         const style = selection.length > 0 && selection.every(object => object.edit?.canStyle);
         const usable = active && !locked && !canvas.busy;
         const textTargets = textSelection();
+        const paragraphRange=paragraphSelection(),paragraphTargets=selection.length===1&&selection[0].table&&canvas.selectedTableCell?(canvas.selectedTableCell.cells||[canvas.selectedTableCell.cell]).map(c=>({text:c.text})):selection;
+        paragraphLists.setState({enabled:Boolean(usable&&(paragraphRange?paragraphRange.enabled:paragraphTargets.length&&paragraphTargets.every(o=>o.text?.paragraphFormatEditable))),selectionKey:JSON.stringify([selectionScope,selection.map(o=>o.id),canvas.selectedTableCell?.cell?.row,canvas.selectedTableCell?.cell?.column,paragraphRange?.target,paragraphRange?.range]),paragraphs:paragraphRange?.paragraphs??paragraphTargets.flatMap(o=>o.text?.paragraphs||[]).map(p=>p.paragraphFormat).filter(Boolean)});
         currentStyle = selectedTextStyle(textTargets);
         tables.setEnabled(usable && typeof canvas.insertTable === 'function');
-        const tableContext = tableFormat.setState({ selected: selection, usable });
+        const tableContext = tableFormat.setState({ selected: selection, usable,theme:tableTheme });
         // Keep context stable while a document operation temporarily clears selection.
         if (!locked && !canvas.busy) {
-            const pictureContext = selection.length > 0 && selection.every(object => object.image != null || object.kind === 'image' || object.placeholder?.role === 'picture');
-            ribbon.setTabState('table', { visible: tableContext || ribbon.activeTab === 'table' });
-            ribbon.setTabState('picture', { visible: !tableContext && pictureContext || ribbon.activeTab === 'picture' });
-            ribbon.setTabState('format', { visible: !tableContext && !pictureContext && selection.length > 0 || ribbon.activeTab === 'format' });
+            const pictureContext = selection.some(object => object.image != null || object.kind === 'image' || object.placeholder?.role === 'picture');
+            const shapeContext = selection.some(object => !object.table && !object.image && object.kind !== 'image' && object.placeholder?.role !== 'picture');
+            for (const id of ['table-design', 'table-layout']) ribbon.setTabState(id, { visible: tableContext || selection.some(object => object.table != null) });
+            ribbon.setTabState('picture', { visible: pictureContext });
+            ribbon.setTabState('format', { visible: shapeContext });
         }
         textLayout.setState({ selected: selection, usable });
         paragraphSpacing.setState({ selected: selection, usable });
@@ -255,25 +286,39 @@ export function createAuthoringTools({ root, canvas, notice, picture, shadowsSup
         painter.setProperty('checked', Boolean(canvas.formatPainter?.active));
         painter.setProperty('tooltip', canvas.formatPainter?.persistent ? 'Format Painter: multiple targets. Escape cancels.' : 'Format Painter — double-click to keep painting');
         bold.setProperty('checked', currentStyle.bold === true); italic.setProperty('checked', currentStyle.italic === true); underline.setProperty('checked', currentStyle.underline === true);
-        family.text = currentStyle.mixed.includes('fontFamily') ? 'Mixed fonts' : currentStyle.fontFamily || 'Font';
-        size.text = currentStyle.mixed.includes('fontSize') ? 'Mixed sizes' : currentStyle.fontSize ? `${Math.round(currentStyle.fontSize * 72 / 96)} pt` : 'Size';
-        for (const { control, value, role: name } of palettes) {
-            const key = name === 'shape-fill' ? 'fill' : 'stroke';
-            const mixed = name === 'font-color' ? currentStyle.mixed.includes('color') || currentStyle.color === null
-                : selection.some(object => (object[key]?.color ?? null) !== (selection[0]?.[key]?.color ?? null));
-            control.setValue(value(), { mixed, selected: selection.length > 0 });
+        if (!locked && !canvas.busy || textTargets.length) {
+            const cell = canvas.selectedTableCell;
+            const key = JSON.stringify([selectionScope, textTargets.map(object => object.id).sort(), cell ? [cell.row, cell.column] : null]);
+            const preserveDraft = fontSelection === key;
+            family.setValue(currentStyle.mixed.includes('fontFamily') ? '' : currentStyle.fontFamily || '', { preserveDraft });
+            size.setValue(currentStyle.mixed.includes('fontSize') || !currentStyle.fontSize ? '' : String(Number((currentStyle.fontSize * 72 / 96).toFixed(6))), { preserveDraft });
+            fontSelection = key;
+        }
+        if (!locked && !canvas.busy || selection.length) {
+            const cell = canvas.selectedTableCell;
+            const target = JSON.stringify([selectionScope, selection.map(object => object.id).sort(), cell ? [cell.row, cell.column] : null]);
+            const preserveDraft = target === paintSelection;
+            for (const { control, value, role: name } of palettes) {
+                const key = name === 'shape-fill' ? 'fill' : 'stroke';
+                const mixed = name === 'font-color' ? currentStyle.mixed.includes('color') || currentStyle.color === null
+                    : selection.some(object => (object[key]?.color ?? null) !== (selection[0]?.[key]?.color ?? null));
+                if (!preserveDraft) control.palette.closeEditor();
+                control.setValue(value(), { mixed, selected: selection.length > 0, preserveDraft });
+            }
+            paintSelection = target;
         }
         gallery.refresh?.(); homeGallery.refresh?.(); homeNames(homeGallery.control);
     }
     return Object.freeze({ control: ribbon, rotationProperties: rotation.properties,
         position: dialogs.position, crop: dialogs.crop, insertPicture: () => picture?.(),
-        selectTab: tab => ribbon.selectTab(({ slides: 'presentation', design: 'presentation', show: 'presentation', 'table-design': 'table', 'table-layout': 'table' })[tab] || tab),
+        openParagraphFormat: kind => paragraphLists.openDialog(kind),
+        selectTab: tab => ribbon.selectTab(({ slides: 'design', presentation: 'design', table: 'table-design' })[tab] || tab),
         toggleTextStyle(property) {
             if (active && !locked && !canvas.busy && ['bold', 'italic', 'underline'].includes(property) && textSelection().some(object => object.text != null)) {
-                return canvas.style({ [property]: currentStyle[property] !== true });
+                return canvas.style({ [property]: currentStyle[property] !== true },{toggle:property});
             }
         },
-        setState({ ready = active, busy = locked, selected = selection, clipboardReady } = {}) {
-            active = ready; locked = busy; selection = selected; clipboardReadyOverride = clipboardReady; update();
+        setState({ ready = active, busy = locked, selected = selection, clipboardReady, scope = selectionScope,theme=tableTheme } = {}) {
+            active = ready; locked = busy; selection = selected; selectionScope = scope;tableTheme=theme; clipboardReadyOverride = clipboardReady; dialogs.update(); update();
         } });
 }

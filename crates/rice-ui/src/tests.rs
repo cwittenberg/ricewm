@@ -1,5 +1,17 @@
 use super::*;
 
+#[test]
+fn mounted_directory_contents_keep_ordinary_folder_icons() {
+    for path in ["/mnt/local", "/run/ricewm/mounts", "/run/ricewm/mounts/smb-test/"] {
+        assert_eq!(folder_icon(path), IconId::NetworkMounts, "{path}");
+    }
+    for path in ["/mnt/local/Archive", "/run/ricewm/mounts/smb-test/nas", "/run/ricewm/mounts/nfs-test/export/Archive"] {
+        assert_eq!(folder_icon(path), IconId::Folder, "{path}");
+    }
+    assert_eq!(folder_icon("/run/ricewm/mounts/smb-test/nas/Documents"), IconId::Documents);
+    assert_eq!(folder_icon("/mnt/local/Pictures"), IconId::Pictures);
+}
+
 fn id(value: u64) -> WidgetId {
     WidgetId::new(value).expect("test ID must be nonzero")
 }
@@ -292,11 +304,11 @@ fn special_folder_icons_follow_the_folder_identity() {
     assert_eq!(folder_icon("/mnt/local"), IconId::NetworkMounts);
     assert_eq!(
         folder_icon("/mnt/local/Work/Projects"),
-        IconId::NetworkMounts
+        IconId::Folder
     );
     assert_eq!(
         folder_icon("/run/ricewm/mounts/team/Documents"),
-        IconId::NetworkMounts
+        IconId::Documents
     );
     assert_eq!(folder_icon("/root"), IconId::Home);
     assert_eq!(folder_icon("/root/Projects"), IconId::Folder);

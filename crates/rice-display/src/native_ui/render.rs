@@ -7,8 +7,10 @@ use rice_ui::{
 };
 
 use super::{DrawCommand, HitTarget, NativeUiError, TextAlign, TextEditState, TextRole};
+use super::layout_overlay::{is_dialog, is_notification, is_tooltip};
 
 mod choice;
+mod control_parts;
 pub(super) mod color_control;
 mod helpers;
 mod grid;
@@ -48,16 +50,14 @@ fn forced_dark_editor(widget: &Widget) -> bool {
             .is_some_and(|presentation| presentation.force_dark_mode)
 }
 
-fn dotted_tree_segment(commands: &mut Vec<DrawCommand>, rect: Rect) -> Result<(), NativeUiError> {
+fn dotted_tree_segment(commands: &mut Vec<DrawCommand>, rect: Rect, theme: &Theme) -> Result<(), NativeUiError> {
     if rect.size.width == 0 || rect.size.height == 0 {
         return Ok(());
     }
     push_command(
         commands,
-        DrawCommand::DottedLine {
-            rect,
-            color: rice_ui::Color::opaque(128, 128, 128),
-        },
+        if theme.tree_lines()==3 { DrawCommand::Fill {rect,color:theme.tree_view.line_color,radius:0} }
+        else { DrawCommand::DottedLine {rect,color:theme.tree_view.line_color} },
     )
 }
 
@@ -118,199 +118,42 @@ fn push_dotted_focus_rect(
     Ok(())
 }
 
-fn render_redmond_tree_connectors(
-    tree: &RetainedTree,
-    widget: &Widget,
-    rect: Rect,
-    geometry: &BTreeMap<WidgetId, Rect>,
-    theme: &Theme,
-    commands: &mut Vec<DrawCommand>,
+fn render_tree_connectors(
+    tree: &RetainedTree, widget: &Widget, rect: Rect,
+    geometry: &BTreeMap<WidgetId, Rect>, theme: &Theme, commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
-    if theme.chrome_profile != ChromeProfile::Redmond98 || widget.kind != WidgetKind::TreeItem {
-        return Ok(());
+    if theme.tree_lines()==1 || widget.kind!=WidgetKind::TreeItem {return Ok(());}
+    let Some(parent)=widget.parent.and_then(|id|tree.get(id)) else {return Ok(());};
+    let later_sibling=|item:&Widget| item.parent.and_then(|id|tree.get(id)).is_some_and(|p| {
+        let mut found=false;
+        p.children().iter().any(|id| {if *id==item.id {found=true;false} else {found&&tree.get(*id).is_some_and(|v|v.kind==WidgetKind::TreeItem)}})
+    });
+    let offset=u32::from(theme.spacing.control_x)+u32::from(theme.tree_view.expander_size)/2;
+    let axis=rect.origin.x.saturating_add_unsigned(offset);
+    let center=rect.origin.y.saturating_add_unsigned(rect.size.height/2);
+    let bottom=rect.origin.y.saturating_add_unsigned(rect.size.height);
+    let mut segment=|x:i32,y:i32,width:u32,height:u32| dotted_tree_segment(commands,Rect {origin:Point{x,y},size:Size{width,height}},theme);
+    let root=parent.kind==WidgetKind::Tree;
+    if !root || theme.tree_view.root_lines {
+        let preceding=parent.children().iter().take_while(|id|**id!=widget.id).any(|id|tree.get(*id).is_some_and(|v|v.kind==WidgetKind::TreeItem));
+        if !root || preceding {segment(axis,rect.origin.y,1,rect.size.height/2+1)?;}
+        if later_sibling(widget) {segment(axis,center,1,bottom.saturating_sub(center).cast_unsigned())?;}
+        let icon=rect.origin.x.saturating_add_unsigned(u32::from(theme.spacing.control_x)+theme.tree_disclosure_width());
+        segment(axis,center,icon.saturating_sub(axis).max(0).cast_unsigned(),1)?;
     }
-    let Some(parent_id) = widget.parent else {
-        return Ok(());
-    };
-    let Some(parent) = tree.get(parent_id) else {
-        return Ok(());
-    };
-    let row_center = rect.origin.y.saturating_add_unsigned(rect.size.height / 2);
-    let node_offset = u32::from(theme.spacing.control_x).saturating_add(4);
-    let indent = u32::from(theme.metrics.icon_small);
-    let own_axis = rect.origin.x.saturating_add_unsigned(node_offset);
-    let icon_x = rect
-        .origin
-        .x
-        .saturating_add_unsigned(u32::from(theme.spacing.control_x))
-        .saturating_add_unsigned(indent);
-    let siblings = parent
-        .children()
-        .iter()
-        .filter_map(|id| {
-            tree.get(*id)
-                .is_some_and(|candidate| candidate.kind == WidgetKind::TreeItem)
-                .then_some(*id)
-        })
-        .collect::<Vec<_>>();
-    let position = siblings.iter().position(|id| *id == widget.id);
-
-    if parent.kind == WidgetKind::Tree {
-        if position.is_some_and(|position| position > 0) {
-            dotted_tree_segment(
-                commands,
-                Rect {
-                    origin: Point {
-                        x: own_axis,
-                        y: rect.origin.y,
-                    },
-                    size: Size {
-                        width: 1,
-                        height: rect.size.height / 2 + 1,
-                    },
-                },
-            )?;
-        }
-        if position.is_some_and(|position| position + 1 < siblings.len()) {
-            dotted_tree_segment(
-                commands,
-                Rect {
-                    origin: Point {
-                        x: own_axis,
-                        y: row_center,
-                    },
-                    size: Size {
-                        width: 1,
-                        height: rect.size.height.saturating_sub(rect.size.height / 2),
-                    },
-                },
-            )?;
-        }
-        dotted_tree_segment(
-            commands,
-            Rect {
-                origin: Point {
-                    x: own_axis,
-                    y: row_center,
-                },
-                size: Size {
-                    width: icon_x.saturating_sub(own_axis).max(0).cast_unsigned(),
-                    height: 1,
-                },
-            },
-        )?;
-    } else if parent.kind == WidgetKind::TreeItem {
-        let parent_axis = geometry
-            .get(&parent_id)
-            .map_or(own_axis.saturating_sub_unsigned(indent), |parent_rect| {
-                parent_rect.origin.x.saturating_add_unsigned(node_offset)
-            });
-        dotted_tree_segment(
-            commands,
-            Rect {
-                origin: Point {
-                    x: parent_axis,
-                    y: rect.origin.y,
-                },
-                size: Size {
-                    width: 1,
-                    height: rect.size.height / 2 + 1,
-                },
-            },
-        )?;
-        if position.is_some_and(|position| position + 1 < siblings.len()) {
-            dotted_tree_segment(
-                commands,
-                Rect {
-                    origin: Point {
-                        x: parent_axis,
-                        y: row_center,
-                    },
-                    size: Size {
-                        width: 1,
-                        height: rect.size.height.saturating_sub(rect.size.height / 2),
-                    },
-                },
-            )?;
-        }
-        dotted_tree_segment(
-            commands,
-            Rect {
-                origin: Point {
-                    x: parent_axis,
-                    y: row_center,
-                },
-                size: Size {
-                    width: icon_x.saturating_sub(parent_axis).max(0).cast_unsigned(),
-                    height: 1,
-                },
-            },
-        )?;
-
-        let mut descendant = parent_id;
-        let mut ancestor_id = parent.parent;
-        while let Some(current_ancestor_id) = ancestor_id {
-            let Some(ancestor) = tree.get(current_ancestor_id) else {
-                break;
-            };
-            if ancestor.kind != WidgetKind::TreeItem {
-                break;
-            }
-            let branch_has_later_sibling = ancestor.children().iter().any(|candidate| {
-                *candidate != descendant
-                    && tree
-                        .get(*candidate)
-                        .is_some_and(|candidate| candidate.kind == WidgetKind::TreeItem)
-                    && ancestor
-                        .children()
-                        .iter()
-                        .position(|candidate| *candidate == descendant)
-                        < ancestor
-                            .children()
-                            .iter()
-                            .position(|item| item == candidate)
-            });
-            if branch_has_later_sibling
-                && let Some(ancestor_rect) = geometry.get(&current_ancestor_id)
-            {
-                dotted_tree_segment(
-                    commands,
-                    Rect {
-                        origin: Point {
-                            x: ancestor_rect.origin.x.saturating_add_unsigned(node_offset),
-                            y: rect.origin.y,
-                        },
-                        size: Size {
-                            width: 1,
-                            height: rect.size.height,
-                        },
-                    },
-                )?;
-            }
-            descendant = current_ancestor_id;
-            ancestor_id = ancestor.parent;
-        }
+    // An expanded parent connects down at the children's axis. Following
+    // siblings continue through all visible descendants, ending at the last.
+    if widget.state.contains(WidgetState::CHECKED) && widget.children().iter().any(|id|tree.get(*id).is_some_and(|v|v.kind==WidgetKind::TreeItem)) {
+        segment(axis.saturating_add_unsigned(theme.tree_indent()),center,1,bottom.saturating_sub(center).cast_unsigned())?;
     }
-
-    let has_visible_children = widget.state.contains(WidgetState::CHECKED)
-        && widget.children().iter().any(|child| {
-            tree.get(*child)
-                .is_some_and(|child| child.kind == WidgetKind::TreeItem)
-        });
-    if has_visible_children {
-        dotted_tree_segment(
-            commands,
-            Rect {
-                origin: Point {
-                    x: own_axis,
-                    y: row_center,
-                },
-                size: Size {
-                    width: 1,
-                    height: rect.size.height.saturating_sub(rect.size.height / 2),
-                },
-            },
-        )?;
+    let mut ancestor=Some(parent);
+    while let Some(item)=ancestor {
+        if item.kind!=WidgetKind::TreeItem {break;}
+        let root_item=item.parent.and_then(|id|tree.get(id)).is_some_and(|v|v.kind==WidgetKind::Tree);
+        if (!root_item||theme.tree_view.root_lines)&&later_sibling(item) {
+            if let Some(r)=geometry.get(&item.id) {segment(r.origin.x.saturating_add_unsigned(offset),rect.origin.y,1,rect.size.height)?;}
+        }
+        ancestor=item.parent.and_then(|id|tree.get(id));
     }
     Ok(())
 }
@@ -439,6 +282,7 @@ pub(super) fn render_widget(
     theme: &Theme,
     focused: Option<WidgetId>,
     hovered: Option<WidgetId>,
+    hover_point: Option<Point>,
     pressed: Option<WidgetId>,
     opened_menu: Option<WidgetId>,
     text_selection_all: Option<WidgetId>,
@@ -461,6 +305,22 @@ pub(super) fn render_widget(
         widget.parent.and_then(|id| geometry.get(&id)).map(|parent| clipped_rect(*parent, clip)).or(clip)
     } else { clip };
     let enabled = widget.state.contains(WidgetState::ENABLED);
+    if matches!(widget.kind, WidgetKind::Button | WidgetKind::Label)
+        && let Some(chip) = super::visual_control::chip(widget.text.as_deref())
+    {
+        let selected=widget.state.contains(WidgetState::SELECTED);
+        let active=pressed==Some(id) || hovered==Some(id);
+        let radius=bounded_radius(rect,chip.radius.min(32));
+        let fill=chip.fill.unwrap_or(if selected {theme.palette.selection} else {theme.palette.surface_raised});
+        let foreground=chip.foreground.unwrap_or(if chip.fill.is_some(){super::visual_control::contrast_ink(fill)}else if selected {theme.palette.selection_text} else {theme.palette.text});
+        push_command(commands,DrawCommand::Fill{rect:clipped_rect(rect,clip),color:if enabled {fill} else {fill.with_alpha(110)},radius})?;
+        push_command(commands,DrawCommand::Border{rect:clipped_rect(rect,clip),color:if focused==Some(id)||selected {theme.palette.focus} else if active {theme.palette.accent} else {theme.palette.border},width:if selected {2}else{1},radius})?;
+        let mut text_rect=rect.inset(Insets{left:10,right:10,top:2,bottom:2});
+        if let Some(icon)=widget.icon {let edge=text_rect.size.height.min(20);push_command(commands,DrawCommand::Icon{rect:Rect{origin:text_rect.origin,size:Size{width:edge,height:edge}},icon,color:foreground,hovered:active,animated:false,shortcut:false})?;text_rect.origin.x=text_rect.origin.x.saturating_add_unsigned(edge+4);text_rect.size.width=text_rect.size.width.saturating_sub(edge+4);}
+        push_command(commands,DrawCommand::Text{rect:clipped_rect(text_rect,clip),text:chip.label.to_owned(),color:if enabled {foreground}else{theme.palette.text_muted},size_px:theme.typography.body_px,align:TextAlign::Center,role:TextRole::Label,caret:false,caret_offset:None,brand:false,gradient:false})?;
+        if enabled && widget.kind==WidgetKind::Button {push_target(targets,HitTarget{widget:id,rect:clipped_rect(rect,clip),focusable:true,activatable:true})?;}
+        return Ok(());
+    }
     let parent = widget.parent.and_then(|parent| tree.get(parent));
     let parent_kind = parent.map(|parent| parent.kind);
     let menu_has_leading_column = parent
@@ -578,15 +438,51 @@ pub(super) fn render_widget(
     } else {
         0
     };
-    let row_separator = widget.kind == WidgetKind::Row
+    let form_field = super::layout_tokens::has_token(widget.text.as_deref(), "form-field");
+    let following_content = parent.filter(|parent| form_field && widget.kind == WidgetKind::Row
+        && matches!(parent.kind, WidgetKind::Container | WidgetKind::Table)).and_then(|parent| {
+        let index = parent.children().iter().position(|child| *child == widget.id)?;
+        parent.children()[index + 1..].iter().find_map(|child| {
+            if is_dialog(tree, *child) || is_tooltip(tree, *child) || is_notification(tree, *child) {
+                return None;
+            }
+            let candidate = tree.get(*child)?;
+            if candidate.kind == WidgetKind::Label && candidate.icon.is_none()
+                && candidate.text.as_deref().is_none_or(|text| text.trim().is_empty() || text.starts_with("panel:"))
+            {
+                return None;
+            }
+            geometry.get(child).copied().filter(|rect| rect.size.width > 0 && rect.size.height > 0)
+        })
+    });
+    let row_separator = (widget.kind == WidgetKind::Row
         && !super::layout_tokens::has_spaced_separator(widget.text.as_deref())
         && !matches!(
             widget.text.as_deref(),
             Some("panel:brand-row" | "panel:welcome-features")
         )
         && matches!(parent_kind, Some(WidgetKind::Container | WidgetKind::Table))
-        && parent.is_some_and(|parent| parent.children().last() != Some(&widget.id))
-        || widget.kind == WidgetKind::Row && widget.text.as_deref() == Some("panel:separator");
+        && if form_field { following_content.is_some() }
+            else { parent.is_some_and(|parent| parent.children().last() != Some(&widget.id)) }
+        || widget.kind == WidgetKind::Row && widget.text.as_deref() == Some("panel:separator"))
+        .then(|| {
+            if form_field {
+                // Follow the row's content inset, rather than adding the
+                // unrelated control-text inset. Share the gap between rows.
+                let inset = super::layout_tokens::padding(widget.text.as_deref()).unwrap_or_else(|| {
+                    if super::layout_tokens::has_token(widget.text.as_deref(), "flush") { 0 }
+                    else { u32::from(theme.spacing.control_y) }
+                });
+                let bottom = rect.origin.y.saturating_add_unsigned(rect.size.height);
+                let gap = following_content.map_or(0, |next| next.origin.y.saturating_sub(bottom).max(0) as u32);
+                Rect {
+                    origin: Point { x: rect.origin.x.saturating_add_unsigned(inset), y: bottom.saturating_add_unsigned(gap.saturating_sub(1) / 2) },
+                    size: Size { width: rect.size.width.saturating_sub(inset.saturating_mul(2)), height: 1 },
+                }
+            } else {
+                row_separator_rect(rect, theme)
+            }
+        });
     let has_submenu = widget.kind == WidgetKind::MenuItem && widget.children().iter().any(|child| {
         tree.get(*child).is_some_and(|child| child.kind == WidgetKind::Menu)
     });
@@ -639,6 +535,7 @@ pub(super) fn render_widget(
         && let Some(control) =
             super::layout_tokens::control_for(widget.text.as_deref()).and_then(WidgetId::new)
         && let Some(control_widget) = tree.get(control)
+        && control_widget.kind != WidgetKind::Slider
         && has_ancestor_id(tree, control_widget, widget.id, 4)
         && control_widget.state.contains(WidgetState::ENABLED)
     {
@@ -743,6 +640,7 @@ pub(super) fn render_widget(
             // Composite tabs paint one continuous surface around their icon,
             // label, and close control. Hovering any descendant therefore
             // highlights the tab rather than only that descendant's box.
+            hover_point,
             host_hovered: hovered == Some(id)
                 || (super::layout_tokens::is_tab_composite(widget.text.as_deref())
                     && hovered
@@ -764,7 +662,7 @@ pub(super) fn render_widget(
                 || (theme.chrome_profile == ChromeProfile::Redmond98
                     && (desktop_item || file_grid_item || widget.kind == WidgetKind::TreeItem)),
             bookmark_primary_control,
-            tab_label: tab_owner.is_some() && widget.text.as_deref() != Some("panel:tab-close"),
+            tab_label: tab_owner.is_some(),
             text_edit: text_edit.filter(|edit| edit.widget == id),
             desktop_item,
             split_panel,
@@ -814,17 +712,59 @@ pub(super) fn render_widget(
         },
         commands,
     )?;
-    let skin_role = if row_separator {Some(6)} else if super::layout_tokens::is_tab_composite(widget.text.as_deref()){Some(1)} else {match widget.kind {
-        WidgetKind::Button if tab_owner.is_some() || super::layout_tokens::is_tab_composite(widget.text.as_deref()) => Some(1),
-        WidgetKind::Button => Some(0), WidgetKind::Tabs => Some(1), WidgetKind::MenuItem => Some(3),
+    // Implementation buttons in collections are selection targets, not push
+    // buttons. Keep their skins independent, including for older themes that
+    // only define the command-button role. Composite rows own their cells.
+    let menu_separator = widget.kind == WidgetKind::MenuItem
+        && widget.text.as_deref().is_some_and(|text| rice_ui::MenuText::parse(text).separator);
+    // Color swatches paint their own semantic fill and selection border. A
+    // command-button skin drawn afterward would hide the actual color.
+    let skin_role = if widget.text.as_deref().and_then(parse_color_swatch).is_some() {None}
+    else if menu_separator {Some(6)}
+    else if parent_kind == Some(WidgetKind::Menu)
+        && matches!(widget.kind, WidgetKind::MenuItem | WidgetKind::Menu | WidgetKind::Button
+            | WidgetKind::Label | WidgetKind::CheckBox | WidgetKind::RadioButton) {None}
+    else if widget.text.as_deref()==Some("panel:tab-close") {Some(34)}
+    else if super::layout_tokens::is_file_detail_row(widget.text.as_deref()) {Some(14)}
+    else if row_separator.is_some() {Some(6)} else if super::layout_tokens::is_tab_composite(widget.text.as_deref()){Some(1)} else {match widget.kind {
+        WidgetKind::Button if tab_owner.is_some() => None,
+        WidgetKind::Button if parent_kind==Some(WidgetKind::Tabs) || super::layout_tokens::is_tab_composite(widget.text.as_deref()) => Some(1),
+        WidgetKind::Button if file_detail_row_content => None,
+        WidgetKind::Button if file_detail_header_item => Some(20),
+        WidgetKind::Button if desktop_item || file_grid_item || parent_kind==Some(WidgetKind::IconGrid) => Some(15),
+        WidgetKind::Button if belongs_to_sidebar_panel(tree,widget) => Some(16),
+        WidgetKind::Button if flat_table_item || parent_kind==Some(WidgetKind::List) => Some(14),
+        WidgetKind::Button if parent_kind==Some(WidgetKind::ToolBar) => Some(18),
+        WidgetKind::Button | WidgetKind::Menu if parent_kind==Some(WidgetKind::MenuBar) => Some(3),
+        WidgetKind::Button if semantic::has_flat_chrome(widget) => Some(19),
+        WidgetKind::TreeItem => None,
+        WidgetKind::Menu if parent_kind == Some(WidgetKind::Row) => Some(0),
+        WidgetKind::Button => Some(0), WidgetKind::Tabs => Some(35), WidgetKind::MenuItem => Some(3),
         WidgetKind::Notification => Some(5), WidgetKind::TextField | WidgetKind::PasswordField | WidgetKind::TextEditor => Some(8),
-        WidgetKind::CheckBox => Some(9), WidgetKind::Toggle => Some(10), WidgetKind::Slider => Some(11),
+        WidgetKind::RadioButton => Some(43), WidgetKind::CheckBox => Some(9), WidgetKind::Toggle => Some(10), WidgetKind::Slider => Some(11),
         WidgetKind::ScrollBar => Some(12), _ => None,
     }};
     if let Some(role) = skin_role {
-        let state = if !enabled {4} else if pressed == Some(id)||widget.state.contains(WidgetState::PRESSED) {2} else if hovered == Some(id)||widget.state.contains(WidgetState::HOVERED) {1} else if widget.state.contains(WidgetState::SELECTED)||matches!(widget.kind,WidgetKind::CheckBox|WidgetKind::Toggle|WidgetKind::RadioButton)&&widget.state.contains(WidgetState::CHECKED) {5} else if focused == Some(id)||widget.state.contains(WidgetState::FOCUSED) {3} else {0};
-        let insertion = commands[surface_command_start..].iter().position(|c| matches!(c,DrawCommand::Text {..}|DrawCommand::Icon {..})).map_or(commands.len(),|i|surface_command_start+i);
-        push_command(commands,DrawCommand::ThemeSurface {rect:clipped_rect(rect,clip),role,state})?;
+        let state = if matches!(widget.kind,WidgetKind::CheckBox|WidgetKind::RadioButton|WidgetKind::Toggle) {choice::theme_state(widget,hovered==Some(id),pressed==Some(id),focused==Some(id))} else if !enabled {4} else if pressed == Some(id)||widget.state.contains(WidgetState::PRESSED) {2} else if matches!(role,1|14|15|16) && (widget.state.contains(WidgetState::SELECTED)||role==1&&widget.state.contains(WidgetState::CHECKED)) {5} else if hovered == Some(id)||widget.state.contains(WidgetState::HOVERED) {1} else if widget.state.contains(WidgetState::SELECTED)||role==1&&widget.state.contains(WidgetState::CHECKED)||matches!(widget.kind,WidgetKind::CheckBox|WidgetKind::Toggle|WidgetKind::RadioButton)&&widget.state.contains(WidgetState::CHECKED) {5} else if focused == Some(id)||widget.state.contains(WidgetState::FOCUSED) {3} else {0};
+        let insertion = if menu_separator || matches!(widget.kind,WidgetKind::Slider|WidgetKind::ScrollBar|WidgetKind::Toggle) {surface_command_start} else {commands[surface_command_start..].iter().position(|c| matches!(c,DrawCommand::Text {..}|DrawCommand::Icon {..})).map_or(commands.len(),|i|surface_command_start+i)};
+        let surface_rect = if menu_separator {
+            let padding = if theme.chrome_profile == ChromeProfile::Redmond98 {4} else {12};
+            Rect {
+                origin: Point {x:rect.origin.x.saturating_add_unsigned(padding),y:rect.origin.y.saturating_add_unsigned(rect.size.height/2)},
+                size: Size {width:rect.size.width.saturating_sub(padding*2),height:2.min(rect.size.height)},
+            }
+        } else if form_field && row_separator.is_some() {
+            row_separator.expect("form divider geometry")
+        } else if widget.kind==WidgetKind::TreeItem {
+            Rect {size:Size {height:u32::from(theme.metrics.control_height).min(rect.size.height),..rect.size},..rect}
+        } else if role==1 && (super::layout_tokens::is_tab_composite(widget.text.as_deref()) || tabs::is_plain_tab(widget,parent_kind)) && !widget.state.contains(WidgetState::SELECTED) && theme.control_chrome.metrics_mask & (1<<12)!=0 {
+            let recess=theme.control_chrome.metric(12,4);
+            if super::layout_tokens::is_vertical_tabs(widget.text.as_deref()) {
+                let right=super::layout_tokens::vertical_tabs_on_right(widget.text.as_deref());
+                rect.inset(Insets{top:0,bottom:0,left:if right {0}else{recess},right:if right {recess}else{0}})
+            } else {rect.inset(Insets{top:recess,bottom:0,left:0,right:0})}
+        } else {rect};
+        push_command(commands,DrawCommand::ThemeSurface {rect:clipped_rect(surface_rect,clip),role,state})?;
         commands[insertion..].rotate_right(1);
     }
     if let Some(selector)=tree.icon_selector(id) {
@@ -852,7 +792,16 @@ pub(super) fn render_widget(
             }
         }
     }
-    render_redmond_tree_connectors(tree, widget, rect, geometry, theme, commands)?;
+    let connector_start=commands.len();
+    render_tree_connectors(tree, widget, rect, geometry, theme, commands)?;
+    if widget.kind==WidgetKind::TreeItem && commands.len()>connector_start {
+        // Branch strokes belong above the row skin but below its glyphs.
+        // Drawing them last would overwrite the center of the plus/minus.
+        if let Some(index)=commands[surface_command_start..connector_start].iter().position(|c|matches!(c,DrawCommand::ThemeSurface{role:17,..})) {
+            let count=commands.len()-connector_start;
+            commands[surface_command_start+index+1..].rotate_right(count);
+        }
+    }
     if glass_sidebar_content {
         let foreground = if widget.state.contains(WidgetState::SELECTED) {
             // `selection_text` is only a theme hint. Glass themes frequently
@@ -960,6 +909,7 @@ pub(super) fn render_widget(
                 theme,
                 focused,
                 hovered,
+                hover_point,
                 pressed,
                 opened_menu,
                 text_selection_all,
@@ -1454,6 +1404,7 @@ struct SurfaceContext<'a> {
     status_bar: bool,
     host_focused: bool,
     host_hovered: bool,
+    hover_point: Option<Point>,
     host_selected: bool,
     host_pressed: bool,
     suppress_focus_ring: bool,
@@ -1464,7 +1415,7 @@ struct SurfaceContext<'a> {
     split_panel: Option<usize>,
     flat_table_item: bool,
     seamless_calendar_block: bool,
-    row_separator: bool,
+    row_separator: Option<Rect>,
     file_grid_item: bool,
     inherited_content_background: Option<rice_ui::Color>,
     detail_tree_depth: usize,
@@ -1518,6 +1469,11 @@ fn render_surface(
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
     let theme = context.theme;
+    if matches!(widget.kind, WidgetKind::Stack | WidgetKind::Container)
+        && super::layout_tokens::has_token(widget.text.as_deref(), "video-stage") {
+        return push_command(commands, DrawCommand::Fill { rect,
+            color: rice_ui::Color::opaque(0, 0, 0), radius: 0 });
+    }
     if widget.kind == WidgetKind::Button && widget.state.contains(WidgetState::FLAT) {
         if let Some(paint) = context.document_paint {
             if context.host_selected || widget.state.contains(WidgetState::SELECTED) || context.host_hovered || context.host_pressed {
@@ -1756,6 +1712,8 @@ fn render_surface(
             context.file_grid_item,
             context.tab_axis,
             context.joined_tab_page,
+            context.hover_point,
+            context.host_focused,
             commands,
         )?;
     }
@@ -1771,11 +1729,11 @@ fn render_surface(
             rect: if document_editor { rect } else { rect.inset(Insets::all(1)) }, color: grid::paint_color(&paint.background), radius: 0,
         })?;
     }
-    if context.row_separator
+    if let Some(separator) = context.row_separator
         && !(context.simplified_files_shell
             && super::layout_tokens::is_file_detail_row(widget.text.as_deref()))
     {
-        render_row_separator(rect, theme, commands)?;
+        render_row_separator(separator, theme, commands)?;
     }
     if media::render(widget, rect, theme, commands)? {
         return Ok(());
@@ -1863,6 +1821,12 @@ fn render_surface(
             },
         );
     }
+    // Paint row skins before disclosure boxes and icons, so a hover wash
+    // never obscures the plus/minus control.
+    if widget.kind == WidgetKind::TreeItem {
+        let state=if !visual.enabled(){4}else if visual.pressed(){2}else if visual.selected(){5}else if visual.hovered(){1}else if context.host_focused||widget.state.contains(WidgetState::FOCUSED){3}else{0};
+        push_command(commands,DrawCommand::ThemeSurface{rect,role:17,state})?;
+    }
     let color_content_start = commands.len();
     render_content(
         context.document_font,
@@ -1908,6 +1872,40 @@ fn render_surface(
     }
     color_control::paint(widget, rect, theme, color_content_start, commands)?;
     let keyboard_focused = context.host_focused || widget.state.contains(WidgetState::FOCUSED);
+    let seek_progress = widget.kind == WidgetKind::ProgressBar
+        && widget.text.as_deref().is_some_and(|text| {
+            text.strip_prefix("slim:").unwrap_or(text).starts_with("seek:")
+        });
+    if keyboard_focused && seek_progress && widget.state.contains(WidgetState::ENABLED) {
+        // A full-width focus ring consumes a thin seek track and makes it
+        // appear complete. Keep focus visible at the actual playhead instead.
+        let size = rect.size.height.clamp(10, 14).min(rect.size.width);
+        let position = progress_width(widget.text.as_deref(), rect.size.width);
+        let marker = Rect {
+            origin: Point {
+                x: rect.origin.x.saturating_add_unsigned(position.saturating_sub(size / 2)
+                    .min(rect.size.width.saturating_sub(size))),
+                y: rect.origin.y.saturating_add_unsigned(rect.size.height.saturating_sub(size) / 2),
+            },
+            size: Size { width: size, height: size },
+        };
+        push_command(commands, DrawCommand::Fill {
+            rect: marker, color: theme.palette.surface_raised, radius: (size / 2) as u16,
+        })?;
+        push_command(commands, DrawCommand::Border {
+            rect: marker, color: theme.palette.focus, width: theme.metrics.focus_width,
+            radius: (size / 2) as u16,
+        })?;
+    }
+    // Explicit part skins own focused chrome too. A generic outline around the
+    // entire track would cover thumb artwork and ignore its focused state.
+    let part_owned_focus = match widget.kind {
+        WidgetKind::CheckBox|WidgetKind::RadioButton|WidgetKind::Toggle => theme.control_chrome.parts & match widget.kind {WidgetKind::CheckBox=>3<<15,WidgetKind::RadioButton=>3<<17,_=>7<<19} != 0,
+        WidgetKind::Slider => theme.control_chrome.parts & 0x1c00 != 0,
+        WidgetKind::ScrollBar => theme.control_chrome.parts & 0x03ff != 0
+            && !widget.text.as_deref().is_some_and(|text| text.starts_with("color-")),
+        _ => false,
+    };
     let redmond_hover_focus = theme.chrome_profile == ChromeProfile::Redmond98
         && widget.kind == WidgetKind::Button
         && context.host_hovered
@@ -1915,6 +1913,8 @@ fn render_surface(
     if (keyboard_focused || redmond_hover_focus)
         && !document_editor && !document_overlay
         && !context.suppress_focus_ring
+        && !part_owned_focus
+        && !seek_progress
         && !matches!(
             widget.kind,
             WidgetKind::Menu
@@ -2427,6 +2427,8 @@ fn render_chrome(
     file_grid_item: bool,
     tab_axis: u8,
     joined_tab_page: bool,
+    hover_point: Option<Point>,
+    host_focused: bool,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
     if super::layout_tokens::has_token(widget.text.as_deref(), "office-ribbon-heading") {
@@ -3064,7 +3066,7 @@ fn render_chrome(
             commands,
             DrawCommand::Fill {
                 rect,
-                color: if theme.chrome_profile == ChromeProfile::Orchard {
+                color: if matches!(theme.chrome_profile,ChromeProfile::Orchard|ChromeProfile::Familiar) {
                     theme.palette.surface
                 } else if widget.kind == WidgetKind::ToolBar
                     && theme.chrome_profile != ChromeProfile::Redmond98
@@ -3103,13 +3105,15 @@ fn render_chrome(
         );
     }
     if widget.kind == WidgetKind::ScrollBar {
-        return scrollbar::render(widget, rect, theme, commands);
+        if theme.control_chrome.scrollbar() && !widget.text.as_deref().is_some_and(|text|text.starts_with("color-")) {return control_parts::widget_scrollbar(widget,rect,hover_point,visual.pressed(),host_focused,theme,commands);}
+        return scrollbar::render(widget, rect, theme, visual.hovered(), commands);
     }
     if widget.kind == WidgetKind::Slider {
+        if theme.control_chrome.slider() {return control_parts::slider(widget,rect,hover_point,visual.pressed(),host_focused,theme,commands);}
         return slider::render(widget, rect, theme, visual.hovered(), commands);
     }
     if widget.kind == WidgetKind::Toggle {
-        return choice::render_toggle(widget, rect, theme, visual.hovered(), commands);
+        return choice::render_toggle(widget, rect, theme, visual, host_focused, commands);
     }
     if matches!(widget.kind, WidgetKind::CheckBox | WidgetKind::RadioButton)
         && visual.appearance != Appearance::Flat
@@ -3124,8 +3128,14 @@ fn render_chrome(
     // The caption highlight is emitted by `render_content`; returning here
     // prevents the generic selected-control fill from painting the whole tile.
     if redmond_icon_item {
+        if widget.kind == WidgetKind::TreeItem && visual.hovered() && !visual.selected() {
+            push_command(commands, DrawCommand::Fill {rect, color:theme.palette.selection.with_alpha(36),radius:0})?;
+        }
         return Ok(());
     }
+    // Tab close is content of its parent tab, not a separate push-button face.
+    // Explicit tabClose skins still paint after this shared native fallback.
+    if widget.text.as_deref() == Some("panel:tab-close") { return Ok(()); }
     let redmond_list_row = theme.chrome_profile == ChromeProfile::Redmond98
         && widget.kind == WidgetKind::Button
         && parent_kind == Some(WidgetKind::List);
@@ -3209,7 +3219,9 @@ fn render_chrome(
     if visual.appearance != Appearance::Plain || widget.parent.is_none() {
         let menu_heading = widget.kind == WidgetKind::Menu && visual.appearance == Appearance::Flat;
         let menu_row = parent_kind == Some(WidgetKind::Menu);
-        let fallback = if theme.chrome_profile == ChromeProfile::YellowJacket
+        let fallback = if widget.kind == WidgetKind::ProgressBar {
+            theme.palette.surface_raised
+        } else if theme.chrome_profile == ChromeProfile::YellowJacket
             && widget.kind == WidgetKind::Button
             && visual.pressed()
         {
@@ -3564,28 +3576,29 @@ fn render_chrome(
     Ok(())
 }
 
+fn row_separator_rect(rect: Rect, theme: &Theme) -> Rect {
+    let inset = u32::from(theme.spacing.control_x);
+    Rect {
+        origin: Point {
+            x: rect.origin.x.saturating_add_unsigned(inset),
+            y: rect.origin.y.saturating_add_unsigned(rect.size.height.saturating_sub(1)),
+        },
+        size: Size {
+            width: rect.size.width.saturating_sub(inset.saturating_mul(2)),
+            height: 1,
+        },
+    }
+}
+
 fn render_row_separator(
     rect: Rect,
     theme: &Theme,
     commands: &mut Vec<DrawCommand>,
 ) -> Result<(), NativeUiError> {
-    let inset = u32::from(theme.spacing.control_x);
     push_command(
         commands,
         DrawCommand::Fill {
-            rect: Rect {
-                origin: Point {
-                    x: rect.origin.x.saturating_add_unsigned(inset),
-                    y: rect
-                        .origin
-                        .y
-                        .saturating_add_unsigned(rect.size.height.saturating_sub(1)),
-                },
-                size: Size {
-                    width: rect.size.width.saturating_sub(inset.saturating_mul(2)),
-                    height: 1,
-                },
-            },
+            rect,
             color: theme.palette.border,
             radius: 0,
         },
@@ -3658,10 +3671,14 @@ fn render_content(
         if visual.selected() || visual.hovered() {
             push_command(commands, DrawCommand::Fill { rect, color: if visual.selected() { theme.palette.selection } else { theme.palette.accent.with_alpha(36) }, radius: 10 })?;
         }
-        if widget.state.contains(WidgetState::EMPHASIZED) {
-            push_command(commands, DrawCommand::Fill { rect: Rect { origin: Point { x: rect.origin.x+3, y: rect.origin.y+21 }, size: Size { width:5, height:5 } }, color: theme.palette.accent, radius: 3 })?;
-        }
         let color = if widget.state.contains(WidgetState::SELECTED) { theme.palette.accent_text } else { theme.palette.text };
+        let unread = widget.state.contains(WidgetState::EMPHASIZED);
+        if unread {
+            push_command(commands, DrawCommand::Fill {
+                rect: Rect { origin: Point { x: rect.origin.x + 4, y: rect.origin.y + 20 }, size: Size { width: 6, height: 6 } },
+                color: if visual.selected() { color } else { theme.palette.accent }, radius: 3,
+            })?;
+        }
         if widget.icon == Some(rice_ui::IconId::Attachment) {
             push_command(commands, DrawCommand::Icon { rect: Rect { origin: Point { x: rect.origin.x + rect.size.width.saturating_sub(28) as i32, y: rect.origin.y + 61 }, size: Size { width:16, height:16 } }, icon: rice_ui::IconId::Attachment, color, hovered:visual.hovered(), animated:false, shortcut:false })?;
         }
@@ -3679,7 +3696,8 @@ fn render_content(
                     size: Size { width: rect.size.width.saturating_sub(if index == 0 && !date.is_empty() { 110 } else if index == 2 && widget.icon == Some(rice_ui::IconId::Attachment) { 50 } else { 28 }), height: 24 } },
                 text: line.to_owned(), color: if index == 2 { color.with_alpha(170) } else { color },
                 size_px: if index == 0 { 16 } else { 14 }, align: TextAlign::Start,
-                role: TextRole::Label, caret: false, caret_offset: None, brand: false, gradient: false,
+                role: if unread && index < 2 { TextRole::Emphasized } else { TextRole::Label },
+                caret: false, caret_offset: None, brand: false, gradient: false,
             })?;
         }
         return Ok(());
@@ -3715,8 +3733,8 @@ fn render_content(
             widget,
             rect,
             theme,
-            visual.enabled(),
-            visual.selected() || visual.hovered(),
+            visual,
+            focused,
             submenu_opens_left,
             has_submenu,
             menu_has_leading_column,
@@ -3851,18 +3869,18 @@ fn render_content(
                 top: 0,
                 right: 0,
                 bottom: 0,
-                left: 44_u32.min(inset.size.width),
+                left: choice::toggle_content_width(theme).min(inset.size.width),
             })
         } else {
             inset.inset(Insets {
                 top: 0,
-                right: 44_u32.min(inset.size.width),
+                right: choice::toggle_content_width(theme).min(inset.size.width),
                 bottom: 0,
                 left: 0,
             })
         }
     } else {
-        choice::content_inset(widget, inset, theme, commands)?
+        choice::content_inset(widget, inset, theme, visual, focused, commands)?
     };
     let mut inset = if detail_tree_depth == 0 {
         inset
@@ -3884,11 +3902,11 @@ fn render_content(
         }
     };
     let redmond_tree_item =
-        theme.chrome_profile == ChromeProfile::Redmond98 && widget.kind == WidgetKind::TreeItem;
-    let redmond_detail_disclosure = theme.chrome_profile == ChromeProfile::Redmond98
+        theme.tree_boxed_expander() && widget.kind == WidgetKind::TreeItem;
+    let redmond_detail_disclosure = theme.tree_boxed_expander()
         && super::layout_tokens::is_file_detail_disclosure(widget.text.as_deref());
     if tree_item_has_children && (redmond_tree_item || redmond_detail_disclosure) {
-        let disclosure_size = 9_u32.min(inset.size.width).min(inset.size.height);
+        let disclosure_size = u32::from(theme.tree_view.expander_size).min(inset.size.width).min(inset.size.height);
         let disclosure = Rect {
             origin: Point {
                 x: inset.origin.x,
@@ -3906,7 +3924,7 @@ fn render_content(
             commands,
             DrawCommand::Fill {
                 rect: disclosure,
-                color: rice_ui::Color::opaque(255, 255, 255),
+                color: theme.tree_view.background,
                 radius: 0,
             },
         )?;
@@ -3914,7 +3932,7 @@ fn render_content(
             commands,
             DrawCommand::Border {
                 rect: disclosure,
-                color: rice_ui::Color::opaque(128, 128, 128),
+                color: theme.tree_view.border,
                 width: 1,
                 radius: 0,
             },
@@ -3940,7 +3958,7 @@ fn render_content(
                         height: 1,
                     },
                 },
-                color: rice_ui::Color::opaque(0, 0, 0),
+                color: theme.tree_view.foreground,
                 radius: 0,
             },
         )?;
@@ -3958,12 +3976,12 @@ fn render_content(
                             height: disclosure.size.height.saturating_sub(4),
                         },
                     },
-                    color: rice_ui::Color::opaque(0, 0, 0),
+                    color: theme.tree_view.foreground,
                     radius: 0,
                 },
             )?;
         }
-        let reserved = u32::from(theme.metrics.icon_small);
+        let reserved = theme.tree_disclosure_width();
         inset.origin.x = inset.origin.x.saturating_add_unsigned(reserved);
         inset.size.width = inset.size.width.saturating_sub(reserved);
         if redmond_detail_disclosure {
@@ -3971,7 +3989,7 @@ fn render_content(
             // layer the cross-platform chevron icon over that native glyph.
             return Ok(());
         }
-    } else if tree_item_has_children {
+    } else if tree_item_has_children && theme.tree_view.expander != 3 {
         let size = u32::from(theme.metrics.icon_small)
             .min(inset.size.width)
             .min(inset.size.height);
@@ -4021,11 +4039,11 @@ fn render_content(
                 shortcut: false,
             },
         )?;
-        let disclosure = size.saturating_add(u32::from(theme.spacing.unit));
+        let disclosure = if widget.kind==WidgetKind::TreeItem && theme.tree_lines()!=1 {theme.tree_disclosure_width()} else {size.saturating_add(u32::from(theme.spacing.unit))};
         inset.origin.x = inset.origin.x.saturating_add_unsigned(disclosure);
         inset.size.width = inset.size.width.saturating_sub(disclosure);
-    } else if redmond_tree_item {
-        let reserved = u32::from(theme.metrics.icon_small);
+    } else if widget.kind == WidgetKind::TreeItem && (redmond_tree_item || theme.tree_lines()!=1 || theme.tree_view.expander==3) {
+        let reserved = theme.tree_disclosure_width();
         inset.origin.x = inset.origin.x.saturating_add_unsigned(reserved);
         inset.size.width = inset.size.width.saturating_sub(reserved);
     }
@@ -4355,6 +4373,7 @@ fn render_content(
                     WidgetKind::TextField if multiline_field => TextRole::Editor,
                     WidgetKind::TextEditor => TextRole::Editor,
                     WidgetKind::Markdown => TextRole::Markdown,
+                    WidgetKind::Label if widget.state.contains(WidgetState::EMPHASIZED) => TextRole::Emphasized,
                     _ => TextRole::Label,
                 },
                 caret,

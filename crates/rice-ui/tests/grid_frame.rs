@@ -2,6 +2,62 @@ use rice_ui::grid_frame::*;
 use rice_ui::virtual_grid::GridAxis;
 
 #[test]
+fn logical_header_membership_keeps_disjoint_gaps_and_offscreen_other_axes() {
+    let mut f=fixture();
+    let row=f.rows[0].index;let column=f.columns[0].index;
+    f.selection=None;f.active=Some((row,0));
+    f.selection_areas=vec![GridSelection{first_row:row,last_row:row,first_column:0,last_column:0},GridSelection{first_row:500,last_row:500,first_column:column,last_column:column}];
+    f.validate().unwrap();assert!(f.row_header_selected(0));assert!(!f.row_header_selected(1));
+    assert!(f.column_header_selected(0));assert!(!f.column_header_selected(1));assert!(!f.sheet_header_selected());
+    assert!(!f.row_header_selected(u32::MAX));assert!(!f.column_header_selected(u32::MAX));
+}
+
+#[test]
+fn legacy_headers_follow_visible_slot_selection_and_clear_without_selection() {
+    let mut f=fixture();assert!(f.row_header_selected(1));assert!(f.column_header_selected(1));
+    assert!(!f.row_header_selected(0));assert!(!f.column_header_selected(0));assert!(!f.sheet_header_selected());
+    f.selection=None;assert!(!f.row_header_selected(1));assert!(!f.column_header_selected(1));
+}
+
+#[test]
+fn sheet_corner_requires_complete_logical_coverage_instead_of_a_viewport_sized_box() {
+    let mut f=fixture();f.selection=None;f.active=Some((0,0));
+    f.selection_areas=vec![GridSelection{first_row:0,last_row:499,first_column:0,last_column:f.column_count-1},GridSelection{first_row:500,last_row:f.row_count-1,first_column:0,last_column:f.column_count-1}];
+    f.validate().unwrap();assert!(f.sheet_header_selected());
+    f.selection_areas[1].first_row=501;f.validate().unwrap();assert!(!f.sheet_header_selected());
+}
+
+#[test]
+fn logical_multi_area_membership_preserves_holes_and_suppresses_the_fill_handle(){
+    let mut f=fixture();
+    let a=GridSelection{first_row:f.rows[0].index,last_row:f.rows[0].index,first_column:f.columns[0].index,last_column:f.columns[0].index};
+    let b=GridSelection{first_row:10,last_row:10,first_column:3,last_column:3};
+    f.selection_areas=vec![b,a];f.validate().unwrap();
+    assert!(f.is_selected(0,0));assert!(f.is_selected(1,1));assert!(!f.is_selected(0,1));assert!(!f.is_selected(1,0));assert!(f.fill_handle().is_none());
+    let copy=GridFrame::parse(&f.encode().unwrap()).unwrap();assert_eq!(copy.selection_areas,f.selection_areas);
+}
+#[test]
+fn logical_multi_area_admission_rejects_overlap_outside_active_and_false_fill_endpoints(){
+    let mut f=fixture();let a=GridSelection{first_row:10,last_row:10,first_column:3,last_column:3};
+    f.selection_areas=vec![a.clone(),a.clone()];assert!(f.validate().is_err());
+    f.selection_areas=vec![GridSelection{last_row:1048576,..a.clone()}];assert!(f.validate().is_err());
+    f.selection_areas=vec![GridSelection{first_row:0,last_row:0,first_column:0,last_column:0}];assert!(f.validate().is_err());
+    f.selection_areas.push(a);f.fill_endpoint=Some((10,3));assert!(f.validate().is_err());
+}
+
+#[test]
+fn conditional_decoration_metadata_roundtrips_and_rejects_invalid_ranges_and_symbols(){
+    let mut frame=fixture();
+    let paint=serde_json::json!({"decorations":{"data_bar":{"value":800000,"axis":400000,"positive_color":"#638EC6","negative_color":"#FF0000","gradient":true,"show_value":false},"icon":{"kind":"ArrowUp","color":"#379754","show_value":true},"rating":{"kind":"Star","color":"#E8B630","count":2,"total":4,"show_value":true}}});
+    frame.styles[0].paint=Some(serde_json::from_value(paint.clone()).unwrap());let encoded=frame.encode().unwrap();assert_eq!(GridFrame::parse(&encoded).unwrap().styles[0].paint,frame.styles[0].paint);
+    for invalid in [serde_json::json!({"decorations":{}}),serde_json::json!({"decorations":{"icon":{"kind":"Unknown","color":"#379754","show_value":true}}}),serde_json::json!({"decorations":{"rating":{"kind":"Star","color":"#E8B630","count":6,"total":4,"show_value":true}}})]{
+        frame.styles[0].paint=Some(serde_json::from_value(invalid).unwrap());assert!(frame.encode().is_err());
+    }
+    let mut invalid=paint.clone();invalid["decorations"]["data_bar"]["value"]=serde_json::json!(1000001);frame.styles[0].paint=Some(serde_json::from_value(invalid).unwrap());assert!(frame.encode().is_err());
+    let mut invalid=paint;invalid["decorations"]["icon"]["show_value"]=serde_json::json!(1);assert!(serde_json::from_value::<GridPaint>(invalid).is_err());
+}
+
+#[test]
 fn table_filters_follow_absolute_header_row_and_disappear_when_offscreen() {
     let mut frame=fixture();
     frame.filter_columns=vec![GridFilterColumn{column:frame.columns[1].index,active:true}];
@@ -40,6 +96,7 @@ fn fixture() -> GridFrame {
         .viewport(1, 160, 160)
         .unwrap();
     GridFrame {
+        selection_areas:Vec::new(),
         merges:Vec::new(),
         version: 1,
         revision: 7,

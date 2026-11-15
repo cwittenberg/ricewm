@@ -112,12 +112,19 @@ impl DisplayServer {
             })
     }
 
-    pub(super) fn wm_gnome_menu_hit(&self, root_y: i16) -> Option<u8> {
+    pub(super) fn wm_gnome_menu_hit(&self, root_x: i16, root_y: i16) -> Option<u8> {
         let menu = self.windows.get(&WM_GNOME_MENU.0)?;
         if !menu.mapped {
             return None;
         }
         let local_y = usize::try_from(i32::from(root_y).saturating_sub(i32::from(menu.y))).ok()?;
+        if let Some((_, hits)) = &self.wm_gnome_menu_scene {
+            let local_x = usize::try_from(i32::from(root_x).saturating_sub(i32::from(menu.x))).ok()?;
+            return hits.iter().rev().find_map(|(index, x, y, w, h)| {
+                ((usize::from(*x)..usize::from(*x) + usize::from(*w)).contains(&local_x)
+                    && (usize::from(*y)..usize::from(*y) + usize::from(*h)).contains(&local_y)).then_some(*index)
+            });
+        }
         let mut y = 6usize;
         for item in &self.wm_gnome_menu_items {
             let height = wm_gnome_menu_item_height(item);
@@ -182,9 +189,45 @@ impl DisplayServer {
                 let lx = i32::from(root_x) - i32::from(x);
                 let ly = i32::from(root_y) - i32::from(y);
                 if lx < 0 || ly < 0 || lx >= i32::from(width) || ly >= i32::from(height) { return None; }
+                if self.wm_icons_taskbar {
+                    if self.wm_taskbar_edge.vertical() {
+                        for (index, item, top, extent) in self.wm_vertical_tray_layout() {
+                            if (top as i32..(top + extent) as i32).contains(&ly) {
+                                let tray = index as u8;
+                                return if item == TrayItem::Workspaces {
+                                    self.wm_visible_workspace_ids().get((ly as usize - top) / 28).copied().map(|workspace| WmChromeTarget::Workspace {tray,workspace})
+                                } else { Some(WmChromeTarget::Tray(tray)) };
+                            }
+                        }
+                    } else {
+                        if !self.wm_compact_shell() && self.wm_system_controls & 0x41 == 0x41 && lx >= i32::from(width) - (self.wm_system_controls_width() + WM_SYSTEM_CONTROLS_RIGHT_MARGIN) as i32 {
+                            return Some(WmChromeTarget::SystemControls);
+                        }
+                        for (index, item, left, item_width) in self.wm_tray_layout() {
+                            let offset = lx.saturating_sub(i32::try_from(left).ok()?);
+                            if !(0..i32::try_from(item_width).ok()?).contains(&offset) {
+                                continue;
+                            }
+                            let tray = u8::try_from(index).ok()?;
+                            if item == TrayItem::Workspaces {
+                                let mut workspace_x = 0i32;
+                                for workspace in self.wm_visible_workspace_ids() {
+                                    let width = i32::try_from(self.wm_workspace_item_width(workspace)).ok()?;
+                                    if (workspace_x..workspace_x + width - 4).contains(&offset) {
+                                        return Some(WmChromeTarget::Workspace { tray, workspace });
+                                    }
+                                    workspace_x += width;
+                                }
+                                return None;
+                            }
+                            return Some(WmChromeTarget::Tray(tray));
+                        }
+
+                    }
+                }
                 let axis = if self.wm_taskbar_edge.vertical() { ly } else { lx };
-                if axis < WM_COMPACT_DOCK_AXIS_PADDING as i32 { return None; }
-                return self.wm_dock_targets().get((axis as usize - WM_COMPACT_DOCK_AXIS_PADDING) / self.wm_dock_step()).copied();
+                if axis < self.wm_dock_axis_padding() as i32 { return None; }
+                return self.wm_dock_targets().get((axis as usize - self.wm_dock_axis_padding()) / self.wm_dock_step()).copied();
             }
             if self.wm_taskbar_edge.vertical() {
                 let (_, taskbar_y, _, _) = self.wm_taskbar_rect();
@@ -298,6 +341,12 @@ impl DisplayServer {
         let frame = self.windows.get(&source.0)?;
         if !(0..i32::from(title_height)).contains(&local_y) {
             return None;
+        }
+        if let Some(v)=self.wm_window_chrome {
+            if let Some(control)=self.custom_frame_control_at(frame.width,local_x,local_y){return Some(WmChromeTarget::FrameControl(source,control));}
+            let pitch=v[5]+v[7];let count=v[13];
+            let icon_x=if v[9]!=0 {v[3]+4+pitch+6} else if v[10]!=0 {v[3]+4+pitch*count+6}else{v[3]+7};
+            return (v[11]!=0&&local_y>=v[0]as i32&&(icon_x as i32..icon_x as i32+26).contains(&local_x)).then_some(WmChromeTarget::FrameIcon(source));
         }
         // Keep the resize targets available at titlebar corners. The button
         // interiors retain their normal actions; fixed/maximized frames do

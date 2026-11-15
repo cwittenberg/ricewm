@@ -7,6 +7,9 @@ use rice_ui::{
 
 pub const THEME_RECORD_BYTES: usize = 96;
 pub const EXTENDED_THEME_RECORD_BYTES: usize = 126;
+pub const TREE_THEME_RECORD_BYTES: usize = 148;
+pub const PART_THEME_RECORD_BYTES: usize = 200;
+pub const CHOICE_THEME_RECORD_BYTES: usize = 280;
 const MAGIC: &[u8; 4] = b"RTUI";
 const VERSION: u16 = 1;
 const SIGNAL_RADIUS_MARKER: u16 = 1 << 14;
@@ -47,9 +50,9 @@ const FROSTED_ICE_SURFACE_ALPHA: u8 = 190;
 const FROSTED_ICE_RAISED_ALPHA: u8 = 150;
 
 pub fn decode_theme(bytes: &[u8]) -> Option<Theme> {
-    if ![THEME_RECORD_BYTES, EXTENDED_THEME_RECORD_BYTES].contains(&bytes.len())
+    if ![THEME_RECORD_BYTES, EXTENDED_THEME_RECORD_BYTES, TREE_THEME_RECORD_BYTES, PART_THEME_RECORD_BYTES, CHOICE_THEME_RECORD_BYTES].contains(&bytes.len())
         || &bytes[..4] != MAGIC
-        || u16::from_le_bytes(bytes[4..6].try_into().ok()?) != if bytes.len() == THEME_RECORD_BYTES { VERSION } else { 2 }
+        || u16::from_le_bytes(bytes[4..6].try_into().ok()?) != if bytes.len() == THEME_RECORD_BYTES { VERSION } else if bytes.len() == EXTENDED_THEME_RECORD_BYTES { 2 } else if bytes.len() == TREE_THEME_RECORD_BYTES { 3 } else if bytes.len()==PART_THEME_RECORD_BYTES {4} else {5}
         || usize::from(u16::from_le_bytes(bytes[6..8].try_into().ok()?)) != bytes.len()
     {
         return None;
@@ -131,6 +134,7 @@ pub fn decode_theme(bytes: &[u8]) -> Option<Theme> {
             theme.spacing = familiar.spacing;
             theme.metrics = familiar.metrics;
             theme.typography = familiar.typography;
+            theme.metrics.scrollbar_width = 14;
             theme.metrics.control_height = 26;
             theme.metrics.border_width = 2;
             // BeOS used compact furniture, but its application copy was not
@@ -267,7 +271,7 @@ pub fn decode_theme(bytes: &[u8]) -> Option<Theme> {
         // outer window retains its own stronger silhouette border.
         theme.palette.border = theme.palette.border.with_alpha(96);
     }
-    if bytes.len() == EXTENDED_THEME_RECORD_BYTES {
+    if bytes.len() >= EXTENDED_THEME_RECORD_BYTES {
         let mask = u32::from_le_bytes(bytes[96..100].try_into().ok()?);
         if mask & !0x1fff != 0 { return None; }
         let bounds = [(8,32),(8,28),(8,36),(12,72),(100,200),(16,72),(16,72),(4,32),(0,6),(0,6),(0,32),(0,24),(0,32)];
@@ -278,6 +282,44 @@ pub fn decode_theme(bytes: &[u8]) -> Option<Theme> {
         }
         let fields = [&mut theme.typography.body_px,&mut theme.typography.small_px,&mut theme.typography.title_px,&mut theme.typography.display_px,&mut theme.typography.line_height_percent,&mut theme.metrics.control_height,&mut theme.metrics.menu_row_height,&mut theme.metrics.scrollbar_width,&mut theme.metrics.focus_width,&mut theme.metrics.border_width,&mut theme.spacing.control_x,&mut theme.spacing.control_y,&mut theme.metrics.corner_radius];
         for (i, field) in fields.into_iter().enumerate() { if mask & (1 << i) != 0 { *field = values[i]; } }
+    }
+    if bytes.len() >= TREE_THEME_RECORD_BYTES {
+        let v=&mut theme.tree_view;
+        v.expander=bytes[126]; v.lines=bytes[127]; v.expander_size=bytes[128];
+        v.root_lines=match bytes[129] {0=>false,1=>true,_=>return None};
+        v.indent=u16::from_le_bytes(bytes[130..132].try_into().ok()?);
+        if v.expander>3 || v.lines>3 || !(7..=19).contains(&v.expander_size) || v.indent!=0 && !(12..=48).contains(&v.indent) {return None;}
+        let mut offset=132;
+        for color in [&mut v.line_color,&mut v.background,&mut v.border,&mut v.foreground] {
+            *color=Color::rgba(bytes[offset],bytes[offset+1],bytes[offset+2],bytes[offset+3]);offset+=4;
+        }
+    }
+    if bytes.len()>=PART_THEME_RECORD_BYTES {
+        let c=&mut theme.control_chrome;
+        c.parts=u32::from(u16::from_le_bytes(bytes[148..150].try_into().ok()?));
+        c.metrics_mask=u32::from(u16::from_le_bytes(bytes[150..152].try_into().ok()?));
+        if c.parts & !0x7fff!=0 {return None;}
+        for (i,state) in c.states.iter_mut().take(15).enumerate() {*state=u16::from(bytes[184+i]);if *state & !63!=0 {return None;}}
+        if bytes[199]!=0 {return None;}
+        let bounds=[(0,32),(4,96),(0,8),(1,32),(4,64),(4,64),(8,64),(0,16),(0,2),(16,72),(0,32),(0,16),(0,8),(48,480),(24,240),(24,600)];
+        for (i,value) in c.metrics.iter_mut().take(16).enumerate() {
+            *value=u16::from_le_bytes(bytes[152+i*2..154+i*2].try_into().ok()?);
+            if c.metrics_mask & (1<<i)!=0 && (*value<bounds[i].0 || *value>bounds[i].1) {return None;}
+        }
+    }
+    if bytes.len()==CHOICE_THEME_RECORD_BYTES {
+        let c=&mut theme.control_chrome;
+        let base_parts=c.parts;let base_mask=c.metrics_mask;
+        c.parts=u32::from_le_bytes(bytes[200..204].try_into().ok()?);
+        c.metrics_mask=u32::from_le_bytes(bytes[204..208].try_into().ok()?);
+        if c.parts & 0x7fff != base_parts || c.metrics_mask & 0xffff != base_mask || c.parts & !0x7f_ffff != 0 || c.metrics_mask & !0x0fff_ffff != 0 || bytes[278..280] != [0,0] {return None;}
+        let bounds=[(4,64),(4,64),(0,32),(4,128),(4,64),(0,128),(0,64),(0,32),(0,32),(0,32),(0,32),(0,32)];
+        for (i,(min,max)) in bounds.into_iter().enumerate() {
+            let value=u16::from_le_bytes(bytes[208+i*2..210+i*2].try_into().ok()?);
+            if c.metrics_mask & (1<<(16+i))!=0 && (value<min||value>max) {return None;}
+            c.metrics[16+i]=value;
+        }
+        for (i,state) in c.states.iter_mut().enumerate() {*state=u16::from_le_bytes(bytes[232+i*2..234+i*2].try_into().ok()?);}
     }
     Some(theme)
 }
@@ -503,5 +545,57 @@ mod customization_tests {
         let mut bytes=custom();bytes[100..102].copy_from_slice(&99u16.to_le_bytes());assert!(decode_theme(&bytes).is_none());
         let mut bytes=custom();bytes[96..100].copy_from_slice(&u32::MAX.to_le_bytes());assert!(decode_theme(&bytes).is_none());
         let mut bytes=custom();bytes.pop();assert!(decode_theme(&bytes).is_none());
+    }
+    #[test]
+    fn choice_parts_validate_extended_masks_geometry_and_combined_states() {
+        let mut bytes=custom();bytes.resize(CHOICE_THEME_RECORD_BYTES,0);
+        bytes[4..6].copy_from_slice(&5u16.to_le_bytes());
+        bytes[6..8].copy_from_slice(&(CHOICE_THEME_RECORD_BYTES as u16).to_le_bytes());
+        bytes[128]=9;bytes[129]=1;
+        bytes[200..204].copy_from_slice(&(1u32<<15).to_le_bytes());
+        bytes[204..208].copy_from_slice(&((1u32<<16)|(1<<21)).to_le_bytes());
+        bytes[208..210].copy_from_slice(&24u16.to_le_bytes());
+        bytes[262..264].copy_from_slice(&(1u16<<11).to_le_bytes());
+        let theme=decode_theme(&bytes).unwrap();
+        assert_eq!(theme.control_chrome.metric(16,16),24);
+        assert_eq!(theme.control_chrome.metric(21,14),0); // Explicitly hidden thumb.
+        assert!(theme.control_chrome.styled(36,11));
+        for offset in [200,204] {
+            let mut bad=bytes.clone();bad[offset+3]|=0x80;assert!(decode_theme(&bad).is_none());
+        }
+        let mut bad=bytes.clone();bad[204]|=1;assert!(decode_theme(&bad).is_none());
+        let mut bad=bytes.clone();bad[208..210].copy_from_slice(&65u16.to_le_bytes());assert!(decode_theme(&bad).is_none());
+        let mut bad=bytes.clone();bad[279]=1;assert!(decode_theme(&bad).is_none());
+    }
+    #[test]
+    fn compact_slider_length_uses_last_metric_without_changing_part_state_bytes() {
+        let mut bytes=custom();bytes.resize(PART_THEME_RECORD_BYTES,0);
+        bytes[4..6].copy_from_slice(&4u16.to_le_bytes());
+        bytes[6..8].copy_from_slice(&(PART_THEME_RECORD_BYTES as u16).to_le_bytes());
+        bytes[128]=9;bytes[129]=1;
+        bytes[150..152].copy_from_slice(&0x8000u16.to_le_bytes());
+        bytes[182..184].copy_from_slice(&72u16.to_le_bytes());
+        let theme=decode_theme(&bytes).unwrap();
+        assert_eq!(theme.control_chrome.metric(15,140),72);
+        assert!(theme.control_chrome.slider());
+        for value in [0u16,23,601,u16::MAX] {
+            bytes[182..184].copy_from_slice(&value.to_le_bytes());
+            assert!(decode_theme(&bytes).is_none());
+        }
+    }
+    #[test]
+    fn control_parts_reject_unknown_masks_states_and_geometry() {
+        let mut bytes=custom();bytes.resize(PART_THEME_RECORD_BYTES,0);
+        bytes[4..6].copy_from_slice(&4u16.to_le_bytes());
+        bytes[6..8].copy_from_slice(&(PART_THEME_RECORD_BYTES as u16).to_le_bytes());
+        bytes[128]=9;bytes[129]=1;
+        bytes[148..150].copy_from_slice(&1u16.to_le_bytes());
+        bytes[150..152].copy_from_slice(&1u16.to_le_bytes());
+        bytes[152..154].copy_from_slice(&17u16.to_le_bytes());bytes[184]=63;
+        let theme=decode_theme(&bytes).unwrap();assert_eq!(theme.control_chrome.metric(0,0),17);
+        for (offset,value) in [(149,128),(151,128),(152,33),(184,64),(199,1)] {
+            let mut invalid=bytes.clone();invalid[offset]=value;assert!(decode_theme(&invalid).is_none(),"offset {offset}");
+        }
+        let mut invalid=bytes;invalid.pop();assert!(decode_theme(&invalid).is_none());
     }
 }

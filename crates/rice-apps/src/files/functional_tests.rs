@@ -323,13 +323,13 @@ fn filtering_never_evicts_thumbnails_needed_when_search_is_cleared() {
 }
 
 #[test]
-fn thumbnail_zoom_slider_reaches_a_genuinely_large_grid() {
+fn thumbnail_zoom_slider_stops_at_a_useful_large_grid() {
     let (mut actor, _) = loaded_actor();
     let messages = actor
         .handle_event(
             &event(
                 super::files_view::ZOOM_SLIDER,
-                UiEvent::ValueChanged(String::from("4500/4500")),
+                UiEvent::ValueChanged(String::from("1250/1250")),
             ),
             request(20),
         )
@@ -340,13 +340,13 @@ fn thumbnail_zoom_slider_reaches_a_genuinely_large_grid() {
     assert!(patch.patches.iter().any(|candidate| matches!(
         candidate,
         UiPatch::Create { id, text: Some(text), .. }
-            if *id == widget_id(DIRECTORY) && text == "file-grid:5000"
+            if *id == widget_id(DIRECTORY) && text == "file-grid:2000"
     )));
     assert!(patch.patches.iter().any(|candidate| matches!(
         candidate,
         UiPatch::Create { id, text: Some(text), .. }
             if *id == widget_id(super::files_view::ZOOM_SLIDER)
-                && text == "4500/4500"
+                && text == "1250/1250"
     )));
 }
 

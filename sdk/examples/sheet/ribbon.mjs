@@ -21,8 +21,8 @@ const icons = Object.freeze({
 
 export function createSheetRibbon(options) {
     const { editorAction, fontAction, documentAction, structureAction, dataAction, action, toggle,
-        fontSize, fontFamily, formulaBar, showAbout, sensitivityItem, sensitivityBadge, showFind, showFilter, clearFilters, exit,
-        canUseSheetDataIcons = () => false, canSplit = () => false, canDecimal = () => false, canGrowFont = () => false, canShrinkFont = () => false, canClearFilters = () => false,
+        fontSize, fontFamily, formulaBar, showAbout, showCommandSearch, sensitivityItem, sensitivityBadge, showFind, showFilter, clearFilters, exit,
+        canClipboard = () => false, canUseSheetDataIcons = () => false, canSplit = () => false, canDecimal = () => false, canGrowFont = () => false, canShrinkFont = () => false, canClearFilters = () => false,
         canMerge = () => false, canUnmerge = () => false, canFill = () => true, canLayout = () => true, canMoveSheetLeft = () => true,
         canMoveSheetRight = () => true, canDeleteSheet = () => true, canEditChart = () => false } = options;
     const newIconControls=[];
@@ -50,9 +50,16 @@ export function createSheetRibbon(options) {
         edit('fill-right', 'Fill Right (Ctrl+R)', 'fill-range', false, () => canFill('right')),
     ]);
     const clipboard = group('clipboard', 'Clipboard', [edit('paste', 'Paste (Ctrl+V)', 'paste-range'),
+        edit('cut','Cut (Ctrl+X)','cut-range'),
         edit('copy', 'Copy (Ctrl+C)', 'copy-range'),edit('format-painter','Format Painter','paint-format'), menu('paste-special', 'Paste Special', 171, [
+            edit('paste-special-dialog','Paste Special… (Ctrl+Alt+V)','paste-special',false),
             edit('paste-values', 'Paste Values (Ctrl+Shift+V)', 'paste-range', false),
             edit('paste-formulas', 'Paste Formulas', 'paste-range', false),
+            menu('system-text-clipboard','System Clipboard Text',171,[
+                edit('copy-text','Copy Text to Clipboard','paste-text',false,()=>canClipboard('copy-text')),
+                edit('paste-text','Paste Text from Clipboard','paste-text',false,()=>canClipboard('paste-text')),
+                edit('paste-text-values','Paste Text Values from Clipboard','paste-text',false,()=>canClipboard('paste-values')),
+            ]),
         ])], 0, 2);
     const font = group('font', 'Font', [
         new Row({text:'panel:fixed:width=178:flush:gap=0'},[new Container({text:'panel:fixed:width=98:flush'},[fontFamily]),new Container({ text:'panel:fixed:width=80:flush' }, [fontSize])]),
@@ -73,18 +80,26 @@ export function createSheetRibbon(options) {
     const number = group('number', 'Number', [new Container({text:'panel:fixed:width=124:flush'},[numberSelector]),
         edit('decimal-increase','Increase Decimal Places','format-range',true,()=>canDecimal(1)),edit('decimal-decrease','Decrease Decimal Places','format-range',true,()=>canDecimal(-1)),
         edit('format-cells','Format Cells… (Ctrl+1)','format-cells')],0,1);
-    const cells = group('cells', 'Cells', [prominent(edit('cell-styles','Cell Styles','apply-cell-style'),'Styles'),menu('cell-layout', 'Cell Size and Structure', 174, [
+    const cells = group('cells', 'Cells', [menu('conditional-formatting','Conditional Formatting',175,[
+        menu('conditional-highlight','Highlight Cells Rules',175,[
+            edit('conditional-new-cell-value','Cell Value…','add-conditional-format',false),edit('conditional-new-text','Text that Contains…','add-conditional-format',false),edit('conditional-new-date','A Date Occurring…','add-conditional-format',false),edit('conditional-new-duplicate','Duplicate Values…','add-conditional-format',false),
+        ]),menu('conditional-top-bottom','Top/Bottom Rules',175,[
+            edit('conditional-new-top','Top Items…','add-conditional-format',false),edit('conditional-new-bottom','Bottom Items…','add-conditional-format',false),edit('conditional-new-above-average','Above Average…','add-conditional-format',false),edit('conditional-new-below-average','Below Average…','add-conditional-format',false),
+        ]),edit('conditional-new-data-bar','Data Bars…','add-conditional-format',false),edit('conditional-new-color-scale','Color Scales…','add-conditional-format',false),edit('conditional-new-icon-set','Icon Sets…','add-conditional-format',false),
+        edit('conditional-new-formula','New Rule…','add-conditional-format',false),menu('conditional-clear-menu','Clear Rules',25,[edit('conditional-clear-selection','Clear Rules from Selected Cells','clear-conditional-formats',false),edit('conditional-clear-sheet','Clear Rules from Entire Sheet','clear-conditional-formats',false)]),edit('conditional-manage','Manage Rules…','add-conditional-format',false),
+    ]),prominent(edit('cell-styles','Cell Styles','apply-cell-style'),'Styles'),menu('cell-layout', 'Cell Size and Structure', 174, [
         edit('row-height','Row Height…','resize-rows',false,canLayout), edit('column-width','Column Width…','resize-columns',false,canLayout),
         structure('insert-rows','Insert Rows Above','insert-rows',false), structure('insert-columns','Insert Columns Before','insert-columns',false),
         structure('delete-rows','Delete Selected Rows…','delete-rows',false), structure('delete-columns','Delete Selected Columns…','delete-columns',false),
     ])]);
     const editing = group('editing','Edit', [prominent(edit('autosum','AutoSum','edit-cell'),'AutoSum'),fill(),
         menu('sort-filter-menu','Sort & Filter',162,[edit('sort-ascending','Sort Ascending…','sort-range',false),edit('sort-descending','Sort Descending…','sort-range',false),edit('sort','Custom Sort…','sort-range',false),edit('toggle-filter','AutoFilter','toggle-autofilter',false),edit('home-clear-filters','Clear All Filters','toggle-autofilter',false,canClearFilters)]),
-        edit('clear','Clear Contents (Delete)','clear-range'), data('find','Find (Ctrl+F)',showFind)],0,3);
+        edit('clear','Clear Contents (Delete)','clear-range'), menu('find-select-menu','Find & Select',109,[data('find','Find (Ctrl+F)',showFind),edit('replace','Replace… (Ctrl+H)','replace-text',false),edit('go-to','Go To… (Ctrl+G / F5)','select-range',false),edit('go-to-special','Go To Special…','select-special-cells',false),edit('select-visible','Visible Cells Only (Alt+;)','select-special-cells',false)])],0,3);
     const page = (id, groups) => ({id,title:id[0].toUpperCase()+id.slice(1),groups});
     const pages = new Map([
         ['home',page('home',[clipboard,font,alignment,number,cells,editing])],
         ['insert',page('insert',[
+            group('tables','Tables',[prominent(edit('create-table','Table…','create-table'),'Table…')]),
             group('charts','Charts',[prominent(edit('insert-chart','Charts…','create-chart'),'Charts…'),prominent(edit('insert-chart-column','Column Chart','create-chart'),'Column Chart'),prominent(edit('insert-chart-line','Line Chart','create-chart'),'Line Chart')]),
             group('insert-cells','Rows and Columns',[structure('insert-rows','Insert Rows Above'),structure('insert-columns','Insert Columns Before')]),
             group('sheets','Sheets',[
@@ -103,17 +118,22 @@ export function createSheetRibbon(options) {
             group('formula-fill','Fill',[edit('fill-down','Fill Down (Ctrl+D)','fill-range',true,()=>canFill('down')),edit('fill-right','Fill Right (Ctrl+R)','fill-range',true,()=>canFill('right'))]),
         ])],
         ['data',page('data',[
+            group('table-tools','Tables',[edit('table-properties','Table Properties…','rename-table')]),
+            group('validation','Data Validation',[menu('data-validation-menu','Data Validation',175,[edit('data-validation','Data Validation…','set-data-validation',false),edit('validation-clear-selection','Clear Validation from Selected Cells','clear-data-validations',false),edit('validation-clear-sheet','Clear Validation from Entire Sheet','clear-data-validations',false)])]),
             group('sort','Sort',[edit('sort-ascending','Sort Ascending…','sort-range'),edit('sort-descending','Sort Descending…','sort-range'),prominent(edit('sort','Custom Sort…','sort-range'),'Sort…')]),
             group('data-tools','Data Tools',[prominent(edit('remove-duplicates','Remove Duplicates…','remove-duplicates'),'Remove Duplicates'),prominent(edit('text-to-columns','Text to Columns…','text-to-columns',true,canSplit),'Text to Columns')]),
             group('filter','Filter',[prominent(edit('toggle-filter','AutoFilter (Ctrl+Shift+L)','toggle-autofilter'),'Filter'),data('filter-values','Filter Values…',showFilter),prominent(data('clear-filters','Clear All Filters',clearFilters),'Clear All Filters')]),
         ])],
         ['design',page('design',[group('chart-editing','Chart',[prominent(edit('chart-type','Change Chart Type…','update-chart',true,canEditChart),'Change Chart Type…'),prominent(edit('format-chart','Format Chart…','update-chart',true,canEditChart),'Format Chart…'),prominent(edit('chart-data','Select Data…','update-chart',true,canEditChart),'Select Data…'),edit('delete-chart','Delete Chart','delete-chart',true,canEditChart)])])],
         ['view',page('view',[
+            group('panes','Window',[menu('freeze-panes-menu','Freeze Panes',41,[
+                edit('freeze-selected','Freeze Panes at Selection','freeze-panes',false),edit('freeze-top-row','Freeze Top Row','freeze-panes',false),edit('freeze-first-column','Freeze First Column','freeze-panes',false),edit('unfreeze-panes','Unfreeze Panes','freeze-panes',false),
+            ])]),
             group('visibility','Show',[menu('show-options','Show',41,[decorate(toggle('toggle-formula','Formula Bar',formulaBar),'toggle-formula','Formula Bar')])]),
-            group('help','Help',[menu('help-options','Help',51,[decorate(action('about','About Rice Sheet',showAbout),'about','About Rice Sheet')])]),
+            group('help','Help',[decorate(action('search-commands','Search commands',showCommandSearch),'search-commands','Search commands'),menu('help-options','Help',51,[decorate(action('about','About Rice Sheet',showAbout),'about','About Rice Sheet')])]),
         ])],
     ]);
-    const ribbon = new Ribbon({name:'sheet-ribbon-tabs',presentation:'office',tabs:[...pages.values()],activeTab:'home'});
+    const ribbon = new Ribbon({name:'sheet-ribbon-tabs',presentation:'office',density:'compact',tabs:[...pages.values()],activeTab:'home'});
     ribbon.setTabState('design',{visible:false});
     const selectTab = name => ribbon.selectTab(name);
     const file = new MenuBar({name:'sheet-file-menu',text:'panel:office-ribbon-heading:flush:fixed'},[menu('file-menu','File',null,[...(sensitivityItem ? [sensitivityItem] : []),
@@ -122,11 +142,13 @@ export function createSheetRibbon(options) {
     ])]);
     const quickPaste = decorate(editorAction('paste', 'Paste (Ctrl+V)', 'paste-range', true, null,
         new HoldMenuButton({name:'quick-paste',text:'',icon:icons.paste,tooltip:'Paste (Ctrl+V) · Hold for options',enabled:false},[
+            edit('paste-special-quick','Paste Special…','paste-special',false),
             edit('paste-values','Paste Values','paste-range',false),
             edit('paste-formulas','Paste Formulas','paste-range',false),
         ])), 'paste', 'Paste (Ctrl+V) · Hold for options');
     const quick = new ToolBar({name:'quick-access',text:'panel:office-ribbon-heading:flush:fixed:gap=2:accessory-height=28'},[
         doc('open','Open… (Ctrl+O)',true),doc('save','Save (Ctrl+S)',true),
+        edit('cut','Cut (Ctrl+X)','cut-range'),
         edit('copy','Copy (Ctrl+C)','copy-range'),quickPaste,edit('format-painter','Format Painter','paint-format'),
         edit('undo','Undo (Ctrl+Z)','undo'),edit('redo','Redo (Ctrl+Y)','redo'),
     ]);

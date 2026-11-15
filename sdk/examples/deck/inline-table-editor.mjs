@@ -1,6 +1,7 @@
 import { Message, SceneOverlay, Stack, State, TextEditor } from '@ricewm/app';
 import { cellKey } from './table-values.mjs';
 import { inlineCellBox } from './table-geometry.mjs';
+import {createInlineShapeEditor,richShapeEditorPresentation} from './inline-shape-editor.mjs';
 
 // Navigation must run before TextEditorController's ordinary Tab insertion.
 class CellEditor extends TextEditor {
@@ -11,15 +12,23 @@ class CellEditor extends TextEditor {
 }
 
 /** One retained native editor follows the selected cell; no sidebar draft. */
-export function createInlineTableEditor({surface,viewport,change,navigate,exit}) {
-    let active=null,size=null,pending=false,opened=false,transition=null,queued=[],pointerBounds=null;
-    const editor=new CellEditor({name:'cell-editor',value:'',rows:1,wrap:true,state:State.EXPANSIVE,
+export function createInlineTableEditor({surface,viewport,change,navigate,exit,renderText=null,selectionChanged=()=>{},notice=()=>{}}) {
+    let active=null,size=null,pending=false,opened=false,transition=null,queued=[],pointerBounds=null,richMode=false,sourceScene=null;
+    const editor=new CellEditor({name:'cell-editor',value:'',rows:1,wrap:true,acceptTab:true,state:State.EXPANSIVE,
         accessibleName:'Table cell text',enabled:true,readOnly:false});
     const overlay=new SceneOverlay({name:'cell-editor-overlay',surface,bounds:{x:0,y:0,width:1,height:1},visible:false},[editor]);
     const stack=new Stack({name:'slide-editor-stack',text:'panel:flush',state:State.EXPANSIVE});
     viewport.clip.remove(surface);stack.append(surface);stack.append(overlay);viewport.clip.append(stack);
+    const rich=createInlineShapeEditor({surface,viewport,stack,renderText,selectionChanged,notice,namePrefix:'cell',accessibleName:'Table cell text',clipText:true,
+        change:value=>change?.(value,false),exit,navigate:backwards=>queue(()=>navigate?.(backwards)),
+        rangeTarget:()=>({object:active.object.id,cell:{row:active.row,column:active.column}})});
+    const sourceObject=target=>({id:cellKey(target.object.id,target.row,target.column),kind:'text',bounds:target.cell.bounds,transform:target.object.transform,text:target.cell.text});
+    for(const input of rich.editors){const route=input.routeKey;input.routeKey=event=>{
+        if(transition){if(queued.length<512)queued.push({...event.detail});event.preventDefault();return true;}
+        return route(event);
+    };}
     const style = () => {
-        if(!active || !size) return false;
+        if(!active || !size || richMode) return false;
         const box=inlineCellBox(active,size);if(!box)return false;
         const {scaleX,scaleY,...bounds}=box;
         
@@ -56,7 +65,7 @@ export function createInlineTableEditor({surface,viewport,change,navigate,exit})
         if(transition) return transition;
         transition=Promise.resolve().then(action).finally(()=>{
             transition=null;const keys=queued;queued=[];
-            if(opened)for(const key of keys)editor.sendMessage(Message.KEY,key);
+            if(opened)for(const key of keys)(richMode?rich.editor:editor).sendMessage(Message.KEY,key);
         });
         return transition;
     }
@@ -71,16 +80,32 @@ export function createInlineTableEditor({surface,viewport,change,navigate,exit})
         return false;
     };
     viewport.onViewChanged(()=>{if(opened)style();});
-    return Object.freeze({editor,overlay,stack,
+    return Object.freeze({get editor(){return richMode?rich.editor:editor;},get overlay(){return richMode?rich.overlay:overlay;},stack,
+        editors:Object.freeze([editor,...rich.editors]),
         get active(){return opened;},get pending(){return pending;},get target(){return active;},get waiting(){return transition;},
         get key(){return active?cellKey(active.object.id,active.row,active.column):null;},
-        get value(){return editor.getProperty('value');},
-        begin(target,slideSize,{pointer=null,value=target.cell.text?.text||'',preserve=false}={}) {
+        get value(){return richMode?rich.value:editor.getProperty('value');},
+        get rich(){return richMode&&rich.rich;},get hasPending(){return richMode&&rich.hasPending;},get formatting(){return richMode&&rich.formatting;},
+        get layoutWaiting(){return richMode?rich.layoutWaiting:null;},get range(){return richMode?rich.range:null;},
+        get rangeTarget(){return richMode?rich.rangeTarget:null;},get typingStyle(){return richMode?rich.typingStyle:{};},
+        get paragraphFormatting(){return richMode&&rich.paragraphFormatting;},paragraphs(){return richMode?rich.paragraphs():[];},
+        styles(){return richMode?rich.styles():null;},capture(){return richMode?rich.capture():null;},
+        acknowledge(batch){if(richMode)rich.acknowledge(batch);},discard(){return richMode?rich.discard():undefined;},
+        format(action){return richMode?rich.format(action):Promise.resolve(false);},setTypingStyle(style){if(richMode)rich.setTypingStyle(style);},
+        selectAll(){if(richMode)return rich.setSelection(0,Array.from(rich.value).length);const changed=editor.setSelection(0,Array.from(editor.value).length);selectionChanged();return changed;},
+        begin(target,slideSize,{pointer=null,value=target.cell.text?.text||'',preserve=false,scene=null}={}) {
             const text=target?.cell?.text;
+            const object=target?.cell?sourceObject(target):null,nextScene=scene||sourceScene;
+            if(renderText&&!(pending&&preserve)&&richShapeEditorPresentation(object,nextScene)){
+                active=target;size=slideSize;sourceScene=nextScene;pending=false;opened=true;richMode=true;
+                editor.setProperty('focused',false);overlay.visible=false;
+                const b=target.cell.bounds,point=pointer?.point?{...pointer,x:(pointer.point[0]-b.x)/b.width,y:(pointer.point[1]-b.y)/b.height}:pointer;
+                return Promise.resolve(rich.begin(object,nextScene,{pointer:point,preserve,value})).then(ok=>{if(!ok)this.close();return ok;});
+            }
             if(!inlineCellBox(target,slideSize) || Math.abs(target.object.transform[0]-target.object.transform[3])>1e-6 || text?.mixed || (text?.style?.opacity??1)!==1 || (target.cell.fill?.opacity??1)!==1) {
                 this.close();return false;
             }
-            active=target;size=slideSize;pending=false;
+            rich.close();richMode=false;active=target;size=slideSize;sourceScene=scene;pending=false;
             try {if(!style()){this.close();return false;}} catch {this.close();return false;}
             if(!preserve)editor.setProperty('value',value);
             opened=true;overlay.setProperty('visible',true);surface.setProperty('focused',false);editor.setProperty('focused',true);
@@ -92,10 +117,10 @@ export function createInlineTableEditor({surface,viewport,change,navigate,exit})
                 text:{text:'',style:{fontFamily:'Arial',fontSize:20,color:'#000000'},layout:{left:4,right:4,top:4,bottom:4,vertical:'top',wrap:true}}}};
             this.begin(target,slideSize);pending=true;
         },
-        refresh(target,slideSize) {if(opened&&!pending&&target){active=target;size=slideSize;style();}},
-        input(keys) {for(const key of keys)editor.sendMessage(Message.KEY,key);},
-        selectPoint:point,
-        close() {opened=false;pending=false;active=null;queued=[];editor.setProperty('focused',false);overlay.setProperty('visible',false);},
+        refresh(target,slideSize,scene=sourceScene) {if(opened&&!pending&&target){active=target;size=slideSize;sourceScene=scene;return richMode?rich.refresh(sourceObject(target),scene):style();}},
+        input(keys) {if(richMode)rich.input(keys);else for(const key of keys)editor.sendMessage(Message.KEY,key);},
+        selectPoint(pointer){if(richMode){const b=active.cell.bounds;return rich.selectPoint({...pointer,x:(pointer.point[0]-b.x)/b.width,y:(pointer.point[1]-b.y)/b.height});}point(pointer);},
+        close() {opened=false;pending=false;active=null;sourceScene=null;queued=[];rich.close();richMode=false;editor.setProperty('focused',false);overlay.setProperty('visible',false);},
         queue,
     });
 }

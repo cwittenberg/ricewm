@@ -30,6 +30,7 @@ export class AppWindow {
         this.application = application;
         this.id = BigInt(id);
         this.titleListeners = new Set();
+        this.closeListeners = new Set();
         this._title = "";
         this.title = title;
         this.root = null;
@@ -81,6 +82,12 @@ export class AppWindow {
         if (typeof listener !== "function") throw new TypeError("title listener must be a function");
         this.titleListeners.add(listener);
         return () => this.titleListeners.delete(listener);
+    }
+
+    onClose(listener) {
+        if(typeof listener!=='function')throw TypeError('Close listener is required');
+        if(this.presentationState.closed)throw Error('Window is closed');
+        this.closeListeners.add(listener);return()=>this.closeListeners.delete(listener);
     }
 
     get state() { return this.presentationState.state; }
@@ -198,6 +205,7 @@ export class AppWindow {
     }
 
     close() {
+        if(this.presentationState.closed)return;
         this.stopInitialFit?.();this.stopInitialFit=null;
         this.contentSizing.close();
         this.presentationState.close();
@@ -211,6 +219,8 @@ export class AppWindow {
         this.titleListeners.clear();
         this.application.windows.delete(this.id);
         this.application.dirtyWindows.delete(this);
+        for(const listener of [...this.closeListeners])listener(this);
+        this.closeListeners.clear();
     }
 }
 
@@ -226,6 +236,7 @@ export class RiceApp {
         this.windowListeners = new Set();
         this.controls = new Map();
         this.controlWindows = new Map();
+        this.gameSurfaces = new Set();this.gameSurfaceRevision=0;
         this.nextWindowId = 1n;
         this.nextWidgetId = 1n;
         this.dirtyWindows = new Set();
@@ -301,11 +312,19 @@ export class RiceApp {
         return control;
     }
 
+    // Private rendering hint. It adds no drawing authority: only an attached
+    // native SceneSurface in this application can be marked for games.
+    registerGameSurface(control) {
+        if(!(control instanceof Control)||control.kind!==65||control.application!==this||!this.controlWindows.has(control.id))throw TypeError('Game surface must belong to this application window');
+        if(!this.gameSurfaces.has(control.id)){this.gameSurfaces.add(control.id);this.gameSurfaceRevision++;}
+    }
+
     detach(control) {
         const owner = this.controlWindows.get(control.id);
         const detachOne = current => {
             this.pendingScenes.delete(current);
             for (const child of current.children) detachOne(child);
+            if(this.gameSurfaces.delete(current.id))this.gameSurfaceRevision++;
             this.controls.delete(current.id);
             this.controlWindows.delete(current.id);
             current.application = null;
@@ -315,6 +334,16 @@ export class RiceApp {
         if (owner) {
             this.dirtyWindows.add(owner);
             this.scheduleRender();
+        }
+    }
+
+    claimControlFocus(control, options) {
+        const owner = this.controlWindows.get(control.id);
+        if (!owner) return;
+        for (const candidate of this.controls.values()) {
+            if (candidate !== control && this.controlWindows.get(candidate.id) === owner && candidate.values.focused) {
+                candidate.setProperty('focused', false, options);
+            }
         }
     }
 
@@ -392,15 +421,26 @@ export class RiceApp {
         };
         if (window.root) visit(window.root);
 
-        const patches = [];
-        const replacesWholeTree = window.rootReplacementPending;
+        const patches = [], deferredRemovals = [];
+        const replacesWholeTree = window.rootReplacementPending || [...desired.values()].some(widget =>
+            window.rendered.has(widget.id) && window.rendered.get(widget.id).kind !== widget.kind);
         if (replacesWholeTree) {
             patches.push(frozenPatch("clear"));
         } else {
+            // Move retained descendants out before removing their former
+            // ancestors: native Remove also removes the entire subtree.
+            const retainedAncestors = new Set();
+            for (const widget of desired.values()) {
+                let parent = window.rendered.get(widget.id)?.parent;
+                while (parent != null && !desired.has(parent)) {
+                    retainedAncestors.add(parent);
+                    parent = window.rendered.get(parent)?.parent;
+                }
+            }
             const removals = [...window.rendered.values()]
                 .filter(widget => !desired.has(widget.id))
                 .sort((left, right) => right.depth - left.depth);
-            for (const widget of removals) patches.push(frozenPatch("remove", { id: widget.id }));
+            for (const widget of removals) (retainedAncestors.has(widget.id) ? deferredRemovals : patches).push(frozenPatch("remove", { id: widget.id }));
         }
 
         for (const widget of desired.values()) {
@@ -450,6 +490,7 @@ export class RiceApp {
                 }));
             }
         }
+        patches.push(...deferredRemovals);
         for (const widget of desired.values()) this.controls.get(widget.id)?.commitPresentation?.();
         window.rendered = desired;
         window.rootReplacementPending = false;
@@ -473,9 +514,7 @@ export class RiceApp {
                 if (!ancestor.values.visible || !(ancestor.state & State.ENABLED)) return false;
             }
         }
-        if(event?.type==='focus'&&event.focused!==false){
-            for(const candidate of this.controls.values())if(candidate!==control&&this.controlWindows.get(candidate.id)===owner&&candidate.values.focused)candidate.setProperty('focused',false);
-        }
+        if (event?.type === 'focus' && event.focused !== false) this.claimControlFocus(control);
         const previous=this.hostEventWindow;this.hostEventWindow=owner.id;
         try{return control.dispatchHostEvent(event);}finally{this.hostEventWindow=previous;}
     }

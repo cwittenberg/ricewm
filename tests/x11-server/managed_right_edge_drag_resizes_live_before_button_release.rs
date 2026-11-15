@@ -553,3 +553,44 @@ use super::*;
             ]
         );
     }
+
+#[test]
+fn fullscreen_publishes_state_before_resize_and_restores_it_on_toggle() {
+    let order = ClientByteOrder::LittleEndian;
+    let mut server = DisplayServer::new(DisplayConfig {
+        width_px: 800, height_px: 600, native_window_manager: true,
+        ..DisplayConfig::default()
+    });
+    let owner = server.open_client().unwrap();
+    server.feed(owner, &setup_request(order, &[], &[])).unwrap();
+    let client = ResourceId(0x0020_019a);
+    server.feed(owner, &create_window_request(order, client.0,
+        STRUCTURE_NOTIFY_MASK | PROPERTY_CHANGE_MASK)).unwrap();
+    server.feed(owner, &request(order, 8, 0, &client.0.to_le_bytes())).unwrap();
+    let frame = server.managed_frames[&client.0];
+    let original = server.windows[&frame.0].clone();
+    let attention = server.atoms.intern("_NET_WM_STATE_DEMANDS_ATTENTION", false);
+    let fullscreen = server.atoms.intern("_NET_WM_STATE_FULLSCREEN", false);
+    let state_atom = server.atoms.intern("_NET_WM_STATE", false);
+    server.set_wm_property(client, "_NET_WM_STATE", "ATOM", 32,
+        attention.0.to_le_bytes().to_vec());
+    let _ = drain_all(&mut server, owner);
+    server.toggle_fullscreen(client, 1);
+    let state = &server.windows[&client.0].properties[&state_atom].data;
+    assert!(state.chunks_exact(4).any(|value| read_u32_le(value) == fullscreen.0),
+        "Qt must observe the fullscreen state rather than an ordinary resize");
+    assert!(state.chunks_exact(4).any(|value| read_u32_le(value) == attention.0));
+    let events = drain_all(&mut server, owner);
+    let state_notify = events.chunks_exact(32).position(|event|
+        event[0] == 28 && read_u32_le(&event[8..12]) == state_atom.0).unwrap();
+    let configure = events.chunks_exact(32).position(|event| event[0] == 22).unwrap();
+    assert!(state_notify < configure);
+    server.toggle_fullscreen(client, 1);
+    assert!(drain_all(&mut server, owner).is_empty());
+    server.toggle_fullscreen(client, 2);
+    assert_eq!(server.windows[&client.0].properties[&state_atom].data,
+        attention.0.to_le_bytes(), "restore must preserve unrelated state hints");
+    let restored = &server.windows[&frame.0];
+    assert_eq!((restored.x, restored.y, restored.width, restored.height),
+        (original.x, original.y, original.width, original.height));
+}

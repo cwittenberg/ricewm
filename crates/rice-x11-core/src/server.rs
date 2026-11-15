@@ -190,6 +190,7 @@ const WM_ACTION_NATIVE_TASK_PREFIX: u32 = 0xfffa_0000;
 const WM_ACTION_WORKSPACE_PREFIX: u32 = 0xfffb_0000;
 const WM_ACTION_X11_FOREGROUND_PREFIX: u32 = 0xfff9_0000;
 const WM_ACTION_TASK_CLOSE_PREFIX: u32 = 0xfff8_0000;
+const WM_ACTION_TASK_LOGOUT_QUIT_PREFIX: u32 = 0xffe5_0000;
 const WM_ACTION_TASK_MAXIMIZE_PREFIX: u32 = 0xfff7_0000;
 const WM_ACTION_TASK_MINIMIZE_PREFIX: u32 = 0xfff6_0000;
 const WM_ACTION_TASK_RESTORE_PREFIX: u32 = 0xfff5_0000;
@@ -1097,6 +1098,7 @@ enum WmMenuRow {
     Exit,
     Task(WmTaskTarget),
     WindowClose,
+    WindowLogoutQuit,
     WindowMaximize,
     WindowMinimize,
     WindowRestore,
@@ -1183,22 +1185,6 @@ fn wm_menu_row_top_with(rows: &[WmMenuRow], index: usize, row_height: usize) -> 
         .take(index)
         .map(|row| wm_menu_row_height_with(row, row_height))
         .sum()
-}
-
-fn wm_menu_row_at_with(
-    rows: &[WmMenuRow],
-    y: usize,
-    row_height: usize,
-) -> Option<(usize, WmMenuRow)> {
-    let mut top = 0usize;
-    for (index, row) in rows.iter().enumerate() {
-        let bottom = top.saturating_add(wm_menu_row_height_with(row, row_height));
-        if y < bottom {
-            return Some((index, row.clone()));
-        }
-        top = bottom;
-    }
-    None
 }
 
 fn wm_category_label(category: u8) -> &'static [u8] {
@@ -1400,8 +1386,12 @@ pub struct DisplayServer {
     wm_actions: VecDeque<u32>,
     wm_relaunch_commands: VecDeque<Vec<u8>>,
     wm_clock_minutes: u16,
+    // Grouped icon interactions are shared by the compact dock and icons-only taskbar.
     wm_dock_style: bool,
+    wm_icons_taskbar: bool,
+    wm_dock_icon_placement: u8,
     wm_dock_height: Option<usize>,
+    wm_taskbar_opacity: Option<u8>,
     wm_dock_corner_radius: usize,
     wm_dock_magnification: bool,
     wm_dock_magnification_zoom: u8,
@@ -1427,6 +1417,7 @@ pub struct DisplayServer {
     wm_gnome_menu_items: Vec<WmGnomeMenuItem>,
     wm_gnome_menu_indicator_uuid: Vec<u8>,
     wm_gnome_menu_image: Option<WmGnomeMenuImage>,
+    wm_gnome_menu_scene: Option<(WmGnomeMenuImage, Vec<(u8, u16, u16, u16, u16)>)>,
     wm_gnome_menu_icons: BTreeMap<u8, WmGnomeMenuImage>,
     wm_gnome_dialog_uuid: Vec<u8>,
     wm_gnome_dialog_title: Vec<u8>,
@@ -1469,6 +1460,8 @@ pub struct DisplayServer {
     wm_menu_applications_only: bool,
     wm_menu_icon_size: u8,
     wm_theme_menu_row_height: usize,
+    wm_theme_shell_layout: [usize; 7],
+    wm_window_chrome: Option<[u32; 15]>,
     wm_menu_show_themes: bool,
     wm_menu_show_workspaces: bool,
     wm_session_logout: bool,
@@ -1495,6 +1488,7 @@ pub struct DisplayServer {
 mod lifecycle;
 mod shell_setup;
 mod shell_menu;
+mod shell_theme_layout;
 mod shell_menu_wm_menu_column_offsets;
 mod task_groups;
 mod tiling;
@@ -1552,6 +1546,7 @@ mod damage;
 mod composite;
 mod generic_events;
 mod xkb;
+mod xkb_key_names;
 mod xinput;
 mod xinput_xinput_query_pointer;
 mod xtest;
@@ -1596,3 +1591,7 @@ include!("notification_area.rs");
 #[cfg(test)]
 #[path = "../../../tests/taskbar-geometry-compositor.rs"]
 mod taskbar_geometry_tests;
+
+#[cfg(test)]
+#[path = "../../../tests/theme-shell-layout.rs"]
+mod theme_shell_layout_tests;

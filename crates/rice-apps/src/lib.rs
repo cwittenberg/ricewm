@@ -28,6 +28,12 @@ pub const MAX_ACTORS: usize = 64;
 pub const MAX_OUTBOUND_MESSAGES: usize = 256;
 pub const MAX_OUTBOUND_BYTES: usize = 4 * MAX_MESSAGE_BYTES;
 
+/// Build/runtime discovery comes from the same compiled feature selection as
+/// the actor factory. Hosts must not infer actor support from a package name.
+pub fn supported_entrypoints() -> Vec<&'static str> {
+    vec![desktop::ENTRYPOINT, files::ENTRYPOINT, calc::ENTRYPOINT]
+}
+
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
 struct OutboundQueue {
     frames: VecDeque<Vec<u8>>,

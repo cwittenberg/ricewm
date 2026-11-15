@@ -40,3 +40,4 @@ sidebar.material=solid
 menu.material=solid
 gnome.extension=
 background.image=
+# theme.bundle={"metrics":{"titlebarHeight":23}}

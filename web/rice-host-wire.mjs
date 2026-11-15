@@ -52,7 +52,7 @@ export function decodeRiceHostRequest(message) {
     const tag = view.getUint8(HEADER_BYTES + 16);
     if (tag === 43 && bytes.byteLength === HEADER_BYTES + 34) {
         const token = id(view, HEADER_BYTES + 17, 'window size token'), width = view.getUint32(HEADER_BYTES + 25, true), height = view.getUint32(HEADER_BYTES + 29, true);
-        if (![width, height].every(value => value >= 96 && value <= 4096)) throw RangeError('Invalid native window content size');
+        if (width < 96 || width > 4096 || height < 14 || height > 4096) throw RangeError('Invalid native window content size');
         const anchor = ['right','left','top','bottom'][view.getUint8(HEADER_BYTES + 33)];
         if (!anchor) throw RangeError('Invalid content resize anchor');
         return Object.freeze({app, window, operation:'content-size', token, width, height, anchor});
@@ -608,7 +608,7 @@ export function decodeRiceHostRequest(message) {
             return Object.freeze({app, window, operation: "terminal", session,
                 action: "open-grid", columns, rows, memoryMiB});
         }
-        if ((action === 0 || action === 2 || action === 6 || action === 12) && bytes.byteLength === HEADER_BYTES + 30) {
+        if ((action === 0 || action === 2 || action === 6 || action === 12 || action === 13) && bytes.byteLength === HEADER_BYTES + 30) {
             const columns = view.getUint16(HEADER_BYTES + 26, true);
             const rows = view.getUint16(HEADER_BYTES + 28, true);
             if (columns < 2 || columns > 512 || rows < 1 || rows > 256) {
@@ -619,7 +619,7 @@ export function decodeRiceHostRequest(message) {
                 window,
                 operation: "terminal",
                 session,
-                action: action === 0 ? "open" : action === 6 ? "open-grid" : action === 12 ? "open-xcodex" : "resize",
+                action: action === 0 ? "open" : action === 6 ? "open-grid" : action === 12 ? "open-xcodex" : action === 13 ? "open-claude" : "resize",
                 columns,
                 rows,
             });

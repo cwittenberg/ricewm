@@ -1,5 +1,7 @@
+import {checkedThemeReply} from '../../versions/1.0.0/runtime/sdk/js/presentation/theme-contract.mjs';
 import { checkedTableReply } from './table-contract.mjs';
 import { checkedSelectionReply } from './selection-contract.mjs';
+import {checkedSlideClipboardReply} from '../../versions/1.0.0/runtime/sdk/js/presentation/slide-transfer-contract.mjs';
 import { checkedNotesReply } from './notes-contract.mjs';
 import { checkedAnimationTimeline } from './animation-contract.mjs';
 import { checkedAnimationCatalog } from './animation-authoring-contract.mjs';
@@ -11,9 +13,10 @@ import { checkedRequest, checkedResponse, checkedProjection, checkedOutline, che
 import { checkedShapeCatalog } from './shape-catalog.mjs';
 import { checkedLayoutCatalog } from './layout-catalog.mjs';
 import { checkedScene } from './scene-contract.mjs';
+import { checkedSectionReply, checkedSectionNameReply } from '../../versions/1.0.0/runtime/sdk/js/presentation/section-contract.mjs';
 
 const SCHEMA = 'ricewm.office.engine/v1/deck';
-const OPERATIONS = new Set(['shape-catalog', 'layout-catalog', 'animation-catalog', 'status', 'project', 'outline', 'scene', 'animation-timeline', 'table-cells', 'speaker-notes', 'apply', 'undo', 'redo', 'export-selection', 'prepare-selection', 'discard-selection']);
+const OPERATIONS = new Set(['prepare-theme','discard-theme','shape-catalog', 'layout-catalog', 'animation-catalog', 'status', 'project', 'outline', 'section-outline', 'section-name', 'scene', 'animation-timeline', 'table-cells', 'speaker-notes', 'apply', 'undo', 'redo', 'export-selection', 'prepare-selection', 'discard-selection','export-slides','prepare-slides','discard-slides','confirm-slide-copy']);
 function deadline(promise, milliseconds) {
     let timer;
     return Promise.race([promise, new Promise((_, reject) => {
@@ -84,13 +87,17 @@ export function connectDeckEnginePort({ bus, backend, deadlineMs = 4500 } = {}) 
             else if (operation === 'layout-catalog') checkedLayoutCatalog(reply);
             else if (operation === 'project') checkedProjection(reply);
             else if (operation === 'outline') checkedOutline(reply, checked.arguments);
+            else if (operation === 'section-outline') checkedSectionReply(reply, checked.arguments);
+            else if (operation === 'section-name') checkedSectionNameReply(reply, checked.arguments);
             else if (operation === 'apply') checkedMutation(reply, checked.arguments.commands);
             else if (operation === 'scene') checkedScene(reply);
             else if (operation === 'animation-timeline') checkedAnimationTimeline(reply, checked.arguments, checked.expectedRevision);
             else if (operation === 'animation-catalog') checkedAnimationCatalog(reply, checked.expectedRevision);
             else if (operation === 'table-cells') checkedTableReply(reply, checked.arguments, checked.expectedRevision);
+            else if(operation==='prepare-theme')checkedThemeReply(reply,checked.expectedRevision);
             else if (operation === 'speaker-notes') checkedNotesReply(reply, checked.arguments, checked.expectedRevision);
             else if (['export-selection', 'prepare-selection'].includes(operation)) checkedSelectionReply(reply, operation, checked.expectedRevision);
+            else if (['export-slides','prepare-slides'].includes(operation)) checkedSlideClipboardReply(reply,operation,checked.expectedRevision);
             else checkedStatus(reply);
             const next = revision(reply.revision);
             if (BigInt(next) < BigInt(currentRevision)) throw failure('INVALID_RESPONSE', 'Stale Deck reply');
@@ -108,6 +115,8 @@ export function connectDeckEnginePort({ bus, backend, deadlineMs = 4500 } = {}) 
         get revision() { return currentRevision; },
         project: args => request('project', args),
         outline: (args, expected = currentRevision) => request('outline', args, expected),
+        sectionOutline: (args, expected = currentRevision) => request('section-outline', args, expected),
+        sectionName: (args, expected = currentRevision) => request('section-name', args, expected),
         scene: (args, expected = currentRevision) => request('scene', args, expected),
         animationTimeline: (args, expected = currentRevision) => request('animation-timeline', args, expected),
         animationCatalog: (expected = currentRevision) => request('animation-catalog', {}, expected),
@@ -119,6 +128,12 @@ export function connectDeckEnginePort({ bus, backend, deadlineMs = 4500 } = {}) 
         exportSelection: (args, expected = currentRevision) => request('export-selection', args, expected),
         prepareSelection: (expected = currentRevision) => request('prepare-selection', {}, expected),
         discardSelection: (expected = currentRevision) => request('discard-selection', {}, expected),
+        exportSlides: (args,expected=currentRevision)=>request('export-slides',args,expected),
+        confirmSlideCopy: (args,expected=currentRevision)=>request('confirm-slide-copy',args,expected),
+        prepareTheme:(expected=currentRevision)=>request('prepare-theme',{},expected),
+        discardTheme:(expected=currentRevision)=>request('discard-theme',{},expected),
+        prepareSlides: (expected=currentRevision)=>request('prepare-slides',{},expected),
+        discardSlides: (expected=currentRevision)=>request('discard-slides',{},expected),
         apply: (commands, expected = currentRevision) => request('apply', { commands }, expected),
         undo: (expected = currentRevision) => request('undo', {}, expected),
         redo: (expected = currentRevision) => request('redo', {}, expected),

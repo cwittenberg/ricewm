@@ -2,6 +2,16 @@
 use super::*;
 
 impl DisplayServer {
+    /// Override only the taskbar background; controls and icons remain opaque.
+    pub fn set_taskbar_opacity(&mut self, opacity: Option<u8>) -> bool {
+        if !self.config.native_window_manager || opacity.is_some_and(|value| value > 100) { return false; }
+        if self.wm_taskbar_opacity == opacity { return true; }
+        self.wm_taskbar_opacity = opacity;
+        self.paint_wm_chrome(WM_TASKBAR);
+        self.scene_upsert(WM_TASKBAR);
+        self.scene_damage(WM_TASKBAR);
+        true
+    }
 
     /// Resize the browser-owned output and publish the corresponding root,
     /// WM-chrome, and RANDR changes to connected X11 clients.
@@ -44,8 +54,16 @@ impl DisplayServer {
     }
 
     pub fn set_dock_style(&mut self, enabled: bool) -> bool {
-        if !self.config.native_window_manager { return false; }
-        self.wm_dock_style = enabled;
+        self.set_taskbar_style(u32::from(enabled))
+    }
+
+    /// Stable wire order: Standard, Compact dock, Icons-only taskbar.
+    pub fn set_taskbar_style(&mut self, style: u32) -> bool {
+        if !self.config.native_window_manager || style > 2 { return false; }
+        self.wm_dock_style = style != 0;
+        self.wm_icons_taskbar = style == 2;
+        self.wm_chrome_hover = None;
+        self.wm_chrome_pressed = None;
         self.refresh_taskbar_geometry();
         self.relayout_wm_edge_windows();
         self.publish_wm_root_properties();
@@ -75,6 +93,7 @@ impl DisplayServer {
     }
 
     pub(super) fn wm_dock_bar_height(&self) -> usize {
+        if self.wm_icons_taskbar { return usize::from(self.wm_taskbar_thickness()); }
         self.wm_dock_height.unwrap_or_else(|| {
             if self.wm_themes.get(usize::from(self.wm_theme)).is_some_and(|theme|
                 theme.chrome_profile == WmChromeProfile::Orchard) { 64 } else { WM_COMPACT_DOCK_BAR_THICKNESS }
@@ -127,9 +146,60 @@ impl DisplayServer {
         targets
     }
 
+    /// Start, Center, End along the taskbar's horizontal or vertical axis.
+    pub fn set_dock_icon_placement(&mut self, placement: u8) -> bool {
+        if !self.config.native_window_manager || placement > 2 { return false; }
+        if self.wm_dock_icon_placement == placement { return true; }
+        self.wm_dock_icon_placement = placement;
+        self.wm_chrome_hover = None;
+        self.wm_chrome_pressed = None;
+        self.relayout_wm_menu();
+        self.repaint_wm_chrome();
+        self.rebuild_scene();
+        true
+    }
+
+    pub(super) fn wm_icons_taskbar_available_axis(&self) -> usize {
+        let vertical = self.wm_taskbar_edge.vertical();
+        let (_, _, width, height) = self.wm_taskbar_rect();
+        let axis = if vertical { height } else { width };
+        let tray_start = if vertical {
+            self.wm_vertical_tray_layout().first().map_or(usize::from(axis), |item| item.2)
+        } else {
+            self.wm_tray_layout().first().map_or(usize::from(axis), |item| item.2)
+        };
+        tray_start.saturating_sub(self.wm_notification_icons.iter().filter(|icon| !icon.hidden).count() * 28)
+    }
+
+    pub(super) fn wm_dock_axis_padding(&self) -> usize {
+        if !self.wm_icons_taskbar { return WM_COMPACT_DOCK_AXIS_PADDING; }
+        let extent = self.wm_dock_targets().len() * self.wm_dock_step();
+        let maximum = self.wm_icons_taskbar_available_axis().saturating_sub(extent);
+        match self.wm_dock_icon_placement {
+            1 => {
+                let (_, _, width, height) = self.wm_taskbar_rect();
+                let axis = if self.wm_taskbar_edge.vertical() { height } else { width };
+                (usize::from(axis).saturating_sub(extent) / 2).min(maximum)
+            }
+            2 => maximum,
+            _ => 0,
+        }
+    }
+
+    pub(super) fn wm_dock_menu_anchor_x(&self, root_width: usize) -> i32 {
+        let base = i32::from(self.wm_taskbar_rect().0) + 8;
+        if !self.wm_icons_taskbar { return base; }
+        let (left, _, width, _) = self.wm_dock_output_rect();
+        (base + self.wm_dock_axis_padding() as i32)
+            .clamp(i32::from(left), i32::from(left) + i32::from(width).saturating_sub(root_width as i32 + 4).max(0))
+    }
+
     pub(super) fn wm_dock_step(&self) -> usize {
         let available = if self.wm_taskbar_edge.vertical() { self.config.height_px.saturating_sub(self.wm_reserved_gnome_panel_height()) } else { self.config.width_px };
-        let step = if self.wm_themes.get(usize::from(self.wm_theme)).is_some_and(|theme| theme.chrome_profile == WmChromeProfile::Orchard) { 52 } else { WM_COMPACT_DOCK_STEP };
+        let available = if self.wm_icons_taskbar {
+            self.wm_icons_taskbar_available_axis().min(u16::MAX as usize) as u16
+        } else { available };
+        let step = if self.wm_icons_taskbar { 48 } else if self.wm_themes.get(usize::from(self.wm_theme)).is_some_and(|theme| theme.chrome_profile == WmChromeProfile::Orchard) { 52 } else { WM_COMPACT_DOCK_STEP };
         (usize::from(available.saturating_sub(40)) / self.wm_dock_targets().len().max(1))
             .clamp(1, step)
     }

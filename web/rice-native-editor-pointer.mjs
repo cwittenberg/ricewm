@@ -1,4 +1,4 @@
-import {isDocumentEditor, documentEditorHit, documentEditorMetadata} from './rice-document-editor-layout.mjs';
+import {isDocumentEditor, documentEditorHit, documentEditorMetadata, documentEditorShapedHit} from './rice-document-editor-layout.mjs';
 import { documentTextHit, ensureDocumentTextFonts } from './rice-document-text-metrics.mjs';
 import { RiceNativeEditorRenderer } from './rice-native-editor-renderer.mjs';
 import { ensureEditorContentFonts } from './rice-editor-content-fonts.mjs';
@@ -12,7 +12,7 @@ export class RiceNativeEditorPointer {
         this.context = context;
         this.fontEnvironment = document || globalThis;
         this.renderer = context ? new RiceNativeEditorRenderer(context) : null;
-        this.snapshots = new Map(); this.capture = new Map(); this.retainedBytes = 0;
+        this.snapshots = new Map(); this.capture = new Map(); this.retainedBytes = 0;this.retainedShapedBytes=0;
     }
     retain(snapshot, epoch) {
         const key = `${snapshot.app}:${snapshot.window}`;
@@ -20,28 +20,34 @@ export class RiceNativeEditorPointer {
         const commands = snapshot.commands.flatMap((command, index) => (command.role === 'editor' || command.documentEditor)
             ? [{ ...command, popupLayer: snapshot.popup != null && index >= snapshot.popup.commandStart }] : []);
         const bytes = commands.reduce((total, command) => total + command.text.length * 2 + 128, 0);
+        const shapedBytes=commands.reduce((total,command)=>total+(command.shapedEditor?.bytes||0),0);
+        if(shapedBytes>8*1024*1024)throw RangeError('Native shaped editor metadata exceeds 8 MiB');
         if (bytes > 2 * 1024 * 1024) throw new RangeError('Native editor measurement metadata exceeds 2 MiB');
         this.retainedBytes -= this.snapshots.get(key)?.bytes || 0;
+        this.retainedShapedBytes -= this.snapshots.get(key)?.shapedBytes || 0;
         this.snapshots.delete(key);
-        while (this.snapshots.size >= 64 || this.retainedBytes + bytes > 2 * 1024 * 1024) {
+        while (this.snapshots.size >= 64 || this.retainedBytes + bytes > 2 * 1024 * 1024 || this.retainedShapedBytes+shapedBytes>8*1024*1024) {
             const oldest = this.snapshots.keys().next().value;
             this.retainedBytes -= this.snapshots.get(oldest).bytes;
+            this.retainedShapedBytes-=this.snapshots.get(oldest).shapedBytes||0;
             this.snapshots.delete(oldest); this.capture.delete(oldest);
         }
         this.snapshots.set(key, { snapshot: { app: snapshot.app, window: snapshot.window,
-            width: snapshot.width, height: snapshot.height, popup: snapshot.popup, commands }, epoch, bytes });
-        this.retainedBytes += bytes;
+            width: snapshot.width, height: snapshot.height, popup: snapshot.popup, commands }, epoch, bytes,shapedBytes });
+        this.retainedBytes += bytes;this.retainedShapedBytes+=shapedBytes;
         // Main canvas and runtime worker have distinct FontFaceSets. Load the
         // same exact faces in both realms before interpreting measured input.
         for (const command of snapshot.commands) {
-            const pending = command.documentEditor ? ensureDocumentTextFonts(command,this.fontEnvironment) : command.role === 'editor' ? ensureEditorContentFonts(command.text,this.fontEnvironment) : null;
-            void pending?.catch(() => {});
+            if(command.shapedEditor||command.shapedEditorPending)continue;
+            const pending=command.documentEditor?ensureDocumentTextFonts(command,this.fontEnvironment):command.role==='editor'?ensureEditorContentFonts(command.text,this.fontEnvironment):null;
+            void pending?.catch(()=>{});
         }
     }
     async prepare(app, window) {
         const retained = this.snapshots.get(`${app}:${window}`);
         const pending = [];
         for (const command of retained?.snapshot.commands || []) if (command.role === 'editor' || command.documentEditor) {
+            if(command.shapedEditor||command.shapedEditorPending)continue;
             const work = command.documentEditor ? ensureDocumentTextFonts(command,this.fontEnvironment) : ensureEditorContentFonts(command.text, this.fontEnvironment);
             if (work) pending.push(work);
         }
@@ -73,12 +79,15 @@ export class RiceNativeEditorPointer {
             return bridge.hitTest(app, window, r.x + r.width / 2, r.y + r.height / 2) === target;
         });
         if (!command) return null;
-        const pending = command.documentEditor ? ensureDocumentTextFonts(command,this.fontEnvironment) : ensureEditorContentFonts(command.text, this.fontEnvironment);
+        if(command.shapedEditorPending)return {blocked:true,target};
+        const shaped=command.shapedEditor?documentEditorShapedHit(command,x,y):null;
+        if(command.shapedEditor&&!shaped)return {blocked:true,target};
+        const pending = command.shapedEditor?null:command.documentEditor ? ensureDocumentTextFonts(command,this.fontEnvironment) : ensureEditorContentFonts(command.text, this.fontEnvironment);
         if (pending) {
             void pending.catch(() => {});
             throw new Error('Native editor fonts are not ready; prepare measured input before dispatch');
         }
-        const caret = isDocumentEditor(command) ? documentEditorHit(this.context,command,x,y) : command.documentEditor ? documentTextHit(this.context,command,x) : this.renderer.hit(command, x, y);
+        const caret = shaped?shaped.scalar:isDocumentEditor(command) ? documentEditorHit(this.context,command,x,y) : command.documentEditor ? documentTextHit(this.context,command,x) : this.renderer.hit(command, x, y);
         if (caret === null) return null;
         const text = new TextEncoder().encode(command.text);
         if (text.byteLength > 16384) return null;
@@ -86,7 +95,7 @@ export class RiceNativeEditorPointer {
         bytes.set([69, 68, 77, 49]); view.setUint32(4, bytes.byteLength, true);
         view.setBigUint64(8, BigInt(target), true); view.setBigUint64(16, retained.epoch, true);
         view.setUint32(24, caret, true); view.setUint32(28, text.byteLength, true); bytes.set(text, 32);
-        return { bytes, target, multiline: command.role === 'editor' || isDocumentEditor(command) };
+        return { bytes, target,...(shaped?{shaped}:{}), multiline: command.role === 'editor' || isDocumentEditor(command) };
     }
     accepted(app, window, kind, button, target) {
         const key = `${app}:${window}`;
@@ -96,7 +105,7 @@ export class RiceNativeEditorPointer {
     removeApp(app) {
         const prefix=`${BigInt(app)}:`;
         for(const [key,record] of this.snapshots) if(key.startsWith(prefix)) {
-            this.retainedBytes-=record.bytes;this.snapshots.delete(key);
+            this.retainedBytes-=record.bytes;this.retainedShapedBytes-=record.shapedBytes||0;this.snapshots.delete(key);
         }
         for(const key of this.capture.keys()) if(key.startsWith(prefix))this.capture.delete(key);
     }

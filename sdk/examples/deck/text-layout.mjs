@@ -1,5 +1,4 @@
-import { createCancellationScope, SceneBuilder } from '@ricewm/app';
-import { openTypographyEngine } from './typography-engine.mjs';
+import { createCancellationScope, SceneBuilder, openTypographyFontBank, translateShapedTextLayout, composeShapedTextLayouts,paragraphListLabels } from '@ricewm/app';
 import { sourceParagraphs, paragraphSpace } from './paragraph-layout.mjs';
 import { textBox, horizontalOffset, verticalOffset } from './text-box-layout.mjs';
 
@@ -101,7 +100,7 @@ async function shapeWithFallback(backend, request, notices) {
 function fontNotices(backend,frame,request,notices){
     const fallback=new Set();
     for(const glyph of frame.glyphs){
-        const actual=backend.fonts[glyph.fontSlot]?.family;
+        const actual=(frame.fontFaces??backend.fonts)[glyph.fontSlot]?.family;
         const requested=(request.spans?.[glyph.styleIndex-1]?.families||request.families).replace(/['"]/gu,'').split(',')[0].trim();
         if(actual&&actual!==requested)fallback.add(actual);
     }
@@ -109,9 +108,11 @@ function fontNotices(backend,frame,request,notices){
 }
 async function shapeObject(backend,request,paragraphs,box,notices){
     if(!paragraphs){const frame=await shapeWithFallback(backend,request,notices);fontNotices(backend,frame,request,notices);return frame;}
-    const builder=new SceneBuilder(1,1),glyphs=[],styleFallbacks=[];let width=0,height=0,lines=0,pathCount=0,bytes=0,snapshot=0;
-    for(const paragraph of paragraphs){
-        const query={...request,...paragraph.style,text:paragraph.text,spans:paragraph.spans,lineHeight:paragraph.lineHeight?.kind === 'normal' ? null : paragraph.lineHeight ?? null,pathBase:request.pathBase+pathCount};
+    const builder=new SceneBuilder(1,1),glyphs=[],styleFallbacks=[],fontFaces=[],fontIndices=new Map(),editingParts=[],listMarkers=[],labels=paragraphListLabels(paragraphs);let width=0,height=0,lines=0,pathCount=0,bytes=0,snapshot=0,markerGlyphs=0;
+    for(const[index,paragraph]of paragraphs.entries()){
+        const format=paragraph.paragraphFormat,left=format?.marginLeft??0,right=format?.marginRight??0,contentWidth=box.width-left-right;
+        if(!Number.isFinite(contentWidth)||contentWidth<=0)throw RangeError('Paragraph margins exceed text box width');
+        const query={...request,...paragraph.style,text:paragraph.text,spans:paragraph.spans,width:box.wrap?contentWidth:null,lineHeight:paragraph.lineHeight?.kind === 'normal' ? null : paragraph.lineHeight ?? null,pathBase:request.pathBase+pathCount,editing:request.editing||Boolean(labels[index])};
         const frame=await shapeWithFallback(backend,query,notices);
         if(glyphs.length+frame.glyphCount>MAX_GLYPHS||pathCount+frame.pathCount>=PATHS_PER_OBJECT)throw new RangeError('Text object exceeds glyph budget');
         bytes+=frame.displayList.length+40;if(bytes>MAX_TEXT_FRAME_BYTES)throw new RangeError('Text object exceeds frame budget');
@@ -121,32 +122,70 @@ async function shapeObject(backend,request,paragraphs,box,notices){
         const after = paragraphSpace(paragraph.spaceAfter, frame.lastLineFontSize);
         height += before;
         if (!Number.isFinite(height + frame.height + after) || height + frame.height + after > 1_000_000) throw new RangeError('Paragraph height budget exceeded');
-        const x=horizontalOffset(box,frame,query.alignment);
+        const x=left+horizontalOffset({...box,width:contentWidth},frame,query.alignment);
         builder.pushTransform([1,0,0,1,x,height]).append(frame.displayList).popTransform();
-        glyphs.push(...frame.glyphs.map(glyph=>({...glyph,x:glyph.x+x,y:glyph.y+height,cluster:glyph.cluster.map(value=>value+paragraph.offset)})));
-        width=Math.max(width,frame.width);height+=frame.height+after;lines+=frame.lines;pathCount+=frame.pathCount;snapshot=frame.snapshot;
+        if(labels[index]){
+            // Markers have native font outlines, but no source character,
+            // caret, copied text or editable offset. Keep their geometry apart.
+            const properties=format.marker||{},markerColor=properties.resolvedColor??(properties.color?.startsWith('#')?{color:properties.color,opacity:1}:null);
+            const markerRequest={...query,text:labels[index],spans:[],width:null,lineHeight:null,alignment:'left',editing:true,
+                size:properties.sizePoints===undefined?query.size*(properties.sizePercent??100)/100:properties.sizePoints*96/72,
+                families:properties.fontFamily&&!properties.fontFamily.startsWith('+')?properties.fontFamily:query.families,
+                color:markerColor?packedColor(markerColor.color,markerColor.opacity):query.color,pathBase:request.pathBase+pathCount+frame.pathCount};
+            if(/^Arial$/iu.test(markerRequest.families))markerRequest.families='Liberation Sans';
+            let marker;
+            try{marker=await shapeWithFallback(backend,markerRequest,notices);}
+            catch(error){if(!/MissingGlyph/u.test(String(error.message)))throw error;notices.push('The bullet character is unavailable in the installed fonts. Its source is preserved.');}
+            if(marker){
+            const baseline=frame.editing.lines[0].baseline,markerY=height+baseline-marker.editing.lines[0].baseline;
+            const markerX=Math.max(0,left+(format.indent||0));
+            pathCount+=marker.pathCount;markerGlyphs+=marker.glyphCount;bytes+=marker.displayList.length+40;
+            if(glyphs.length+frame.glyphCount+markerGlyphs>MAX_GLYPHS||pathCount+frame.pathCount>=PATHS_PER_OBJECT||bytes>MAX_TEXT_FRAME_BYTES)throw RangeError('Paragraph list marker budget exceeded');
+            builder.pushTransform([1,0,0,1,markerX,markerY]).append(marker.displayList).popTransform();
+            listMarkers.push({text:labels[index],paragraphOffset:paragraph.offset,x:markerX,y:markerY,width:marker.width,height:marker.height,baseline:height+baseline,fontSize:markerRequest.size,color:markerRequest.color,glyphIds:marker.glyphs.map(g=>g.glyphId)});
+            }
+        }
+        const indices=(frame.fontFaces??backend.fonts).map(face=>{
+            const key=face.resource?'sdk:'+face.resource:'package:'+face.path;
+            if(!fontIndices.has(key)){if(fontFaces.length>=128)throw new RangeError('Text object font inventory limit');fontIndices.set(key,fontFaces.length);fontFaces.push(face);}
+            return fontIndices.get(key);
+        });
+        glyphs.push(...frame.glyphs.map(glyph=>({...glyph,fontSlot:indices[glyph.fontSlot],x:glyph.x+x,y:glyph.y+height,carets:glyph.carets.map(value=>value+x),cluster:glyph.cluster.map(value=>value+paragraph.offset)})));
+        if(request.editing)editingParts.push({text:paragraph.text,offset:paragraph.offset,x,y:height,layout:frame.editing});
+        width=Math.max(width,left+frame.width+right);height+=frame.height+after;lines+=frame.lines;pathCount+=frame.pathCount;snapshot=frame.snapshot;
     }
     const displayList=builder.finish().displayList;
-    return {snapshot,width,height,lines,glyphCount:glyphs.length,frameBytes:displayList.length,pathCount,caretModel:'cluster-edges',displayList,glyphs,styleFallbacks};
+    let editing;
+    if(request.editing) {
+        if(editingParts.length===1)editing=translateShapedTextLayout(request.text,editingParts[0].layout,editingParts[0].x,editingParts[0].y);
+        else editing=composeShapedTextLayouts(request.text,editingParts);
+    }
+    return {snapshot,width,height,lines,glyphCount:glyphs.length+markerGlyphs,frameBytes:displayList.length,pathCount,caretModel:'cluster-edges',displayList,glyphs,listMarkers,styleFallbacks,fontFaces,...(editing?{editing}:{})};
 }
 
 function positionFrame(frame, box) {
     const x=box.x,y=verticalOffset(box,frame);
     const displayList=new SceneBuilder(1,1).pushTransform([1,0,0,1,x,y]).append(frame.displayList).popTransform().finish().displayList;
     return {...frame,displayList,frameBytes:displayList.length,textOffset:[x,y],contentBox:{...box},
-        glyphs:frame.glyphs.map(glyph=>({...glyph,x:glyph.x+x,y:glyph.y+y}))};
+        glyphs:frame.glyphs.map(glyph=>({...glyph,x:glyph.x+x,y:glyph.y+y,carets:glyph.carets.map(value=>value+x)})),
+        ...(frame.editing?{editing:translateShapedTextLayout(frame.sourceText,frame.editing,x,y)}:{})};
 }
 
 /** One font worker and bounded derived cache per Deck window. Source XML,
  * edits and document revisions remain owned by the document engine. */
-export function createDeckTextLayout({services,signal} = {}) {
+export function createDeckTextLayout({services,signal,sharedFonts} = {}) {
     const lifetime = createCancellationScope();
-    let closed = false, opening = null, engine = null, busy = false, cacheBytes = 0, closing = null;
+    let closed = false, opening = null, engine = null, busy = false, cacheBytes = 0, closing = null, openingFailed = false;
     const cache = new Map(), identities = new Map();
     const alive = () => { if (closed || signal?.aborted) throw new Error('Text layout closed'); };
     async function worker() {
         alive();
-        opening ||= openTypographyEngine({services,signal:lifetime.signal}).then(value=>{engine=value;return value;});
+        opening ||= openTypographyFontBank({services,signal:lifetime.signal,...(sharedFonts===undefined?{}:{sharedFonts})})
+            .then(value=>{engine=value;return value;}).catch(error=>{
+                // A temporary asset failure must not poison every later slide.
+                // The font bank cleans up its failed initialization itself.
+                opening=null;openingFailed=true;throw error;
+            });
         const value = await opening;alive();return value;
     }
     function close() {
@@ -169,12 +208,13 @@ export function createDeckTextLayout({services,signal} = {}) {
         cache.set(key,entry);cacheBytes+=entry.bytes;
     }
     return Object.freeze({
-        async render(scene, { placeholderPrompts = false } = {}) {
+        async render(scene, { placeholderPrompts = false, editing = false } = {}) {
+            if(typeof editing!=='boolean')throw TypeError('Text editing geometry requires a boolean');
             alive();if(busy)throw new Error('Text layout render already pending');
             if(!scene || typeof scene.slideId!=='string' || scene.slideId.length>4096 || !Array.isArray(scene.objects) || scene.objects.length>8192)throw new TypeError('Invalid bounded text scene');
             // Capture source-facing inputs before awaiting the font worker.
-            const slideId=scene.slideId, seen=new Set();
-            const objects=scene.objects.filter(object=>object?.text?.text || placeholderPrompts && object?.text && object.placeholder?.prompt).map(object=>{
+            const slideId=scene.slideId, seen=new Set(),preferred=[scene.designTheme?.majorFont,scene.designTheme?.minorFont].filter(value=>typeof value==='string'&&value.trim());
+            const objects=scene.objects.filter(object=>object?.text?.text || editing&&object?.text || placeholderPrompts && object?.text && object.placeholder?.prompt).map(object=>{
                 if(seen.has(object.id))throw new TypeError('Duplicate text object ID');seen.add(object.id);
                 const placeholder = !object.text.text && placeholderPrompts && object.placeholder?.prompt;
                 const captured = {id:object.id,placeholder:Boolean(placeholder),bounds:object.bounds?{...object.bounds}:null,text:{text:placeholder || object.text.text,
@@ -182,7 +222,7 @@ export function createDeckTextLayout({services,signal} = {}) {
                 if (placeholder) { captured.text.style.color = '#777777'; captured.text.mixed = false; captured.text.runs = []; captured.text.paragraphs = undefined; }
                 return captured;
             });
-            const frames=new Map(),notices=[],diagnostics=[];let total=0;busy=true;
+            const frames=new Map(),notices=[],diagnostics=[];let total=0,editingBytes=0;busy=true;openingFailed=false;
             try {
                 for(const object of objects){
                     alive();
@@ -190,7 +230,7 @@ export function createDeckTextLayout({services,signal} = {}) {
                     try {
                         if(typeof id!=='string'||!id||id.length>4096||!object.bounds)throw new TypeError('Text geometry unavailable');
                         const box=textBox(object,notices);
-                        const {request,underline}=textRequest(object,box,notices);request.underline=underline;
+                        const {request,underline}=textRequest(object,box,notices);request.underline=underline;if(editing)request.editing=true;
                         const paragraphs=richParagraphs(object,box,notices);
                         const identity=JSON.stringify([slideId,id]);
                         if(!identities.has(identity)){
@@ -205,15 +245,18 @@ export function createDeckTextLayout({services,signal} = {}) {
                         const cached=cache.get(key);
                         if(cached){cache.delete(key);cache.set(key,cached);frame=clone(cached.frame);additional=cached.notices;}
                         else {
-                            const backend=await worker();
+                            const backend=await worker();backend.setPreferredFamilies(preferred);
                             frame=await shapeObject(backend,request,paragraphs,box,additional);alive();
                             if(frame.glyphCount>MAX_GLYPHS||frame.pathCount>=PATHS_PER_OBJECT)throw new RangeError('Text object exceeds glyph budget');
                             remember(key,frame,additional);
                         }
+                        if(editing)frame.sourceText=object.text.text;
                         frame=positionFrame(frame,box);
                         if (object.placeholder) frame.placeholder = true;
                         if(total+frame.displayList.length>MAX_TEXT_FRAME_BYTES)throw new RangeError('Slide text exceeds native frame budget');
-                        total+=frame.displayList.length;frames.set(id,frame);notices.push(...additional);
+                        const geometryBytes=frame.editing?encoder.encode(JSON.stringify(frame.editing)).length:0;
+                        if(editingBytes+geometryBytes>4*1024*1024)throw RangeError('Slide text editing geometry exceeds its frame budget');
+                        editingBytes+=geometryBytes;total+=frame.displayList.length;frames.set(id,frame);notices.push(...additional);
                         if(additional.includes(STYLE_FALLBACK))diagnostics.push({objectId:id,code:'FONT_STYLE_UNAVAILABLE',requestedStyle:paragraphs?'mixed':{bold:request.bold,italic:request.italic},affectedRuns:frame.styleFallbacks,previewStyle:{bold:false,italic:false}});
                         if(frame.height>box.height)notices.push('Some text extends beyond its box height.');
                     }catch(error){
@@ -225,7 +268,7 @@ export function createDeckTextLayout({services,signal} = {}) {
                             : 'Some text could not be rendered with the available fonts and formatting.');
                         // Package/worker initialization is common to all objects;
                         // do not repeatedly start workers for the same failure.
-                        if(opening&&!engine)break;
+                        if(openingFailed)break;
                     }
                 }
                 return {frames,notices:[...new Set(notices)].slice(0,256).map(notice=>notice.slice(0,512)),diagnostics:diagnostics.slice(0,256)};

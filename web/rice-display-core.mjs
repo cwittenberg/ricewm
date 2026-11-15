@@ -1,6 +1,8 @@
+import {validateShellAppearance} from './rice-theme-shell.mjs';
 import {t} from './rice-i18n.mjs';
 import {languages} from './rice-i18n-catalog.mjs';
 import {planOutputIdentities,validOutputIdentitySlots} from './rice-output-identities.mjs';
+import {TopbarLayoutState} from './rice-topbar-layout.mjs';
 // Only canonical built-ins and explicitly marked category labels are owned UI.
 // The caller's descriptors remain unchanged for launching and folder operations.
 export function localizedMenuApplication(application) {
@@ -31,6 +33,15 @@ const MAX_BORROWED_SURFACE_UPLOAD_BYTES = 16 * 1024 * 1024;
 const MAX_DAMAGE_REGIONS_PER_DRAWABLE = 64;
 const DISPLAY_CHECKPOINT_SCHEMA = "rice.display-core.checkpoint/v1";
 const MAX_DISPLAY_CHECKPOINT_BYTES = 256 * 1024 * 1024;
+
+function gnomeNativeMenuLabel(text, encoder) {
+    // The native fallback has single-line UTF-8 labels, capped at 192 bytes.
+    // Keep the original St text in the realm; adapt only its fallback label.
+    const bytes=encoder.encode(String(text).replace(/[\u0000-\u0008\u000a-\u001f]/g,' ').slice(0,192));
+    let end=Math.min(192,bytes.length);
+    if(end<bytes.length)while(end>0&&(bytes[end]&0xc0)===0x80)end--;
+    return bytes.subarray(0,end);
+}
 
 function addDamageRegion(regions, rectangle) {
     let next = rectangle;
@@ -292,6 +303,10 @@ export class RiceDisplayCore {
         }
     }
 
+    noteHandledAccelerator(event) {
+        if(event?.input==='key'&&event.pressed===true&&(Number(event.state)&64)&&![133,134].includes(Number(event.keycode)))this.consumedSuperChord=true;
+    }
+
     key(pressed, keycode, state = 0) {
         if (
             this.exports.rice_input_key(
@@ -301,6 +316,13 @@ export class RiceDisplayCore {
             ) !== 1
         ) {
             throw new RangeError("invalid RiceWM key event");
+        }
+        // The retained compositor sees the real modifier down/up but not an
+        // accelerator handled by an extension. Suppress its standalone-Super
+        // menu before any scene is flushed; never synthesize another key.
+        if(!pressed&&[133,134].includes(keycode)&&this.consumedSuperChord){
+            this.consumedSuperChord=false;
+            this.exports.rice_wm_menu_dismiss();
         }
     }
 
@@ -331,10 +353,18 @@ export class RiceDisplayCore {
     }
 
     setTopbarLayout(value = {version:1,tooltips:true,items:[]}) {
-        const data = typeof value === "string" ? JSON.parse(value) : value;
-        const source = (data.items || []).map(item => [item.key,item.visible ? 1 : 0,item.position,item.icon || ""].join("\t")).join("\n");
-        this.setTopbarWire(0, source);
+        this.#commitTopbarLayout((this.topbarLayoutState||new TopbarLayoutState()).withBase(value));
         this.canvasTopbarIcons = true;
+    }
+    setTopbarOwnerLayout(owner,items=[]) {
+        this.#commitTopbarLayout((this.topbarLayoutState||new TopbarLayoutState()).withOwner(owner,items));
+    }
+    topbarItemState(key,defaults={}) { return (this.topbarLayoutState||new TopbarLayoutState()).item(key,defaults); }
+    #commitTopbarLayout(next) {
+        const source=next.effective().items.map(item=>[item.key,item.present===false||item.visible===false?0:1,item.position??'',item.icon||''].join('\t')).join('\n');
+        if(!this.setTopbarWire(0,source))throw new Error('Native topbar layout capability is unavailable');
+        this.topbarLayoutState=next;
+        this.canvasTopbarIcons=true;
     }
 
     setTopbarWire(kind, source) {
@@ -394,7 +424,10 @@ export class RiceDisplayCore {
 
     configureTaskbar({
         style = "Standard",
+        iconPlacement = "Start",
         height = "Small",
+        translucent = false,
+        opacity = 72,
         magnification = true,
         magnificationZoom = 65,
         magnificationSpread = 45,
@@ -417,6 +450,10 @@ export class RiceDisplayCore {
         quickLaunchers = [],
         trayItems = [],
     }) {
+        if (!Number.isInteger(opacity) || opacity < 0 || opacity > 100) throw new RangeError("Invalid taskbar opacity");
+        if (this.exports.rice_wm_taskbar_opacity_set) {
+            if (this.exports.rice_wm_taskbar_opacity_set(translucent ? 1 : 0, opacity) !== 1) throw new Error("Taskbar opacity rejected");
+        } else if (translucent) throw new Error("Taskbar translucency requires an updated display runtime");
         if (this.exports.rice_wm_shell_monitors_set && this.exports.rice_wm_shell_monitors_set(
             topBarAllMonitors ? 1 : 0, dockAllMonitors ? 1 : 0,
         ) !== 1) throw new Error("Monitor panel settings rejected");
@@ -428,10 +465,15 @@ export class RiceDisplayCore {
         if (this.exports.rice_wm_shell_style_set) {
             if (this.exports.rice_wm_shell_style_set(shellStyle === "Embedded" ? 1 : 0) !== 1) throw new Error("Shell style rejected");
         } else if (shellStyle !== "Standard") throw new Error("Embedded shell requires an updated display runtime");
-        if (!["Standard", "Compact dock"].includes(style)) throw new RangeError("Invalid dock style");
+        if (!["Standard", "Compact dock", "Icons-only taskbar"].includes(style)) throw new RangeError("Invalid dock style");
         if (this.exports.rice_wm_dock_style_set) {
-            if (this.exports.rice_wm_dock_style_set(style === "Compact dock" ? 1 : 0) !== 1) throw new Error("Dock style rejected");
+            if (this.exports.rice_wm_dock_style_set(["Standard", "Compact dock", "Icons-only taskbar"].indexOf(style)) !== 1) throw new Error("Dock style rejected");
         } else if (style !== "Standard") throw new Error("Dock style requires an updated display runtime");
+        const placements = ["Start", "Center", "End"];
+        if (!placements.includes(iconPlacement)) throw new RangeError("Invalid dock icon placement");
+        if (this.exports.rice_wm_dock_icon_placement_set) {
+            if (this.exports.rice_wm_dock_icon_placement_set(placements.indexOf(iconPlacement)) !== 1) throw new Error("Dock icon placement rejected");
+        } else if (iconPlacement !== "Start") throw new Error("Dock icon placement requires an updated display runtime");
         const zoom = Math.max(0, Math.min(100, Math.round(Number(magnificationZoom) || 0)));
         const heights = {Minimal:32, Small:44, Comfortable:64};
         if (!Object.hasOwn(heights, height)) throw new RangeError("Invalid dock height");
@@ -501,7 +543,7 @@ export class RiceDisplayCore {
         ) {
             throw new RangeError("RiceWM rejected the launcher appearance");
         }
-        this.replaceQuickLaunchers(quickLaunchVisible, style === "Compact dock"
+        this.replaceQuickLaunchers(quickLaunchVisible, style !== "Standard"
             ? quickLaunchers.map(({ iconName, ...launcher }) => launcher)
             : quickLaunchers);
         this.replaceTrayItems(trayItems);
@@ -723,7 +765,7 @@ export class RiceDisplayCore {
             ? snapshot.indicators
             : [];
         const findValue = (actor, key) => {
-            if (!actor || typeof actor !== "object") return "";
+            if (!actor || typeof actor !== "object" || actor.visible === false) return "";
             if (actor.visible !== false && actor[key]) return String(actor[key]);
             for (const child of actor.children || []) {
                 const value = findValue(child, key);
@@ -738,7 +780,7 @@ export class RiceDisplayCore {
             new Map([["left", 0], ["center", 1], ["right", 2]])
                 .get(String(value || "right")) ?? 2;
         const clean = value => String(value || "").replace(/[\t\r\n\0]/g," ").slice(0,128);
-        this.setTopbarWire(1, indicators.map(actor => [clean(actor.uuid),clean(actor.title || actor.name || actor.uuid?.split("@")[0]?.replace(/[-_]/g," ")),clean(findValue(actor,"icon"))].join("\t")).join("\n"));
+        this.setTopbarWire(1, indicators.map(actor => [clean(actor.panelKey||actor.uuid),clean(actor.title || actor.name || actor.uuid?.split("@")[0]?.replace(/[-_]/g," ")),clean(findValue(actor,"icon"))].join("\t")).join("\n"));
         const records = [];
         const encoder = new TextEncoder();
         if (snapshot !== null) {
@@ -747,7 +789,7 @@ export class RiceDisplayCore {
                 .slice(0, 16)
                 .forEach(actor => {
                     const uuid = encoder.encode(
-                        String(actor?.uuid || snapshot?.uuid || "").slice(0, 128),
+                        String(actor?.panelKey || actor?.uuid || snapshot?.uuid || "").slice(0, 128),
                     );
                     if (uuid.byteLength === 0) return;
                     const text = findValue(actor, "text").slice(0, 128);
@@ -835,7 +877,7 @@ export class RiceDisplayCore {
             );
             const records = (Array.isArray(snapshot?.menu?.items)
                 ? snapshot.menu.items : []).slice(0, 64).map((item, fallbackIndex) => {
-                const label = new TextEncoder().encode(findValue(item, "text").slice(0, 192));
+                const label = gnomeNativeMenuLabel(findValue(item, "text"),encoder);
                 const index = Number.isInteger(Number(item?.index))
                     ? Math.max(0, Math.min(255, Number(item.index))) : fallbackIndex;
                 const iconName = findValue(item, "icon").toLowerCase();
@@ -890,6 +932,33 @@ export class RiceDisplayCore {
                 throw new RangeError("RiceWM rejected the GNOME Shell 50 popup menu");
             }
         }
+        return true;
+    }
+
+    setGnomeMenuScene({width, height, pixels, hits}) {
+        const upload = this.exports.rice_wm_gnome_menu_scene_update;
+        if (typeof upload !== "function") throw new Error("GNOME actor popup rendering requires the qualified menu-scene ABI");
+        if (!Number.isInteger(width) || width < 1 || width > 1024 ||
+            !Number.isInteger(height) || height < 1 || height > 2048 ||
+            !(pixels instanceof Uint32Array) || pixels.length !== width * height ||
+            !Array.isArray(hits) || hits.length > 64) throw new RangeError("Invalid GNOME popup scene");
+        const bytes = new Uint8Array(8 + pixels.byteLength + hits.length * 12);
+        const view = new DataView(bytes.buffer);
+        view.setUint16(0, width, true); view.setUint16(2, height, true);
+        view.setUint16(4, hits.length, true);
+        pixels.forEach((pixel, index) => view.setUint32(8 + index * 4, pixel, true));
+        hits.forEach((hit, index) => {
+            if (!Number.isInteger(hit.index) || hit.index < 0 || hit.index > 63 ||
+                ![hit.x, hit.y, hit.width, hit.height].every(Number.isInteger) ||
+                hit.x < 0 || hit.y < 0 || hit.width < 1 || hit.height < 1 ||
+                hit.x + hit.width > width || hit.y + hit.height > height) throw new RangeError("Invalid GNOME popup action");
+            const offset = 8 + pixels.byteLength + index * 12;
+            view.setUint8(offset, hit.index);
+            [hit.x, hit.y, hit.width, hit.height].forEach((value, field) => view.setUint16(offset + 2 + field * 2, value, true));
+        });
+        const pointer = this.#reserve(bytes.length);
+        new Uint8Array(this.memory.buffer, pointer, bytes.length).set(bytes);
+        if (upload(pointer, bytes.length) !== 1) throw new Error("RiceWM rejected the GNOME popup scene");
         return true;
     }
 
@@ -1636,6 +1705,26 @@ export class RiceDisplayCore {
             this.exports.rice_wm_parked_window_discard(id) === 1;
     }
 
+    setWindowChrome(decorations={},metrics={}) {
+        const setter=this.exports.rice_wm_window_chrome_set;
+        const enabled=decorations.frameInsets!==undefined;
+        if(!setter){if(enabled)throw Error('Updated display engine is required for managed window chrome');return;}
+        if(!enabled){setter(...Array(15).fill(0));return;}
+        const [top,right,bottom,left]=decorations.frameInsets,title=metrics.titlebarHeight??28;
+        const leading=decorations.controlBoxPosition==='Left',split=decorations.controlLayout==='split';
+        const order=decorations.controlOrder??(split?['minimize','maximize','close']:leading?['close','minimize','maximize']:['minimize','maximize','close']);
+        const codes={minimize:1,maximize:2,close:3,menu:4},packed=order.reduce((v,a,i)=>v|(codes[a]<<(4*i)),0);
+        if(setter(top,right,bottom,left,title,decorations.captionWidth??title,decorations.captionHeight??Math.min(64,title),decorations.captionGap??0,decorations.controlBoxEdgeInset??0,Number(split),Number(leading),Number(decorations.showTitleIcon!==false),decorations.resizeGripLength??0,order.length,packed)!==1)throw Error('Display engine rejected managed window chrome');
+    }
+
+    setThemeShellAppearance(value={}) {
+        const {launcher={},menu={}}=validateShellAppearance(value);
+        const args=[launcher.width??0,menu.rootWidth??0,menu.cascadeWidth??0,menu.railWidth??0,menu.headerHeight??0,menu.footerHeight??0,menu.rootColumns??1];
+        const setter=this.exports.rice_wm_theme_shell_layout_set;
+        if(!setter){if(args.some((v,i)=>v!==(i===6?1:0)))throw Error('Updated shell engine is required for shell appearance');return;}
+        if(setter(...args)!==1)throw Error('Native shell rejected theme geometry');
+    }
+
     setThemeMenuRowHeight(height=0){
         if(!Number.isInteger(height)||(height!==0&&(height<16||height>72)))throw RangeError('Invalid native menu row height');
         const setter=this.exports.rice_wm_theme_menu_row_height_set;
@@ -1999,6 +2088,7 @@ export class RiceDisplayCore {
                 weight: view.getUint8(offset + 13) * 100,
                 align: ["left", "center", "right"][rawAlign & 0x03] || "left",
                 ...(rawAlign === 3 ? {role: "window-title"} : {}),
+                ...(rawAlign === 4 ? {role:'window-chrome',hoveredControl:['minimize','maximize','close','menu'][view.getUint16(offset+4,true)-1]||null,pressedControl:['minimize','maximize','close','menu'][view.getUint16(offset+6,true)-1]||null} : {}),
                 rotateCcw: (rawAlign & 0x80) !== 0,
                 menuIconSize: hasMenuIconMetadata
                     ? menuIconSizes[(rawAlign >>> 2) & 0x03]

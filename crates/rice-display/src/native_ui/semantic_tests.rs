@@ -191,3 +191,28 @@ fn adaptive_calculator_primitives_fill_clamp_and_use_semantic_theme_tokens() {
         )));
     }
 }
+
+#[test]
+fn collection_and_navigation_surfaces_never_use_command_button_skins() {
+    let mut host = NativeUiHost::default();
+    let enabled = WidgetState::ENABLED;
+    let mut patches = vec![create(1,None,0,WidgetKind::Column,enabled,None)];
+    for (index,(container,child,kind,text,role)) in [
+        (10,11,WidgetKind::List,None,14),
+        (20,21,WidgetKind::IconGrid,None,15),
+        (30,31,WidgetKind::Column,Some("panel:sidebar"),16),
+        (40,41,WidgetKind::Tree,None,17),
+        (50,51,WidgetKind::ToolBar,None,18),
+        (60,61,WidgetKind::Column,None,19),
+        (70,71,WidgetKind::Row,Some("file-detail-header"),20),
+    ].into_iter().enumerate() {
+        patches.push(create(container,Some(1),index as u32,kind,enabled,text));
+        patches.push(create(child,Some(container),0,if role==17 {WidgetKind::TreeItem} else {WidgetKind::Button},enabled|if role==19 {WidgetState::FLAT} else {WidgetState::empty()},Some("Item")));
+    }
+    patches.push(create(80,Some(1),7,WidgetKind::Button,enabled,Some("Apply")));
+    host.apply_patch(&UiPatchEnvelope {app:AppId::new(1).unwrap(),window:WindowId::new(1).unwrap(),sequence:1,patches}).unwrap();
+    let output=host.render(AppId::new(1).unwrap(),WindowId::new(1).unwrap(),fixed(800,800)).unwrap();
+    let roles=output.commands.iter().filter_map(|command|match command {DrawCommand::ThemeSurface {role,..}=>Some(*role),_=>None}).collect::<Vec<_>>();
+    for role in 14..=20 {assert!(roles.contains(&role),"missing {role}: {roles:?}");}
+    assert_eq!(roles.iter().filter(|role|**role==0).count(),1,"only Apply is a command push button: {roles:?}");
+}

@@ -163,6 +163,13 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
     let Some(widget) = tree.get(id) else {
         return Size::default();
     };
+    if matches!(widget.kind, WidgetKind::Button | WidgetKind::Label)
+        && let Some(chip) = super::visual_control::chip(widget.text.as_deref())
+    {
+        return Size {width:estimated_text_width(chip.label,theme).saturating_add(24)
+            .saturating_add(if widget.icon.is_some(){u32::from(theme.metrics.icon_small)+4}else{0}),
+            height:u32::from(theme.metrics.control_height).max(24)};
+    }
     let color_widget = super::render::color_control::normalized(widget);
     let widget = color_widget.as_ref().unwrap_or(widget);
     if widget.kind == WidgetKind::Stack && (super::layout_tokens::positioned_overlay(widget.text.as_deref()) || super::scene_surface::overlay(widget.text.as_deref()).is_some()) {
@@ -422,6 +429,9 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
         .and_then(|parent| match widget.kind {
             WidgetKind::Label => {
                 super::layout_tokens::action_width_hint(parent.text.as_deref(), "label-width=")
+                    .or_else(|| (widget.text.as_deref().and_then(|text| text.strip_suffix('%')).is_some_and(|value| value.parse::<u16>().is_ok())
+                        && parent.children().iter().any(|id| tree.get(*id).is_some_and(|child| child.kind == WidgetKind::Slider)))
+                        .then_some("100%"))
             }
             WidgetKind::Button => {
                 super::layout_tokens::action_width_hint(parent.text.as_deref(), "choice-width=")
@@ -470,12 +480,12 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
     let choice_width = u32::from(
         !menu_child && matches!(widget.kind, WidgetKind::CheckBox | WidgetKind::RadioButton),
     )
-    .saturating_mul(u32::from(theme.metrics.icon_small).saturating_add(gap));
+    .saturating_mul(theme.control_chrome.choice_size(widget.kind,u32::from(theme.metrics.icon_small)).saturating_add(theme.control_chrome.metric(18,gap)));
     let toggle_width = u32::from(
         widget.kind == WidgetKind::Toggle
             && widget.text.as_deref().is_some_and(|text| !text.is_empty()),
     )
-    .saturating_mul(36_u32.saturating_add(gap));
+    .saturating_mul(theme.control_chrome.metric(19,36).saturating_add(theme.control_chrome.metric(27,gap)));
     let large_image_extent = u32::from(theme.metrics.icon_medium)
         .saturating_mul(4)
         .saturating_mul(super::layout_tokens::zoom_permille(widget.text.as_deref()))
@@ -512,7 +522,7 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
         .saturating_add(choice_width)
         .saturating_add(
             if widget.kind == WidgetKind::TreeItem
-                && (widget.state.contains(WidgetState::INDETERMINATE)
+                && (theme.tree_boxed_expander() || theme.tree_lines()!=1 || theme.tree_view.expander==3 || widget.state.contains(WidgetState::INDETERMINATE)
                     || widget.children().iter().any(|child| {
                         tree.get(*child)
                             .is_some_and(|child| child.kind == WidgetKind::TreeItem)
@@ -601,7 +611,12 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
                 // ordinary theme metric deliberately remains untouched.
                 20
             } else {
-                u32::from(theme.metrics.control_height).saturating_add(gap.saturating_mul(2))
+                // Row height includes its padding. Adding the theme spacing
+                // unit twice made ordinary context menus taller than a window.
+                u32::from(theme.metrics.control_height)
+                    .min(if theme.metrics.menu_row_height > 0 {u32::MAX} else {28})
+                    .max(u32::from(theme.typography.body_px).max(u32::from(theme.metrics.icon_small))
+                        .saturating_add(u32::from(theme.spacing.control_y.min(4)).saturating_mul(2)))
             }
         } else if widget.kind == WidgetKind::Markdown {
             let size = u32::from(super::layout_tokens::preferred_text_size(widget, theme));
@@ -663,6 +678,21 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
         leaf.width = 0;
         leaf.height = u32::from(theme.metrics.control_height);
     }
+    if matches!(widget.kind,WidgetKind::CheckBox|WidgetKind::RadioButton) && theme.control_chrome.choice(widget.kind) {
+        leaf.height=leaf.height.max(theme.control_chrome.choice_size(widget.kind,u32::from(theme.metrics.icon_small))+u32::from(theme.spacing.control_y)*2);
+    }
+    if widget.kind==WidgetKind::Toggle && theme.control_chrome.choice(widget.kind) {
+        leaf.height=leaf.height.max(theme.control_chrome.metric(20,20)+u32::from(theme.spacing.control_y)*2);
+        leaf.width=leaf.width.max(theme.control_chrome.metric(19,36));
+    }
+    if widget.kind==WidgetKind::Slider {
+        leaf.width=theme.control_chrome.metric(15,leaf.width);
+    }
+    if widget.kind==WidgetKind::Slider && theme.control_chrome.metrics_mask & 0x38!=0 {
+        let c=theme.control_chrome;
+        let thumb_width=c.metric(4,u32::from(theme.metrics.control_height)*2/3);
+        leaf.height=leaf.height.max(c.metric(5,thumb_width)).max(c.metric(3,4));
+    }
     if let Some(height) = super::layout_tokens::fixed_height(widget.text.as_deref()) {
         leaf.height = height;
     }
@@ -671,11 +701,7 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
     }
     if widget.kind == WidgetKind::Tree {
         let rows = visible_tree_rows(tree, id);
-        let indent = if theme.chrome_profile == rice_ui::ChromeProfile::Redmond98 {
-            u32::from(theme.metrics.icon_small)
-        } else {
-            u32::from(theme.metrics.icon_small).saturating_add(u32::from(theme.spacing.unit))
-        };
+        let indent = theme.tree_indent();
         let width = rows
             .iter()
             .map(|(item, depth)| {
@@ -812,6 +838,7 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
     }
     if super::layout_tokens::is_status_bar(widget.text.as_deref()) {
         size.height = u32::from(theme.metrics.control_height);
+        if theme.control_chrome.slider_height(u32::from(theme.metrics.control_height))>u32::from(theme.metrics.control_height) {size.height=size.height.max(inner.height);}
     }
     if integrated_tabs {
         // A classic integrated strip is exactly one control row. Generic
@@ -871,6 +898,9 @@ fn measure_preferred_size(tree: &RetainedTree, id: WidgetId, theme: &Theme) -> S
     if let Some(width) = super::layout_tokens::fixed_width(widget.text.as_deref()) {
         size.width = width;
     }
+    if widget.kind==WidgetKind::Tabs || super::layout_tokens::is_tab_composite(widget.text.as_deref()) || widget.kind==WidgetKind::Button && widget.parent.and_then(|id|tree.get(id)).is_some_and(|w|w.kind==WidgetKind::Tabs) {
+        size.height=theme.control_chrome.metric(9,size.height);
+    }
     size
 }
 
@@ -898,6 +928,7 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
     {
         return height;
     }
+    if theme.control_chrome.metrics_mask & (1<<9)!=0 && (widget.kind==WidgetKind::Tabs || super::layout_tokens::is_tab_composite(widget.text.as_deref())) {return theme.control_chrome.metric(9,0);}
     // Composite navigation buttons are one compact, atomic row.  Measuring
     // their icon, two-line copy, and caret as a vertical document inflated
     // each material row to several control heights inside responsive pages.
@@ -905,7 +936,7 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
         return 56;
     }
     if super::layout_tokens::is_status_bar(widget.text.as_deref()) {
-        return u32::from(theme.metrics.control_height);
+        return if theme.control_chrome.slider_height(u32::from(theme.metrics.control_height))>u32::from(theme.metrics.control_height) {preferred_size(tree,id,theme).height}else{u32::from(theme.metrics.control_height)};
     }
     if super::layout_tokens::is_spin_control(widget.text.as_deref()) {
         return u32::from(theme.metrics.control_height).max(36);
@@ -944,7 +975,7 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
         let padding_x = u32::from(theme.spacing.control_x).saturating_mul(2);
         let padding_y = u32::from(theme.spacing.control_y).saturating_mul(2);
         let icon_width = if wrapping_control && matches!(widget.kind, WidgetKind::CheckBox | WidgetKind::Toggle | WidgetKind::RadioButton) {
-            u32::from(theme.metrics.icon_small) + ICON_TEXT_GAP
+            if !theme.control_chrome.choice(widget.kind) {u32::from(theme.metrics.icon_small)+ICON_TEXT_GAP}else if widget.kind==WidgetKind::Toggle {theme.control_chrome.metric(19,36)+theme.control_chrome.metric(27,8)}else{theme.control_chrome.choice_size(widget.kind,u32::from(theme.metrics.icon_small))+theme.control_chrome.metric(18,ICON_TEXT_GAP)}
         } else { widget.icon.map_or(0, |_| {
             u32::from(theme.metrics.icon_small)
                 .saturating_add(u32::from(theme.spacing.unit).max(ICON_TEXT_GAP))
@@ -990,7 +1021,9 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
             | WidgetKind::Popover
             | WidgetKind::Notification
     );
-    let inset = if widget.text.as_deref().is_some_and(|text| text.split(':').any(|part| part == "flush")) {
+    let inset = if let Some(padding) = super::layout_tokens::padding(widget.text.as_deref()) {
+        padding
+    } else if widget.text.as_deref().is_some_and(|text| text.split(':').any(|part| part == "flush")) {
         0
     } else if widget.kind == WidgetKind::Tabs {
         0
@@ -1021,7 +1054,7 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
         })
         .collect::<Vec<_>>();
     let gap = if widget.kind == WidgetKind::Tabs {
-        0
+        theme.control_chrome.metric(11,0)
     } else {
         super::layout_tokens::child_gap(widget.text.as_deref(), u32::from(theme.spacing.unit))
     };
@@ -1068,7 +1101,15 @@ fn measure_preferred_height_for_width(tree: &RetainedTree, id: WidgetId, width: 
                 u32::try_from(children.len().saturating_sub(1)).unwrap_or(u32::MAX),
             ))
     };
-    let height = inner.saturating_add(inset.saturating_mul(2));
+    let mut height = inner.saturating_add(inset.saturating_mul(2));
+    if widget.kind == WidgetKind::Dialog
+        && (widget.text.as_deref().is_some_and(|text| !text.starts_with("panel:"))
+            || theme.chrome_profile == rice_ui::ChromeProfile::Redmond98
+                && super::layout_tokens::is_side_sheet(widget.text.as_deref()))
+    {
+        height = height.saturating_add(u32::from(theme.metrics.control_height))
+            .saturating_add(u32::from(theme.spacing.section));
+    }
     if widget.kind == WidgetKind::Accordion && !widget.state.contains(rice_ui::WidgetState::CHECKED)
     {
         preferred_size(tree, id, theme).height
@@ -1207,7 +1248,7 @@ fn is_responsive_document(tree: &RetainedTree, id: WidgetId) -> bool {
     false
 }
 
-fn layout_orchard_files_status(
+fn layout_files_status(
     tree: &RetainedTree,
     status: WidgetId,
     rect: Rect,
@@ -1251,7 +1292,10 @@ fn layout_orchard_files_status(
     let Some(copy_widget) = tree.get(copy) else {
         return;
     };
-    let zoom_width = 140.min(rect.size.width / 3);
+    let zoom_width = if theme.control_chrome.metrics_mask & (1<<15)!=0 {
+        status_layout_widget.children().iter().copied().find(|child|*child!=copy)
+            .map_or(140,|zoom|preferred_size(tree,zoom,theme).width)
+    } else {140}.min(rect.size.width / 3);
     let copy_width = rect.size.width.saturating_sub(zoom_width);
     let location_width = copy_width.saturating_mul(2) / 5;
     let breadcrumb = Rect {
@@ -1274,8 +1318,18 @@ fn layout_orchard_files_status(
     if let Some(location) = copy_widget.children().first() {
         layout_widget(tree, *location, breadcrumb, theme, geometry);
     }
+    // Reserve the same accessory slot in every state. Text and zoom geometry
+    // depend only on the window size, never on path/summary/loading strings.
+    let accessory = 24.min(summary.size.width);
     if let Some(selection) = copy_widget.children().get(1) {
-        layout_widget(tree, *selection, summary, theme, geometry);
+        let label=Rect {origin:Point{x:summary.origin.x.saturating_add_unsigned(accessory),y:summary.origin.y},
+            size:Size{width:summary.size.width.saturating_sub(accessory),height:summary.size.height}};
+        layout_widget(tree, *selection, label, theme, geometry);
+    }
+    if let Some(spinner)=copy_widget.children().iter().copied().find(|id|tree.get(*id).is_some_and(|v|v.kind==WidgetKind::Spinner)) {
+        let size=16.min(accessory).min(summary.size.height);
+        layout_widget(tree,spinner,Rect {origin:Point{x:summary.origin.x.saturating_add_unsigned(accessory.saturating_sub(size)/2),
+            y:summary.origin.y.saturating_add_unsigned(summary.size.height.saturating_sub(size)/2)},size:Size{width:size,height:size}},theme,geometry);
     }
     if let Some(zoom) = status_layout_widget
         .children()
@@ -1389,10 +1443,11 @@ fn layout_orchard_files_shell(
         tree.get(*child)
             .is_some_and(|child| super::layout_tokens::is_files_status(child.text.as_deref()))
     });
-    let status_height = status.map_or(0, |_| {
+    let status_height = status.map_or(0, |status| {
         u32::from(theme.metrics.control_height)
             .saturating_add(2)
             .clamp(24, 34)
+            .max(if theme.control_chrome.slider_height(u32::from(theme.metrics.control_height))>u32::from(theme.metrics.control_height) {preferred_size(tree,status,theme).height}else{0})
             .min(trailing.size.height / 3)
     });
     let mut cursor_y = trailing.origin.y;
@@ -1452,7 +1507,7 @@ fn layout_orchard_files_shell(
         },
     );
     if let Some(status) = status {
-        layout_orchard_files_status(
+        layout_files_status(
             tree,
             status,
             Rect {
@@ -1521,6 +1576,10 @@ pub(super) fn layout_widget(
         // A missing/hidden/reordered surface must not turn an anchored editor
         // into a full-viewport input target.
         rect = source.map_or(Rect::default(), |source| super::scene_surface::overlay_rect(source, bounds));
+    }
+    if super::layout_tokens::is_files_status(widget.text.as_deref()) {
+        layout_files_status(tree,id,rect,theme,geometry);
+        return;
     }
     geometry.insert(id, rect);
     if let Some((_, cells)) = super::layout_adaptive::toolbar_flow(tree, id, rect.size.width, theme) {
@@ -1621,6 +1680,8 @@ pub(super) fn layout_widget(
         || super::layout_tokens::positioned_item(widget.text.as_deref()).is_some()
     {
         Insets::all(0)
+    } else if super::layout_tokens::is_tab_composite(widget.text.as_deref()) && theme.control_chrome.metrics_mask & (1<<10)!=0 {
+        Insets{top:if widget.state.contains(rice_ui::WidgetState::SELECTED) {0}else{theme.control_chrome.metric(12,0)},bottom:0,left:theme.control_chrome.metric(10,0),right:theme.control_chrome.metric(10,0)}
     } else if widget.kind == WidgetKind::Tabs
         && !super::layout_tokens::is_browser_tab_strip(widget.text.as_deref())
     {
@@ -1806,11 +1867,7 @@ pub(super) fn layout_widget(
     }
     if widget.kind == WidgetKind::Tree {
         let row_height = u32::from(theme.metrics.control_height);
-        let indent = if theme.chrome_profile == rice_ui::ChromeProfile::Redmond98 {
-            u32::from(theme.metrics.icon_small)
-        } else {
-            u32::from(theme.metrics.icon_small).saturating_add(u32::from(theme.spacing.unit))
-        };
+        let indent = theme.tree_indent();
         for (index, (child, depth)) in visible_tree_rows(tree, id).into_iter().enumerate() {
             let offset = indent
                 .saturating_mul(u32::from(depth))
@@ -1958,7 +2015,9 @@ pub(super) fn layout_widget(
         // client and status surfaces without exposing body gutters.
         0
     } else if widget.kind == WidgetKind::Tabs {
-        0
+        theme.control_chrome.metric(11,0)
+    } else if super::layout_tokens::is_tab_composite(widget.text.as_deref()) {
+        theme.control_chrome.metric(7,u32::from(theme.spacing.unit))
     } else if edge_to_edge_sidebar_split {
         0
     } else if feature_card_copy {
@@ -2041,7 +2100,7 @@ pub(super) fn layout_widget(
         let favicon = u32::from(theme.metrics.icon_small)
             .saturating_add(gap.saturating_mul(2))
             .min(available / 4);
-        let close = u32::from(theme.metrics.control_height).min(available / 3);
+        let close = theme.control_chrome.metric(6,u32::from(theme.metrics.control_height)).min(available / 3);
         vec![
             favicon,
             available
@@ -2059,10 +2118,10 @@ pub(super) fn layout_widget(
         vec![label, available.saturating_sub(label).saturating_sub(gap)]
     } else if super::layout_tokens::is_tab_composite(widget.text.as_deref()) && preferred.len() == 2
     {
-        let close = u32::from(theme.metrics.control_height).min(available / 2);
+        let close = theme.control_chrome.metric(6,u32::from(theme.metrics.control_height)).min(available / 2);
         vec![available.saturating_sub(close).saturating_sub(gap), close]
     } else if widget.kind == WidgetKind::Tabs {
-        const MAX_TAB_WIDTH: u32 = 220;
+        let max_tab_width=theme.control_chrome.metric(13,220).max(theme.control_chrome.metric(14,24));
         let fixed = children
             .iter()
             .map(|child| {
@@ -2085,8 +2144,8 @@ pub(super) fn layout_widget(
             let browser_tab = tree
                 .get(*child)
                 .is_some_and(|child| super::layout_tokens::is_browser_tab(child.text.as_deref()));
-            if !fixed && (tab_count > 1 || browser_tab) {
-                *length = (*length).min(MAX_TAB_WIDTH);
+            if !fixed && (tab_count > 1 || browser_tab || theme.control_chrome.metrics_mask & 0x6000!=0) {
+                *length = (*length).max(theme.control_chrome.metric(14,24)).min(max_tab_width);
             }
         }
         let gaps = gap
@@ -2121,7 +2180,7 @@ pub(super) fn layout_widget(
             .fold(0_u32, u32::saturating_add)
             .saturating_add(gaps);
         if wanted <= available {
-            preferred.clone()
+            partition_flex(available, gap, &preferred, &flex)
         } else {
             partition_axis(available, gap, &preferred)
         }
@@ -2165,6 +2224,17 @@ pub(super) fn layout_widget(
         && preferred.len() == 5
     {
         partition_resource_columns(available, gap)
+    } else if is_row && widget.kind == WidgetKind::Row
+        && children.len() == 2
+        && tree.get(children[0]).is_some_and(|child| child.kind == WidgetKind::WebSurface)
+        && tree.get(children[1]).is_some_and(|child| child.kind == WidgetKind::ScrollBar)
+    {
+        // An embedded document's scrollbar has a theme-sized gutter, not a
+        // percentage of the document width. In particular, split:985 is
+        // clamped to 90%, which left Paddy's themed scrollbar far too wide.
+        let usable = available.saturating_sub(gap);
+        let scrollbar = u32::from(theme.metrics.scrollbar_width).min(usable);
+        vec![usable.saturating_sub(scrollbar), scrollbar]
     } else if widget.kind == WidgetKind::SplitPane
         || (is_row && widget.kind == WidgetKind::Row && widget.text.as_deref().and_then(split_spec).is_some())
     {
@@ -2308,6 +2378,11 @@ pub(super) fn layout_widget(
                 },
             }
         };
+        // Slider length is independent of general control sizing. Explicit
+        // application widths still take priority over the theme preference.
+        if theme.control_chrome.metrics_mask & (1<<15)!=0 && tree.get(*child).is_some_and(|child|child.kind==WidgetKind::Slider && super::layout_tokens::fixed_width(child.text.as_deref()).is_none()) {
+            child_rect.size.width=theme.control_chrome.metric(15,child_rect.size.width).min(child_rect.size.width);
+        }
         // A fixed-height accessory keeps its cross-axis contract inside a row,
         // including compact status controls. Center it without changing siblings.
         if is_row && let Some(height) = tree.get(*child)
@@ -2320,8 +2395,9 @@ pub(super) fn layout_widget(
         // Ordinary action buttons keep their intrinsic height even beside
         // multiline headings. Only explicitly expansive controls stretch.
         if is_row && widget.kind == WidgetKind::Row && (widget.text.as_deref().and_then(split_spec).is_some() || super::layout_tokens::aligns_actions_end(widget.text.as_deref())) && tree.get(*child).is_some_and(|candidate|
-            (candidate.kind == WidgetKind::Menu || (candidate.kind == WidgetKind::Button && candidate.children().is_empty()))
-            && !candidate.state.contains(WidgetState::EXPANSIVE)) {
+            ((candidate.kind == WidgetKind::Menu || (candidate.kind == WidgetKind::Button && candidate.children().iter().all(|child| is_tooltip(tree, *child))))
+                && !candidate.state.contains(WidgetState::EXPANSIVE))
+            || matches!(candidate.kind, WidgetKind::TextField | WidgetKind::PasswordField)) {
             let height = preferred_size(tree, *child, theme).height.min(child_rect.size.height);
             child_rect.origin.y = child_rect.origin.y.saturating_add_unsigned(child_rect.size.height.saturating_sub(height)/2);
             child_rect.size.height = height;
@@ -2800,7 +2876,8 @@ pub(super) fn layout_menu_popup(
     let below = anchor.origin.y.saturating_add_unsigned(anchor.size.height);
     let available_below = viewport.height.saturating_sub(below.max(0).cast_unsigned());
     let compact = super::layout_measurements::compact_form_factor();
-    let content_budget = if compact { viewport.height } else { available_below }
+    let contextual = popup_anchor.is_some();
+    let content_budget = if compact || contextual { viewport.height } else { available_below }
         .saturating_sub(popup_padding * 2);
     let mut height_rows = 0;
     let mut used_height = 0_u32;
@@ -2811,7 +2888,7 @@ pub(super) fn layout_menu_popup(
         used_height = used_height.saturating_add(size.height);
         height_rows += 1;
     }
-    let maximum_scroll_row = maximum_menu_scroll_row(tree, menu).max(if menu_bar_dropdown || compact {
+    let maximum_scroll_row = maximum_menu_scroll_row(tree, menu).max(if menu_bar_dropdown || compact || contextual {
         preferred.len().saturating_sub(height_rows)
     } else {
         0
@@ -2821,7 +2898,7 @@ pub(super) fn layout_menu_popup(
     let mut visible_commands = 0_usize;
     let mut visible_height = 0_u32;
     for (index, size) in preferred.iter().enumerate().skip(scroll_row) {
-        if (menu_bar_dropdown || compact)
+        if (menu_bar_dropdown || compact || contextual)
             && !visible.is_empty()
             && visible_height.saturating_add(size.height) > content_budget
         {
@@ -2857,7 +2934,7 @@ pub(super) fn layout_menu_popup(
             .saturating_sub_unsigned(wanted_height.min(anchor.origin.y.max(0).cast_unsigned()))
     }
     .max(0);
-    let popup_y = if compact { popup_y.min(viewport.height.saturating_sub(wanted_height) as i32) } else { popup_y };
+    let popup_y = if compact || contextual { popup_y.min(viewport.height.saturating_sub(wanted_height) as i32) } else { popup_y };
     for child in widget.children() {
         geometry.remove(child);
     }

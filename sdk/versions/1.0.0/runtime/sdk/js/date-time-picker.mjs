@@ -52,7 +52,9 @@ class TemporalPicker extends Column {
         this.inputRow = this.append(new Row({ text: panel, visible: !this.standalone }, [this.field, this.slot(this.disclosure, 40)]));
         this.feedback = this.append(new Label({ state: State.MUTED }));
         this.field.on(Message.VALUE_CHANGED, () => { this.navigationActive = false; if (this.available()) this.acceptDraft(false); });
-        this.field.on(Message.BLUR, () => { if (this.available()) this.acceptDraft(true); });
+        // The inline chooser owns its month/day/time controls. Leaving the
+        // text field must not hide their pending pointer activation.
+        this.field.on(Message.BLUR, () => { if (this.available()) this.acceptDraft(true, false, !this.expanded); });
         this.field.on(Message.KEY, event => {
             const key = keyOf(event);
             if (!this.available()) return;
@@ -109,13 +111,13 @@ class TemporalPicker extends Column {
         return true;
     }
     error(text) { this.field.setProperty('invalid', true); this.feedback.text = text; this.feedback.setProperty('visible', true); this.feedback.setProperty('state', State.WARNING); }
-    acceptDraft(normalize) {
+    acceptDraft(normalize, restoreFocus = true, close = normalize) {
         try {
             const value = this.parseDraft(this.field.value);
             this.validateValue(value);
             if (!value && this.values.required) throw new RangeError(`Choose a ${this.label.toLowerCase()}.`);
             const draft = this.field.value;
-            this.commit(value, { close: normalize });
+            this.commit(value, { close, restoreFocus });
             if (!normalize) this.field.setProperty('value', draft);
             return true;
         } catch (error) {
@@ -126,14 +128,14 @@ class TemporalPicker extends Column {
             return false;
         }
     }
-    commit(value, { close = true } = {}) {
+    commit(value, { close = true, restoreFocus = true } = {}) {
         if (!this.available()) return false;
         this.validateValue(value);
         if (!value && this.values.required) return false;
         const previous = this.value;
         // User input has one semantic event; setters use ordinary CHANGE events.
         this.setProperty('value', value, { notify: false });
-        if (close) { this.setExpanded(false); this.focusInput(); }
+        if (close) { this.setExpanded(false); if (restoreFocus) this.focusInput(); }
         if (previous !== this.value) this.emit(Message.VALUE_CHANGED, { value: this.value, previous });
         return previous !== this.value;
     }

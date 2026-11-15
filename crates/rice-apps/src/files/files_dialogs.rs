@@ -67,7 +67,11 @@ pub(super) fn patches(patches: &mut Vec<Patch>, dialog: &Dialog, redmond98: bool
         CONTENT,
         Some(DIALOG),
         WidgetKind::Column,
-        None,
+        if matches!(dialog, Dialog::Properties(_)) {
+            Some("panel:tight-stack:padding=0:gap=12")
+        } else {
+            None
+        },
         None,
     );
     create(
@@ -114,6 +118,19 @@ pub(super) fn patches(patches: &mut Vec<Patch>, dialog: &Dialog, redmond98: bool
                     },
                 );
             } else {
+                create_with_state(
+                    patches,
+                    files_properties::APPLY_MODE,
+                    Some(ACTIONS),
+                    WidgetKind::Button,
+                    Some(rice_i18n::t("Apply")),
+                    None,
+                    if state.apply_enabled() {
+                        WidgetState::ENABLED | WidgetState::ACCENT
+                    } else {
+                        WidgetState::empty()
+                    },
+                );
                 button(patches, CANCEL, "Close", Some(IconId::Close));
             }
         }

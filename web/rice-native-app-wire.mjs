@@ -40,6 +40,8 @@ export const RiceNativeAppCapability = Object.freeze({
     CONTENT_SHADOWS: 1n << 27n,
     ZOOM_ICONS: 1n << 23n,
     CONTROL_TYPOGRAPHY: 1n << 29n,
+    GRID_DECORATIONS:1n<<30n,
+    GRID_MULTI_SELECTION:1n<<31n,
 });
 
 export const ALL_CAPABILITIES = Object.values(
@@ -239,6 +241,36 @@ export function riceNativeAppMutationOwner(input){
 }
 
 export const RiceNativeAppWireCodec = Object.freeze({
+    key(app,window,target,pressed,keyCode,modifiers=0,text='',maximumMessageBytes=RICE_NATIVE_APP_MAX_MESSAGE_BYTES){
+        if(typeof pressed!=='boolean'||!Number.isInteger(keyCode)||keyCode<0||keyCode>0xffffffff||!Number.isInteger(modifiers)||modifiers<0||modifiers>65535||typeof text!=='string')throw TypeError('Invalid native key event');
+        const payload=[];for(const[value,field]of [[app,'application ID'],[window,'window ID'],[target,'widget ID']])pushU64(payload,checkedId(value,field));
+        payload.push(3,pressed?1:0);pushU32(payload,keyCode);payload.push(modifiers&255,modifiers>>>8,1);pushString(payload,text,16*1024,'native key text');
+        return frame(21,payload,maximumMessageBytes);
+    },
+    reorderGesture(app,window,target,{phase,token,side,x,y},maximumMessageBytes=RICE_NATIVE_APP_MAX_MESSAGE_BYTES){
+        if(!['move','up'].includes(phase)||!([x,y].every(value=>Number.isInteger(value)&&value>=-2147483648&&value<=2147483647))||
+            !(token===null&&side===null||typeof token==='string'&&/^[0-9]{1,5}$/.test(token)&&Number(token)<=65535&&['before','after'].includes(side)))throw TypeError('Invalid native reorder gesture');
+        const payload=[];for(const[value,field]of [[app,'application ID'],[window,'window ID'],[target,'widget ID']])pushU64(payload,checkedId(value,field));
+        payload.push(1);pushString(payload,'rice-reorder:'+JSON.stringify({phase,token,side,x,y}),1024,'native reorder gesture');return frame(21,payload,maximumMessageBytes);
+    },
+    pointer(app,window,target,kind,x,y,button,modifiers=0,maximumMessageBytes=RICE_NATIVE_APP_MAX_MESSAGE_BYTES){
+        if(!Number.isInteger(kind)||kind<0||kind>5||![x,y].every(value=>Number.isInteger(value)&&value>=-2147483648&&value<=2147483647)||!Number.isInteger(button)||button<0||button>255||!Number.isInteger(modifiers)||modifiers<0||modifiers>65535)throw TypeError('Invalid native captured pointer');
+        const payload=[];for(const[value,field]of [[app,'application ID'],[window,'window ID'],[target,'widget ID']])pushU64(payload,checkedId(value,field));
+        payload.push(2,kind);pushU32(payload,x>>>0);pushU32(payload,y>>>0);payload.push(button,modifiers&255,modifiers>>>8);return frame(21,payload,maximumMessageBytes);
+    },
+    modifiedWheel(app,window,target,x,y,button,modifiers,maximumMessageBytes=RICE_NATIVE_APP_MAX_MESSAGE_BYTES){
+        if(![x,y].every(value=>Number.isInteger(value)&&value>=-2147483648&&value<=2147483647)||![4,5].includes(button)||!Number.isInteger(modifiers)||modifiers<0||modifiers>65535||!(modifiers&(4|64)))throw TypeError('Invalid application zoom wheel event');
+        const payload=[];for(const[value,field]of [[app,'application ID'],[window,'window ID'],[target,'widget ID']])pushU64(payload,checkedId(value,field));
+        payload.push(2,5);pushU32(payload,x>>>0);pushU32(payload,y>>>0);payload.push(button,modifiers&255,modifiers>>>8);
+        return frame(21,payload,maximumMessageBytes);
+    },
+    focus(app, window, target, focused, maximumMessageBytes = RICE_NATIVE_APP_MAX_MESSAGE_BYTES) {
+        if (typeof focused !== 'boolean') throw TypeError('Native focus requires a boolean');
+        const payload = [];
+        for (const [value, field] of [[app, 'application ID'], [window, 'window ID'], [target, 'widget ID']]) pushU64(payload, checkedId(value, field));
+        payload.push(4, focused ? 1 : 0);
+        return frame(21, payload, maximumMessageBytes);
+    },
     hostHello(capabilities, maximumMessageBytes) {
         const payload = [];
         pushU64(payload, capabilities);

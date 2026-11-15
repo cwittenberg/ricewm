@@ -1,4 +1,8 @@
+import {paintRiceGnomeOverlayFrames} from './gnome-extension-host/rice-gnome-overlay-frames.mjs';
+import {shellThemeFont,shellLauncherWidth,shellLauncherStyled,paintShellThemePart} from './rice-theme-shell.mjs';
 import {desktopThemeFont,themeColor} from './rice-theme-customization.mjs';
+import {RiceWindowEffectRenderer} from './rice-window-effect-renderer.mjs';
+import {windowEffectStyle,windowEffectsOutset,windowEffectAnimated,windowEffectMotionOff} from './rice-window-effects.mjs';
 import {RiceThemeSkinRenderer} from './rice-theme-skin-renderer.mjs';
 import {classicUiFont, ensureClassicUiFonts} from "./rice-classic-ui.mjs";
 import {t, riceLocale} from './rice-i18n.mjs';
@@ -10,6 +14,8 @@ const {MAX_NATIVE_MEDIA_REQUEST_TRACKING,MAX_NATIVE_MEDIA_SURFACES,RICEWM_FIRST_
 import { RiceCanvasRendererBase } from "./canvas-renderer/base.mjs";
 import { resizeCanvasBackingStore, readableInk, rgbaColor } from "./rice-native-canvas-primitives.mjs";
 import {captureTerminalImageReplay, finishTerminalImageReplay, terminalImageReplayMatches} from './rice-terminal-image-replay.mjs';
+import {riceNativeOpaqueInterior} from './rice-native-canvas-window-damage.mjs';
+import {nativeClientRect} from './rice-native-window-stack.mjs';
 
 export {
     RICE_SCENE_COMMAND_BYTES, RICE_SCENE_RESET, RICE_SCENE_UPSERT_WINDOW,
@@ -127,6 +133,31 @@ export function riceMatrixNotificationKindFromPixels(pixels, fallback = "info") 
 }
 
 export class RiceCanvasRenderer extends RiceCanvasRendererBase {
+    shellOverlayRects(includeApplications = false) {
+        const rectangles=[];
+        for(const window of this.windows.values()){
+            const application = includeApplications && !window.desktopLayer && !window.shellLayer &&
+                window.parent !== window.id && this.windows.get(window.parent)?.parent === window.parent;
+            if(!window.viewable||(!window.shellLayer&&!application)||window.inputOnly||window.id===RICEWM_GNOME_BACKGROUND_ID)continue;
+            let x=0,y=0,current=window;const seen=new Set();
+            while(current&&current.viewable&&!seen.has(current.id)&&seen.size<32){
+                seen.add(current.id);x+=current.x;y+=current.y;
+                if(current.parent===current.id)break;
+                current=this.windows.get(current.parent);
+            }
+            if(!current?.viewable||current.parent!==current.id)continue;
+            // Cascades share one large transparent X11 allocation. Only its
+            // painted menu panes cover the app; clipping the allocation hides
+            // the sidebar and document in the empty space above the launcher.
+            const panes = window.id === RICEWM_MENU_ID
+                ? (this.shellTexts?.get(window.id) || []).filter(row => row.text === '__menu_layer' && row.width > 0 && row.height > 0)
+                : [];
+            if (panes.length) for (const pane of panes) rectangles.push({ x: x + pane.x, y: y + pane.y,
+                width: pane.width, height: pane.height });
+            else if(window.width>0&&window.height>0)rectangles.push({x,y,width:window.width,height:window.height});
+        }
+        return rectangles;
+    }
     setWidgets(state) {
         this.widgetHost ||= new RiceWidgetSurfaceHost(this);
         const signature = JSON.stringify(state ?? null);
@@ -184,7 +215,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             this.context=context;native.setRenderContext(context);native.setPaintDamage(null);native.paintOrigin=null;native.desktopBackdropKey=null;native.staticBackdropKey=null;
             native.beginBackdropEpoch(++this.frostedBackdropGeneration);
             if(root.surface)context.drawImage(root.surface,0,0);else{context.fillStyle=pixelColor(root.backgroundPixel);context.fillRect(0,0,root.width,root.height);}
-            native.renderDesktop(root,{extendWallpaperToTop:this.topbarController?.transparent===true});
+            native.renderDesktop(root,{extendWallpaperToTop:this.topbarController?.transparentSurface===true});
             this._renderChildren(root,children,new Set(),window=>window.id===RICEWM_GNOME_BACKGROUND_ID);
             this.gnomeEffectRenderer.render(context,{width:root.width,height:root.height});
             this.customEffects.render(context,{width:root.width,height:root.height,reducedMotion:true});
@@ -192,6 +223,8 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             const applications=()=>this._renderChildren(root,children,new Set(),window=>!window.desktopLayer&&!window.shellLayer);
             if(includeApplications){if(native.foregroundActive){applications();native.renderWindows(root);}else{native.renderWindows(root);applications();}}
             this._renderChildren(root,children,new Set(),window=>window.shellLayer&&window.id!==RICEWM_GNOME_BACKGROUND_ID);
+            paintRiceGnomeOverlayFrames(context,native.gnomeOverlaySurfaces,this.canvasFactory,root.width,root.height);
+            this.dockFolders?.paint(context,root);
             return output;
         }finally{
             this.context=original;Object.assign(native,saved);native.setRenderContext(originalNative);native.invalidateBackdrop();
@@ -210,6 +243,8 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
     }
 
     _renderFrame() {
+        this.nativeCanvasWindow.browserEditors?.setShellOcclusions(this.shellOverlayRects(!this.nativeCanvasWindow.foregroundActive),
+            Boolean(this.calendarActive || this.externalOverlayCapturesInput));
         // Read recipe preferences before composing the wallpaper and panel.
         if(this.topbarController?.refreshTransparency())this.damaged=true;
         const effectMotionOff=this.nativeCanvasWindow.snapshot?.shell?.motionEnabled===false;
@@ -244,6 +279,8 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 height: matrixNotification.height + 64,
             });
         }
+        const wallpaperOnly = this.wallpaperOnlyDamage === true;
+        this.wallpaperOnlyDamage = false;
         let damageRects = pointerLightActive || nativeTransitionActive || embeddedActive || this.embeddedWasActive || this.externalOverlay
             ? null : imageReplay ? this.damageRects : this._backdropDamage(this.damageRects);
         // X11 can report identical damage from more than one event. Keep it
@@ -421,7 +458,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                     }
                 }
                 this.nativeCanvasWindow.renderDesktop(root, {
-                    extendWallpaperToTop: this.topbarController?.transparent === true,
+                    extendWallpaperToTop: this.topbarController?.transparentSurface === true,
                 });
                 this._renderChildren(
                     root,
@@ -440,7 +477,16 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 // through newly mapped X11/USER32 clients on their next damaged
                 // frame.
                 this._renderLaunchAnimations();
-                if (this.overviewProgress > 0) {
+                if (wallpaperOnly && Array.isArray(damageRects)) {
+                    // Only the wallpaper needs the exposure clip. Replay the
+                    // upper planes with their original silhouette clips so
+                    // rounded portal edges keep identical alpha coverage.
+                    context.restore();
+                    context.save();
+                    context.setTransform(1, 0, 0, 1, -(tile?.x || 0), -(tile?.y || 0));
+                    this.nativeCanvasWindow.setPaintDamage(null);
+                }
+                if (this.overviewProgress > 0 && !this.overviewCarousel.activation) {
                     this._renderOverview(root, children);
                 } else {
                     const renderX11Applications = () => this._renderChildren(
@@ -483,6 +529,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                         renderX11Applications();
                     }
                 }
+                if (this.overviewProgress > 0 && this.overviewCarousel.activation) this._renderOverview(root);
                 this.nativeCanvasWindow.renderLayoutPreview(root);
                 this._renderEmbeddedFrame(root);
                 }
@@ -493,6 +540,8 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                     window => window.shellLayer && (!this.spatialShellOnly || window.id!==RICEWM_TASKBAR_ID) &&
                         window.id !== RICEWM_GNOME_BACKGROUND_ID,
                 );
+                paintRiceGnomeOverlayFrames(context,this.nativeCanvasWindow.gnomeOverlaySurfaces,this.canvasFactory,root.width,root.height);
+                this.dockFolders?.paint(context,root);
                 // Desktop-owned modal editors (for example Rename Desktop Item)
                 // must be composited after every ordinary application and shell
                 // plane. The main compositor uses this explicit sequence instead
@@ -601,6 +650,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         // Complete their animation bookkeeping as well: otherwise transitions
         // and activity indicators advance only when unrelated input repaints.
         this.nativeCanvasWindow.finishFrame();
+        this._syncWindowEffectAnimation();
         this.onFrame({
             animationFrame: this.animationFrameBoundary === true,
             width: root.width,
@@ -619,7 +669,43 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         }
     }
 
+    _windowEffectAnimationRects() {
+        if(globalThis.document?.hidden===true)return [];
+        const rects=[],visible=rect=>rect.x<this.canvas.width&&rect.y<this.canvas.height&&rect.x+rect.width>0&&rect.y+rect.height>0;
+        for(const native of this.nativeCanvasWindow.snapshots){
+            const effect=windowEffectStyle(native.chrome,native.active!==false);
+            if(native.role==='desktop'||native.dialogOnly||native.layerVisible===false||native.maximized||native.fullscreen||windowEffectMotionOff(native.shell)||!windowEffectAnimated(effect))continue;
+            const pad=windowEffectsOutset(native.chrome),f=native.frame;
+            const rect={x:f.x-pad,y:f.y-pad,width:f.width+2*pad,height:f.height+2*pad};
+            if(visible(rect))rects.push(rect);
+        }
+        const snapshot=this.nativeCanvasWindow.snapshot;
+        if(!windowEffectMotionOff(snapshot?.shell))for(const window of this.windows.values()){
+            const parent=this.windows.get(window.parent),effect=windowEffectStyle(snapshot?.chrome,window.activeWindow);
+            if(window.id===window.parent||!parent||parent.parent!==parent.id||window.desktopLayer||window.shellLayer||window.overrideRedirect||window.inputOnly||!window.viewable||window.maximizedWindow||!windowEffectAnimated(effect))continue;
+            const rect=this._sceneWindowRect(window,this.windows);if(rect&&visible(rect))rects.push(rect);
+        }
+        return rects;
+    }
+    _syncWindowEffectAnimation() {
+        if(!this._windowEffectAnimationRects().length){
+            if(this.windowEffectTimer!=null)this.clearTimer(this.windowEffectTimer);
+            this.windowEffectTimer=null;return;
+        }
+        if(this.windowEffectTimer!=null)return;
+        this.windowEffectTimer=this.setTimer(()=>{
+            this.windowEffectTimer=null;
+            const rects=this._windowEffectAnimationRects();
+            if(!rects.length)return;
+            this._markNativeDamage(rects);this.schedule();
+        },33);
+    }
     dispose() {
+        this.decorativeMotion?.dispose();
+        if(this.windowEffectTimer!=null)this.clearTimer(this.windowEffectTimer);
+        this.windowEffectTimer=null;
+        this.windowEffectRenderer?.clear();
+        this.windowEffectMotionQuery?.removeEventListener?.('change',this.effectVisibilityListener);
         this.terminalImageReplay = null;
         if (this.frameHandle !== null) {
             this.cancelFrame(this.frameHandle);
@@ -668,6 +754,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         this.presentationPatch = null;
         this.windowTransitions.clear();
         this.closingSceneWindows.clear();
+        this.overviewCarousel.reset();
         this.overviewProgress = 0;
         this.overviewTarget = 0;
         this.overviewItems = null;
@@ -688,7 +775,60 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         this.damaged = false;
     }
 
+    _markWallpaperDamage() {
+        const wallpaperOnly = !this._damaged || this.wallpaperOnlyDamage === true;
+        const native = this.nativeCanvasWindow;
+        const root = [...this.windows.values()].find(window => window.parent === window.id);
+        if (!root || this.overviewProgress || this.overviewTarget || this.workspaceTransition ||
+            this.windowTransitions.size || native.transitions.size || native.closingWindows.size ||
+            native.dragVisual || native.layoutPreview || this.externalOverlay || this.spatialShellOnly) {
+            this.damaged = true;
+            return;
+        }
+        // Preserve pixels whose background cannot change: solid interiors and
+        // DOM portal holes. Every exposed part of the video remains live.
+        const covers = native.snapshots.filter(window => !window.chrome?.windowShape ||
+            window.chrome.windowShape === 'Default').map(riceNativeOpaqueInterior).filter(Boolean);
+        for (const window of native.snapshots) {
+            if (!window.frame || window.role === 'desktop' || window.layerVisible === false ||
+                window.minimized || window.tileClip || window.dialogOnly ||
+                (window.shell?.surface?.frame && window.shell.surface.frame !== 'standard') ||
+                (window.chrome?.windowShape && window.chrome.windowShape !== 'Default')) continue;
+            const client = nativeClientRect(window.frame);
+            const inset = Math.max(2, Number(window.chrome?.radius) || 0);
+            for (const command of window.commands || []) {
+                if (!(command.type === 'terminal-portal' || command.type === 'host-portal' &&
+                    !native.hostSurface(command.identity,window.app)) || !command.rect) continue;
+                const x = Math.max(client.x + inset, client.x + command.rect.x);
+                const y = Math.max(window.frame.titleHeight + inset, window.frame.titleHeight + command.rect.y);
+                const right = Math.min(client.x + client.width - inset, client.x + command.rect.x + command.rect.width);
+                const bottom = Math.min(window.frame.titleHeight + client.height - inset,
+                    window.frame.titleHeight + command.rect.y + command.rect.height);
+                if (right > x && bottom > y) covers.push({x:window.frame.x+x,y:window.frame.y+y,width:right-x,height:bottom-y});
+            }
+        }
+        let damage = [{x:0,y:0,width:root.width,height:root.height}];
+        for (const cover of covers) {
+            const next = [];
+            for (const rect of damage) {
+                const x = Math.max(rect.x,cover.x), y = Math.max(rect.y,cover.y);
+                const right = Math.min(rect.x+rect.width,cover.x+cover.width);
+                const bottom = Math.min(rect.y+rect.height,cover.y+cover.height);
+                if (right <= x || bottom <= y) { next.push(rect); continue; }
+                if (y > rect.y) next.push({x:rect.x,y:rect.y,width:rect.width,height:y-rect.y});
+                if (bottom < rect.y+rect.height) next.push({x:rect.x,y:bottom,width:rect.width,height:rect.y+rect.height-bottom});
+                if (x > rect.x) next.push({x:rect.x,y,width:x-rect.x,height:bottom-y});
+                if (right < rect.x+rect.width) next.push({x:right,y,width:rect.x+rect.width-right,height:bottom-y});
+            }
+            if (next.length > 64) { this.damaged = true; return; }
+            damage = next;
+        }
+        this._markNativeDamage(damage);
+        this.wallpaperOnlyDamage = wallpaperOnly;
+    }
+
     _markNativeDamage(rects, imageOnly = false) {
+        this.wallpaperOnlyDamage = false;
         if (imageOnly !== true) this.terminalImageReplay = null;
         this.terminalImageOnlyDamage = imageOnly === true &&
             (!this._damaged || this.terminalImageOnlyDamage === true);
@@ -757,6 +897,11 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         // complete footprint for both old and new scene bounds (move, resize,
         // unmap and removal), plus a pixel for antialiased strokes. Local
         // client damage and opaque-surface clipping must retain exact bounds.
+        const effectOutset=windowEffectsOutset(this.nativeCanvasWindow.snapshot?.chrome);
+        const effectParent=windows?.get(window.parent);
+        if(!local&&effectOutset&&window.parent!==window.id&&effectParent&&effectParent.parent===effectParent.id&&!window.desktopLayer&&!window.shellLayer&&!window.overrideRedirect){
+            return {x:x-effectOutset,y:y-effectOutset,width:width+effectOutset*2,height:height+effectOutset*2};
+        }
         const surface = this.nativeCanvasWindow.snapshot?.shell?.surface;
         if (!local && surface?.frame === "bracket" &&
             window.id >= RICEWM_FIRST_MANAGED_FRAME_ID &&
@@ -819,16 +964,22 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
     }
 
     _advanceOverview() {
-        if (this.overviewProgress === this.overviewTarget) return;
+        if (this.overviewProgress === this.overviewTarget) {
+            if (!this.overviewTarget && this.overviewCarousel.activation) this.overviewCarousel.reset();
+            return;
+        }
         const elapsed = Math.max(0, this.now() - this.overviewStartedAt);
         const distance = Math.abs(
             this.overviewTarget - this.overviewStartedProgress,
         );
-        const duration = Math.max(1, 280 * distance);
+        const duration = this.overviewCarousel.activation?.duration ?? Math.max(1, 280 * distance);
         const amount = Math.min(1, elapsed / duration);
         this.overviewProgress = this.overviewStartedProgress +
             (this.overviewTarget - this.overviewStartedProgress) * amount;
-        if (amount >= 1) this.overviewProgress = this.overviewTarget;
+        if (amount >= 1) {
+            this.overviewProgress = this.overviewTarget;
+            if (!this.overviewTarget && this.overviewCarousel.activation) this.overviewCarousel.reset();
+        }
     }
 
     _collectOverviewItems(root) {
@@ -879,8 +1030,18 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 source: { ...snapshot.frame },
                 outputArea: snapshot.tileClip || null,
             }));
-        const windows = [...native, ...x11];
+        let windows = [...native, ...x11];
+        if (this.overviewCarousel.enabled) {
+            const catalog = this.activitiesWindows;
+            if (Array.isArray(catalog)) {
+                const visible = new Map(windows.map(item => [`${item.kind}:${item.id}`, item]));
+                windows = catalog.filter(item => this.overviewCarousel.allWorkspaces || item.visible)
+                    .map(item => ({...visible.get(`${item.kind}:${item.id}`), ...item,
+                        source: item.source || this.windows.get(item.id) || {x:0,y:0,width:640,height:420}}));
+            }
+        }
         const query = this.overviewSearchQuery.trim().toLocaleLowerCase();
+        if (this.overviewCarousel.enabled) return windows.filter(item=>!query || [item.title,item.snapshot?.entrypoint,item.snapshot?.applicationId,item.applicationId].filter(Boolean).join(' ').toLocaleLowerCase().includes(query));
         if (!query) return windows;
         const matches = item => `${item.title} ${item.subtitle || ""} ${item.path || ""}`
             .toLocaleLowerCase().includes(query);
@@ -921,6 +1082,15 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             height: 46,
         } : null;
         const contentTop = this.overviewSearchVisible ? searchY + 64 : searchY;
+        if (this.overviewCarousel.enabled) {
+            this.overviewLayout = this.overviewCarousel.layout(this.overviewItems, root, contentTop - searchArea.y, searchY - searchArea.y);
+            this.overviewCloseRects.clear();
+            context.save();
+            this.overviewCarousel.paintBackdrop(context, root, overviewEase(this.overviewProgress));
+            this.overviewCarousel.paint(context, root, overviewEase(this.overviewProgress));
+            context.restore();
+            return;
+        }
         this.overviewLayout = this.overviewInteraction
             ? this.overviewInteraction.layout(this.overviewItems, root, contentTop - searchArea.y)
             : riceOverviewLayout(
@@ -2013,6 +2183,10 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 !window.desktopLayer && !window.shellLayer &&
                 !window.overrideRedirect;
             const shell = this.nativeCanvasWindow.snapshot?.shell;
+            // WM-owned frames are override-redirect surfaces. Their semantic
+            // marker, rather than the client ownership flag, identifies chrome.
+            const chromeState=parent.parent===parent.id?this.shellTexts.get(window.id)?.find(t=>t.role==='window-chrome'):null;
+            const chromeClient=chromeState&&(children.get(window.id)||[]).find(child=>!child.inputOnly&&child.viewable&&child.y>child.x);
             if(applicationWindow&&shell?.scrollingTiling) {
                 const motion=this.windowTransitions.get(window.id);
                 const duration=Math.max(1,shell.motion?.definitions?.['window.layout']?.duration??320);
@@ -2033,9 +2207,14 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 const bounds = this._embeddedMenuBounds(window);
                 context.beginPath(); context.roundRect(bounds.x,bounds.y,bounds.width,bounds.height,radii); context.clip();
             }
-            const transparentTopbar = window.id === RICEWM_GNOME_PANEL_ID && this.topbarController?.transparent;
+            const transparentTopbar = window.id === RICEWM_GNOME_PANEL_ID && this.topbarController?.transparentSurface;
             if (!transparentTopbar) this._renderBackdropMaterial(window, parent);
-            if (menuSurface && shell?.menuShadow === true) {
+            const effect=applicationWindow&&!window.maximizedWindow&&windowEffectStyle(this.nativeCanvasWindow.snapshot?.chrome,window.activeWindow,`x11:${window.id}`);
+            if(effect){
+                this.windowEffectRenderer ||= new RiceWindowEffectRenderer();
+                const frame={x:window.x,y:window.y,width:window.width,height:window.height};
+                this.windowEffectRenderer.paint(context,frame,effect,['x11',8],c=>c.roundRect(0,0,frame.width,frame.height,8),{now:this.now(),reducedMotion:windowEffectMotionOff(shell)});
+            } else if (menuSurface && shell?.menuShadow === true) {
                 this._renderWindowShadow(window, parent, true);
             } else if (
                 applicationWindow &&
@@ -2103,9 +2282,12 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             }
             const themedChrome=this.nativeCanvasWindow.snapshot?.chrome;
             this.themeSkins ||= new RiceThemeSkinRenderer(()=>{this.damaged=true;this.schedule();});
-            const role=window.shellLayer&&![RICEWM_MENU_ID,RICEWM_NOTIFICATION_ID].includes(window.id)?'dock':null;
+            const role=window.shellLayer&&![RICEWM_MENU_ID,RICEWM_NOTIFICATION_ID].includes(window.id)&&!(window.id===RICEWM_TASKBAR_ID&&shell?.dockTranslucent&&!shell.highContrast)?'dock':null;
             if(role)this.themeSkins.paint(context,{x:0,y:0,width:window.width,height:window.height},themedChrome,role);
-            this._renderShellText(window);
+            if(chromeClient){
+                const title=this.shellTexts.get(window.id)?.find(t=>t.role==='window-title')?.text||'Application';
+                this.nativeCanvasWindow.renderManagedChrome(window,chromeClient,title,chromeState);
+            } else this._renderShellText(window);
             // A dock menu caret extends outside its surface; other chrome is
             // clipped to its owner and painted before higher stacked menus.
             if (window.id === RICEWM_MENU_ID && parent.parent === parent.id) {
@@ -2130,7 +2312,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             // Rice windows. Paint after the client so its backing pixmap cannot
             // erase the corners. Client-side decorated windows retain ownership
             // of their frame (their child starts at y=0 or the border inset).
-            if (parent.parent === parent.id && !window.shellLayer &&
+            if (!chromeClient && parent.parent === parent.id && !window.shellLayer &&
                 window.id >= RICEWM_FIRST_MANAGED_FRAME_ID &&
                 window.id < RICEWM_MANAGED_FRAME_ID_LIMIT &&
                 (children.get(window.id) || []).some(child =>
@@ -2341,6 +2523,17 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                     .some(command => command.type === "glass");
             if (hasGlass && (!retainedTileDamage || [...(native.commands || []),...(native.popupCommands || [])].some(command=>command.type==='glass'))) return null;
         }
+        const shell = this.nativeCanvasWindow.snapshot?.shell;
+        if (shell?.dockTranslucent && !shell.highContrast && shell.dockBlur > 0) {
+            const padding = Math.ceil(shell.dockBlur * .72);
+            for (const window of this.windows.values()) {
+                const taskbar = window.id === RICEWM_TASKBAR_ID ||
+                    (window.id >= 0xe0000100 && window.id < 0xe0000120 && (window.id - 0xe0000100) % 2 === 1);
+                if (taskbar && window.viewable && damage.some(rect =>
+                    rect.x < window.x + window.width + padding && rect.x + rect.width > window.x - padding &&
+                    rect.y < window.y + window.height + padding && rect.y + rect.height > window.y - padding)) return null;
+            }
+        }
         // A blur reads beyond its output bounds. Reconstruct the lower planes
         // before sampling: retained pixels outside a regional clip still hold
         // last frame's menus/windows and would feed them back into the glass.
@@ -2361,6 +2554,13 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
     }
 
     _renderBackdropMaterial(window, parent) {
+        const shell = this.nativeCanvasWindow.snapshot?.shell;
+        // Taskbar translucency is independent of the theme's glass material.
+        // Its native background carries alpha; only blur needs an underlay.
+        if (window.id === RICEWM_TASKBAR_ID && shell?.dockTranslucent && !shell.highContrast) {
+            this._renderTaskbarBackdrop(window, parent, shell);
+            return;
+        }
         if (
             !window.backdropMaterial ||
             !window.materialAlpha ||
@@ -2424,17 +2624,16 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         this.liquidPanelCache?.clear();
         if (
             !this.shellGlassBackdrop ||
-            this.shellGlassBackdrop.width !== parent.width ||
-            this.shellGlassBackdrop.height !== parent.height
+            this.shellGlassBackdrop.width !== window.width ||
+            this.shellGlassBackdrop.height !== window.height
         ) {
-            this.shellGlassBackdrop ||= this.canvasFactory(parent.width, parent.height);
-            resizeCanvasBackingStore(this.shellGlassBackdrop, parent.width, parent.height);
+            this.shellGlassBackdrop ||= this.canvasFactory(window.width, window.height);
+            resizeCanvasBackingStore(this.shellGlassBackdrop, window.width, window.height);
         }
         const backdrop = this.shellGlassBackdrop.getContext("2d", {
             alpha: true,
         });
         if (!backdrop) return;
-        const shell = this.nativeCanvasWindow.snapshot?.shell;
         const frostedIce = shell?.frostedIce;
         const riceWmSurface = window.id === RICEWM_TASKBAR_ID ||
             window.id === RICEWM_MENU_ID;
@@ -2445,8 +2644,11 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 : frostedIce?.menus === true);
         backdrop.save();
         try {
-            backdrop.setTransform(1, 0, 0, 1, 0, 0);
-            backdrop.clearRect(0, 0, parent.width, parent.height);
+            // Keep desktop-space sampling while the mask/output owns only
+            // this surface's pixels. A 32px panel must not flush and copy a
+            // desktop-sized transparent canvas on every wallpaper frame.
+            backdrop.setTransform(1, 0, 0, 1, -window.x, -window.y);
+            backdrop.clearRect(window.x, window.y, window.width, window.height);
             if (frostedRiceWmSurface) {
                 // X11 shell layers are composed after the native/window
                 // layers. Start from their current pixels, then share the
@@ -2499,8 +2701,47 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             });
             this.context.clip();
         }
-        this.context.drawImage(this.shellGlassBackdrop, 0, 0);
+        this.context.drawImage(this.shellGlassBackdrop, window.x, window.y);
         this.context.restore();
+    }
+
+    _renderTaskbarBackdrop(window, parent, shell) {
+        const blur = Math.max(0, Math.min(100, Number(shell.dockBlur) || 0)) * .24;
+        if (!blur || !window.surface || parent.parent !== parent.id) return;
+        const damage = this.nativeCanvasWindow.paintDamageRects;
+        if (Array.isArray(damage) && !damage.some(rect =>
+            rect.x < window.x + window.width && rect.x + rect.width > window.x &&
+            rect.y < window.y + window.height && rect.y + rect.height > window.y)) return;
+        let tile = this.taskbarBlurTile;
+        if (!tile || tile.width !== window.width || tile.height !== window.height) {
+            tile = this.taskbarBlurTile = this.canvasFactory(window.width, window.height);
+        }
+        const context = tile.getContext('2d');
+        context.clearRect(0, 0, tile.width, tile.height);
+        const padding = Math.ceil(blur * 3);
+        const x = Math.max(0, window.x - padding), y = Math.max(0, window.y - padding);
+        const width = Math.min(parent.width, window.x + window.width + padding) - x;
+        const height = Math.min(parent.height, window.y + window.height + padding) - y;
+        if (width <= 0 || height <= 0) return;
+        context.filter = `blur(${blur}px)`;
+        context.drawImage(this.context.canvas, x, y, width, height,
+            x - window.x, y - window.y, width, height);
+        context.filter = 'none';
+        // Geometry comes from native paint, including a floating dock's clear
+        // allocation and rounded corners. Blur remains independent of tint
+        // opacity, including a completely transparent background.
+        const bounds = (this.shellTexts.get(window.id) || []).find(row => row.text === '__taskbar_background');
+        context.globalCompositeOperation = 'destination-in';
+        if (bounds) {
+            context.fillStyle = '#fff';
+            context.beginPath();
+            context.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, bounds.foreground);
+            context.fill();
+        } else {
+            context.drawImage(window.surface, 0, 0);
+        }
+        context.globalCompositeOperation = 'source-over';
+        this.context.drawImage(tile, window.x, window.y);
     }
 
     _wedgedMenu(window, shell = this.nativeCanvasWindow.snapshot?.shell) {
@@ -2553,8 +2794,15 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             entry.backdrop.clearRect(x - window.x, y - window.y, right - x, bottom - y);
             entry.backdrop.drawImage(source, x - (origin?.x || 0), y - (origin?.y || 0), right - x, bottom - y,
                 x - window.x, y - window.y, right - x, bottom - y);
+            const color=this.topbarController?.customBackground;
+            if(color){
+                entry.backdrop.fillStyle=rgbaColor(color);
+                entry.backdrop.fillRect(x-window.x,y-window.y,right-x,bottom-y);
+            }
         }
         window.topbarBackdrop = entry.backdrop;
+        const color=this.topbarController?.customBackground;
+        if(color){this.context.fillStyle=rgbaColor(color);this.context.fillRect(0,0,window.width,window.height);}
         this.context.drawImage(entry.surface, 0, 0);
     }
 
@@ -2582,6 +2830,10 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
     _renderWindowSurface(window, shell) {
         const context = this.context;
         const surface = window.scaledUploadSurface || window.surface;
+        if (window.id === RICEWM_TASKBAR_ID && shell?.dockTranslucent && !shell.highContrast) {
+            context.drawImage(surface, 0, 0);
+            return;
+        }
         if (window.scaledUploadSurface) {
             context.imageSmoothingEnabled = true;
             context.imageSmoothingQuality = "low";
@@ -2709,13 +2961,14 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         const overlays = this.shellTexts.get(window.id) || [];
         if (overlays.length === 0) return;
         const context = this.context;
-        const transparentTopbar = window.id === RICEWM_GNOME_PANEL_ID && this.topbarController?.transparent;
+        const transparentTopbar = window.id === RICEWM_GNOME_PANEL_ID && this.topbarController?.transparentSurface;
         const redmond98 = this.nativeCanvasWindow.snapshot?.chrome?.redmond98 === true;
         const menuLayers = window.id === RICEWM_MENU_ID
             ? overlays.filter(overlay => overlay.text === "__menu_layer") : [];
         const menuRoot = menuLayers.length ? this.windows.get(window.parent) : null;
         const compactMenu = menuRoot && (menuRoot.width < 700 || menuRoot.height < 500);
         let menuLayer = -1;
+        let nativeMenuRow=null,paintedStart=null;
         const overlaps = (a, b) => a.x < b.x + b.width && b.x < a.x + a.width &&
             a.y < b.y + b.height && b.y < a.y + a.height;
         const excludeLaterMenus = () => {
@@ -2728,7 +2981,76 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 context.clip("evenodd");
             }
         };
+        const clipMenuRows = chrome => {
+            const pane = menuLayers[menuLayer];
+            if (!pane) return;
+            const skin = this.themeSkins.style(chrome, 'menu', 'normal');
+            const edges = [skin.bevel, ...(skin.bevels || []), ...(skin.rims || [])].filter(Boolean);
+            const inset = Math.ceil(Math.max(
+                typeof skin.border === 'object' ? skin.border.width || 0 : 0,
+                ...edges.map(edge => (edge.inset || 0) + (edge.width || 0)),
+            ));
+            if (inset <= 0) return;
+            // Menu panes share a drawable. Row faces must stay inside their
+            // own pane's relief, including where adjacent cascades meet.
+            context.beginPath();
+            context.rect(pane.x + inset, pane.y + inset,
+                Math.max(0, pane.width - inset * 2), Math.max(0, pane.height - inset * 2));
+            context.clip();
+        };
         for (const [overlayIndex, overlay] of overlays.entries()) {
+            const shellChrome=this.nativeCanvasWindow.snapshot?.chrome||{};
+            const shellSettings=this.nativeCanvasWindow.snapshot?.shell||{};
+            this.themeSkins ||= new RiceThemeSkinRenderer(()=>{this.damaged=true;this.schedule();});
+            if(overlay.text?.startsWith('__start_button:')){
+                if(shellLauncherStyled(shellChrome)){
+                    const style=shellChrome.shellAppearance?.launcher||{},appearance=window.height>window.width?'Icon only':shellSettings.launcherAppearance??this.launcherAppearance;
+                    paintShellThemePart(context,overlay,shellChrome,'startButton',{skins:this.themeSkins,icons:this.nativeCanvasWindow.iconRenderer,state:overlay.text.split(':')[1],style,
+                        text:appearance==='Icon only'?'':shellSettings.launcherText??(redmond98?t('Start'):'RiceWM'),icon:appearance==='Text only'?null:style.icon||'ricewm-logo',background:pixelColor(overlay.background),foreground:pixelColor(overlay.foreground)});
+                    paintedStart=overlay;
+                }
+                continue;
+            }
+            if(overlay.text?.startsWith('__menu_row:')){nativeMenuRow={...overlay,state:overlay.text.split(':')[1]};context.save();excludeLaterMenus();clipMenuRows(shellChrome);nativeMenuRow.skinned=this.themeSkins.paint(context,overlay,shellChrome,'menuItem',nativeMenuRow.state);context.restore();continue;}
+            if (overlay.text?.startsWith('__menu_cascade:')) {
+                // Unstyled rows retain their native triangle. Repaint the same
+                // submenu icon used by application menus after a row skin.
+                if (nativeMenuRow?.skinned) {
+                    context.save();
+                    excludeLaterMenus();
+                    clipMenuRows(shellChrome);
+                    this.nativeCanvasWindow.iconRenderer.renderNamed({
+                        icon: overlay.text.endsWith(':left') ? 'submenu-left' : 'submenu-right',
+                        rect: {x:overlay.x,y:overlay.y,width:overlay.width,height:overlay.height},
+                        hovered: ['hover', 'pressed', 'selected'].includes(nativeMenuRow.state),
+                        color: [(overlay.foreground >>> 16) & 255,
+                            (overlay.foreground >>> 8) & 255, overlay.foreground & 255, 255],
+                    });
+                    context.restore();
+                }
+                continue;
+            }
+            if (overlay.text === '__menu_separator') {
+                context.save();
+                excludeLaterMenus();
+                clipMenuRows(shellChrome);
+                if (!this.themeSkins.paint(context, overlay, shellChrome, 'separator')) {
+                    context.fillStyle = pixelColor(overlay.foreground);
+                    context.fillRect(overlay.x, overlay.y, overlay.width, 1);
+                }
+                context.restore();
+                continue;
+            }
+            const partRole={'__menu_header':'menuHeader','__menu_footer':'menuFooter','__menu_rail':'menuRail','__menu_sidebar':'menuSidebar'}[overlay.text];
+            if(partRole){
+                const style=shellChrome.shellAppearance?.menu||{},prefix=partRole==='menuHeader'?'header':partRole==='menuFooter'?'footer':'rail';
+                context.save();excludeLaterMenus();
+                paintShellThemePart(context,overlay,shellChrome,partRole,{skins:this.themeSkins,icons:this.nativeCanvasWindow.iconRenderer,style,
+                    text:partRole==='menuSidebar'?'':style[prefix+'Text']||'',icon:partRole==='menuSidebar'?null:style[prefix+'Icon'],foreground:pixelColor(overlay.foreground)});
+                context.restore();continue;
+            }
+            if(paintedStart&&overlay.x<paintedStart.width&&overlay.y<paintedStart.height&&!overlay.text?.startsWith('__'))continue;
+
             if (window.id === RICEWM_MENU_ID && overlay.text === "__menu_layer") {
                 menuLayer += 1;
                 context.save();
@@ -2752,7 +3074,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 continue;
             }
             if (
-                overlay.role === "window-title" || !overlay.text || overlay.text.startsWith("__topbar\t") ||
+                overlay.role === "window-title" || !overlay.text || overlay.text === '__taskbar_background' || overlay.text.startsWith("__topbar\t") ||
                 overlay.width <= 0 ||
                 overlay.height <= 0
             ) {
@@ -2767,7 +3089,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 if (icon) {
                     const rect={x:overlay.x,y:overlay.y,width:overlay.width,height:overlay.height};
                     context.save();
-                    if(kind==='native'){this.themeSkins ||= new RiceThemeSkinRenderer(()=>{this.damaged=true;this.schedule();});this.themeSkins.paint(context,{x:rect.x+rect.width/2-8,y:rect.y+rect.height+3,width:16,height:3},this.nativeCanvasWindow.snapshot?.chrome,'runningIndicator',native?.active?'selected':'normal');}
+                    if(kind==='native' && this.dockStyle !== 'Icons-only taskbar'){this.themeSkins ||= new RiceThemeSkinRenderer(()=>{this.damaged=true;this.schedule();});this.themeSkins.paint(context,{x:rect.x+rect.width/2-8,y:rect.y+rect.height+3,width:16,height:3},this.nativeCanvasWindow.snapshot?.chrome,'runningIndicator',native?.active?'selected':'normal');}
                     const renderer=this.nativeCanvasWindow.iconRenderer;
                     const draw=kind === "logo" || icon === "desktop" ? renderer.renderBuiltInNamed : renderer.renderNamed;
                     const ink=this.themeSkins?.style(this.nativeCanvasWindow.snapshot?.chrome,'dock','normal').foreground;
@@ -2802,10 +3124,12 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
             const backgroundAlpha = overlay.background >>> 24;
             const skinChrome=this.nativeCanvasWindow.snapshot?.chrome;
             const skinRole=window.id===RICEWM_MENU_ID?'menuItem':null;
-            const skinRect={x:Math.max(0,overlay.x-36),y:Math.max(0,overlay.y-3),width:Math.min(window.width,overlay.width+40),height:overlay.height+7};
+            const skinRect=nativeMenuRow||{x:Math.max(0,overlay.x-36),y:Math.max(0,overlay.y-3),width:Math.min(window.width,overlay.width+40),height:overlay.height+7};
             const skinHover=this.pointerPosition&&this.pointerPosition.x-window.x>=skinRect.x&&this.pointerPosition.x-window.x<skinRect.x+skinRect.width&&this.pointerPosition.y-window.y>=skinRect.y&&this.pointerPosition.y-window.y<skinRect.y+skinRect.height;
             this.themeSkins ||= new RiceThemeSkinRenderer(()=>{this.damaged=true;this.schedule();});
-            if(skinRole)this.themeSkins.paint(context,skinRect,skinChrome,skinRole,skinHover?'hover':'normal');
+            const skinState=nativeMenuRow?.state||(skinHover?'hover':'normal');
+            if(skinRole&&!nativeMenuRow)this.themeSkins.paint(context,skinRect,skinChrome,skinRole,skinState);
+            const styledMenu=skinRole&&Object.keys(this.themeSkins.style(skinChrome,skinRole,skinState)).length>0;
             const popupRow = {
                 x: Math.max(0, overlay.x - 35),
                 y: overlay.y,
@@ -2920,7 +3244,9 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                     height: Math.min(18, overlay.height),
                 };
                 const eraseFallback = !(namedMenuIcon && overlay.iconFallbackOmitted);
-                if (eraseFallback && commandDeckPill) {
+                const restoreMenuSkin=styledMenu&&nativeMenuRow&&eraseFallback;
+                if(restoreMenuSkin){context.save();context.beginPath();context.rect(iconRect.x-5,iconRect.y-3,iconRect.width+10,iconRect.height+6);context.clip();this.themeSkins.paint(context,nativeMenuRow,skinChrome,skinRole,skinState);context.restore();}
+                if (eraseFallback && !restoreMenuSkin && commandDeckPill) {
                     // The X11 surface has already painted the complete LCARS
                     // selection pill. Clear the fallback raster icon without
                     // letting a rectangular backplate flatten its left cap.
@@ -2942,7 +3268,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                         Math.min(28, overlay.height + 4),
                     );
                     context.restore();
-                } else if (eraseFallback &&
+                } else if (eraseFallback && !restoreMenuSkin &&
                     (backgroundAlpha === 0 || backgroundAlpha === 255) &&
                     !redmondStartIcon) {
                     context.fillStyle = pixelColor(overlay.background);
@@ -3051,7 +3377,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 }
                 context.restore();
             }
-            if (!(skinRole&&Object.keys(this.themeSkins.style(skinChrome,skinRole,skinHover?'hover':'normal')).length) && !transparentTopbar &&
+            if (!styledMenu && !transparentTopbar &&
                 !redmond98 && !commandDeckPill &&
                 (backgroundAlpha === 0 || backgroundAlpha === 255)) {
                 context.fillStyle = pixelColor(overlay.background);
@@ -3087,13 +3413,17 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                         : '"RiceWM Sans", "RiceWM CJK", sans-serif');
                 const typography=this.nativeCanvasWindow.snapshot?.chrome?.typography;if(typography&&Object.keys(typography).length)context.font=desktopThemeFont(typography,'body',fontPx);
             };
-            setFont();
+            const menuTypography=window.id===RICEWM_MENU_ID?skinChrome?.shellAppearance?.menu:null;
+            if(menuTypography?.fontSize)fontPx=Math.min(menuTypography.fontSize,Math.max(8,overlay.height-2));
+            const baseSetFont=setFont;
+            const applyFont=()=>{baseSetFont();if(menuTypography)context.font=shellThemeFont(menuTypography,skinChrome?.typography,fontPx);};
+            applyFont();
             while (
                 fontPx > 9 &&
                 context.measureText(overlay.text).width > maximumWidth
             ) {
                 fontPx -= 1;
-                setFont();
+                applyFont();
             }
             let fittedText = overlay.text;
             if (context.measureText(fittedText).width > maximumWidth) {
@@ -3121,7 +3451,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 ? (this.spatialShellLease?.session?.shellInk? '#'+this.spatialShellLease.session.shellInk:pixelColor(overlay.foreground)) : topbarPaper
                 ? rgbaColor(topbarPaper[3]===0?[(overlay.foreground >>> 16) & 255,(overlay.foreground >>> 8) & 255,overlay.foreground & 255,255]:readableInk([(overlay.foreground >>> 16) & 255, (overlay.foreground >>> 8) & 255, overlay.foreground & 255, 255], topbarPaper))
                 : pixelColor(overlay.foreground);
-            const surfaceInk=this.themeSkins.style(skinChrome,skinRole||'dock',skinHover?'hover':'normal').foreground||(skinRole?this.themeSkins.style(skinChrome,'menu','normal').foreground:undefined);if(surfaceInk)context.fillStyle=surfaceInk;
+            const surfaceInk=this.themeSkins.style(skinChrome,skinRole||'dock',skinState).foreground||(skinRole?this.themeSkins.style(skinChrome,'menu','normal').foreground:undefined);if(surfaceInk)context.fillStyle=surfaceInk;
             if (overlay.rotateCcw) {
                 context.translate(
                     overlay.x + overlay.width / 2,
@@ -3407,8 +3737,8 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         context.font = '600 14px "RiceWM Sans", "RiceWM CJK", system-ui, sans-serif';
         context.textAlign = "left";
         context.textBaseline = "middle";
-        context.fillText(title, card.x + 16, card.y + 22, card.width - (this.dockStyle === "Compact dock" ? 60 : 32));
-        if(this.dockStyle === "Compact dock") {
+        context.fillText(title, card.x + 16, card.y + 22, card.width - (["Compact dock", "Icons-only taskbar"].includes(this.dockStyle) ? 60 : 32));
+        if(["Compact dock", "Icons-only taskbar"].includes(this.dockStyle)) {
             const x=width-44,y=card.y+10;
             context.save();context.fillStyle="rgba(24,28,34,.88)";this._roundedRect(context,{x,y,width:24,height:24},12);context.fill();
             context.strokeStyle="#fff";context.lineWidth=1.5;context.beginPath();context.moveTo(x+8,y+8);context.lineTo(x+16,y+16);context.moveTo(x+16,y+8);context.lineTo(x+8,y+16);context.stroke();context.restore();
@@ -3564,7 +3894,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         for (const siblings of children.values()) {
             siblings.sort((left, right) => left.stackIndex - right.stackIndex);
         }
-        this._drawRetainedPreviewWindow(context, target, children);
+        this._drawRetainedPreviewWindow(context, target, children, !target.viewable);
         const scale = Math.min(
             rect.width / target.width,
             rect.height / target.height,
@@ -3586,7 +3916,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         return true;
     }
 
-    _drawRetainedPreviewWindow(context, window, children) {
+    _drawRetainedPreviewWindow(context, window, children, includeHidden = false) {
         const surface = window.scaledUploadSurface || window.surface;
         if (surface) {
             context.drawImage(surface, 0, 0, window.width, window.height);
@@ -3596,10 +3926,10 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         }
         this._renderShellTextInto(context, window);
         for (const child of children.get(window.id) || []) {
-            if (!child.viewable || child.inputOnly || child.shellLayer) continue;
+            if ((!child.viewable && !includeHidden) || child.inputOnly || child.shellLayer) continue;
             context.save();
             context.translate(child.x, child.y);
-            this._drawRetainedPreviewWindow(context, child, children);
+            this._drawRetainedPreviewWindow(context, child, children, includeHidden);
             context.restore();
         }
     }
@@ -3653,17 +3983,22 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 this._renderWorkspaceStorageIndicator(taskbar);
                 this._renderSystemControls(taskbar, "taskbar");
             }
-            if (this.overviewDashVisible) this._renderQuickApplicationIcons(taskbar);
+            // Retained icon markers own shortcut painting even while a shell
+            // preference update is in flight. Never add the standard overlay.
+            const iconDock = ["Compact dock", "Icons-only taskbar"].includes(this.dockStyle) ||
+                (this.shellTexts.get(taskbar.id) || []).some(row => row.text?.startsWith("__dock_icon:"));
+            if (this.overviewDashVisible && !iconDock) this._renderQuickApplicationIcons(taskbar);
             const redmond98 = this.nativeCanvasWindow.snapshot?.chrome?.redmond98 === true;
+            const customStart=shellLauncherStyled(this.nativeCanvasWindow.snapshot?.chrome)&&(this.shellTexts.get(taskbar.id)||[]).some(entry=>entry.text?.startsWith('__start_button:'));
             const signal = this.nativeCanvasWindow.snapshot?.shell?.surface?.frame === 'bracket';
-            if ((redmond98 || signal) && this.nativeCanvasWindow.snapshot?.shell?.launcherVisible !== false && this.overviewDashVisible &&
+            if (!iconDock && !customStart && (redmond98 || signal) && this.nativeCanvasWindow.snapshot?.shell?.launcherVisible !== false && this.overviewDashVisible &&
                 this.launcherAppearance !== "Text only") {
                 this.nativeCanvasWindow.iconRenderer.renderBuiltInNamed({
                     icon: "ricewm-logo",
                     rect: riceCanvasTaskbarLogoRect(taskbar, redmond98),
                     color: signal ? [255,255,255,255] : [0, 0, 0, 255],
                 });
-            } else if (this.shellLogo && this.nativeCanvasWindow.snapshot?.shell?.launcherVisible !== false && this.overviewDashVisible &&
+            } else if (!iconDock && !customStart && this.shellLogo && this.nativeCanvasWindow.snapshot?.shell?.launcherVisible !== false && this.overviewDashVisible &&
                 this.launcherAppearance !== "Text only") {
                 const rect = riceCanvasTaskbarLogoRect(taskbar);
                 this.context.drawImage(
@@ -3700,7 +4035,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         ) return;
         const width = controls.batteryPercentage === null ? 99 : 143;
         const x = rect?.x ?? surface.x + Math.max(0, surface.width - width - 7);
-        const y = rect ? rect.y + (rect.height-24)/2 : surface.y + (top ? 3 : 4);
+        const y = rect ? rect.y + (rect.height-24)/2 : surface.y + (top ? 3 : this.dockStyle === "Icons-only taskbar" ? (surface.height - 24) / 2 : 4);
         const connected = controls.ethernet || controls.wifi;
         const foreground = [244, 244, 244, 255];
         const inactive = [128, 128, 128, 255];
@@ -3759,7 +4094,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         context.save();
         try {
             if (!appearance || appearance.background) {
-            this._roundedRect(context, rect, appearance?.radius ?? rect.height / 2);
+            this._roundedRect(context, appearance?.monochrome ? {...rect,y:rect.y+2,height:rect.height-4} : rect, appearance?.radius ?? rect.height / 2);
             context.fillStyle = appearance?.background ? `rgba(${appearance.background.slice(0,3).join(",")},${appearance.background[3]/255})` : unread > 0
                 ? "rgba(232,71,22,.94)"
                 : "rgba(255,255,255,.10)";
@@ -3769,13 +4104,15 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
                 icon: iconOverride || (unread > 0 ? "mail-unread" : "mail-read"),
                 rect: {
                     x: rect.x + 6,
-                    y: rect.y + 5,
+                    y: rect.y + (rect.height-16)/2,
                     width: 16,
                     height: 15,
                 },
                 color: appearance?.foreground || [255, 255, 255, 255],
                 hovered: appearance?.hovered === true,
                 hoverBackground: appearance?.background,
+                monochrome: appearance?.monochrome === true,
+                scopedColor: appearance?.monochrome === true,
             });
             context.fillStyle = appearance?.foreground ? `rgba(${appearance.foreground.slice(0,3).join(",")},${appearance.foreground[3]/255})` : "#ffffff";
             context.font = '700 11px "RiceWM Sans", "RiceWM CJK", system-ui, sans-serif';
@@ -4023,12 +4360,7 @@ export class RiceCanvasRenderer extends RiceCanvasRendererBase {
         // Match DisplayServer::wm_start_button_width, including its UTF-8
         // label measurement, so icons stay inside the native shortcut targets.
         const appearance = shell.launcherAppearance ?? this.launcherAppearance;
-        const labelBytes = new TextEncoder().encode(shell.launcherText ?? "RiceWM").length;
-        const startWidth = shell.launcherVisible === false ? 0
-            : redmond98 ? 59
-            : appearance === "Icon only" ? 36
-            : appearance === "Text only" ? Math.max(44, Math.min(200, labelBytes * 7 + 20))
-            : Math.max(112, Math.min(200, labelBytes * 7 + 44));
+        const startWidth=shellLauncherWidth({...shell,launcherAppearance:appearance},this.nativeCanvasWindow.snapshot?.chrome);
         const quickLaunchX = startWidth + 9;
         const vertical = taskbar.height > taskbar.width;
         for (const shortcut of this.quickApplicationIcons || []) {

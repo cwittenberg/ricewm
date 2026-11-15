@@ -24,7 +24,13 @@ export function createPresentationView({ port, getWindow, changed, exited, openH
     const buttons = new Map();
     function button(name, text, action) {
         const control = new Button({ name, text });
-        control.on(Message.ACTIVATE, () => { if (active && !restoring && control.getProperty('enabled')) { void action(); surface.setProperty('focused', true); } });
+        control.on(Message.ACTIVATE, () => {
+            if (active && !restoring && control.getProperty('enabled')) {
+                void action();
+                if (playbackError || controller.state.error) showChrome();
+                else surface.setProperty('focused', true);
+            }
+        });
         buttons.set(name, control); return control;
     }
     const toolbar = new Row({ name: 'show-toolbar', text: 'panel:fixed' }, [
@@ -50,7 +56,11 @@ export function createPresentationView({ port, getWindow, changed, exited, openH
             return { timeline, sample, appearance: sample.appearance, visibility: sample.visibility };
         },
         advance: () => controller.next(),
-        failed(cause) { playbackError = `Slide playback failed: ${String(cause?.message || cause).slice(0, 200)}`; error.text = playbackError; error.setProperty('visible', true); surface.setProperty('visible', false); },
+        failed(cause) {
+            playbackError = `Slide playback failed: ${String(cause?.message || cause).slice(0, 200)}`;
+            error.text = playbackError; error.setProperty('visible', true); surface.setProperty('visible', false);
+            showChrome();
+        },
     });
     const controller = createPresentationController({ port, changed: state => {
         if (closed || !active) return;
@@ -77,7 +87,12 @@ export function createPresentationView({ port, getWindow, changed, exited, openH
         showChrome();
     } });
     function showChrome() {
-        toolbar.setProperty('visible', !fullscreen);
+        const failed = Boolean(playbackError || controller.state.error);
+        toolbar.setProperty('visible', !fullscreen || failed);
+        if (failed) {
+            surface.setProperty('focused', false);
+            buttons.get('show-edit').setProperty('focused', true);
+        }
     }
     async function enterFullscreen(value) {
         pointerGesture.cancel(); pressedTarget = null;
@@ -94,7 +109,9 @@ export function createPresentationView({ port, getWindow, changed, exited, openH
         entering = enterFullscreen(!fullscreen).catch(cause => {
             error.text = `Full screen unavailable: ${String(cause.message).slice(0, 160)}`; error.setProperty('visible', true);
         }).finally(() => { entering = null; });
-        await entering; surface.setProperty('focused', true);
+        await entering;
+        if (playbackError || controller.state.error) showChrome();
+        else surface.setProperty('focused', true);
     }
     async function stop() {
         if (restoring) return restoring;
@@ -197,7 +214,7 @@ export function createPresentationView({ port, getWindow, changed, exited, openH
             changed(true); control.setProperty('visible', true); surface.setProperty('focused', true); jump = ''; showChrome();
             try {
                 await controller.start(options);
-                if (active && options.fullscreen !== false && !fullscreen && !controller.state.error) await toggleFullscreen();
+                if (active && options.fullscreen !== false && !fullscreen && !controller.state.error && !playbackError) await toggleFullscreen();
             } catch (cause) { await stop(); throw cause; }
         },
         stop,

@@ -9,7 +9,9 @@ impl RiceFiles {
         &mut self,
         value: &str,
     ) -> Result<Vec<Message>, FilesActorError> {
-        value.clone_into(&mut self.runtime_mut()?.location_text);
+        let runtime = self.runtime_mut()?;
+        value.clone_into(&mut runtime.location_text);
+        runtime.location_edited = true;
         let location = self.location().clone();
         let intent = self.runtime_mut()?.completion.plan(&location, value)?;
         let mut names = if intent.directory == *self.location() {

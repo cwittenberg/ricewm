@@ -12,7 +12,19 @@ export function documentEditorLayout(value) {
 }
 export function documentEditorPresentation(control,presentation) {
     if(!control.values.documentFont)return presentation;
-    const metadata={id:String(control.id),layout:control.values.documentLayout||documentEditorLayout({}),zoom:control.values.documentZoom,point:control.documentSelectionPoint||null};
+    // Defaults need no wire space. In particular, a normal document editor
+    // must retain the same text capacity as an ordinary multiline editor.
+    const metadata={id:String(control.id)},layout=control.values.documentLayout;
+    if(layout){
+        const defaults=documentEditorLayout({}),changed=Object.fromEntries(Object.entries(layout).filter(([key,value])=>
+            key==='lineHeight'?value.kind!==defaults.lineHeight.kind||value.value!==defaults.lineHeight.value:value!==defaults[key]));
+        if(Object.keys(changed).length)metadata.layout=changed;
+    }
+    if(control.values.documentZoom!==100)metadata.zoom=control.values.documentZoom;
+    if(control.documentSelectionPoint)metadata.point=control.documentSelectionPoint;
+    if(control.documentShapedReference)metadata.shaped=documentEditorShapedReference(control.documentShapedReference);
+    // Paint-only metadata never becomes editable text or clipboard content.
+    if(!control.values.value&&control.values.placeholder)metadata.placeholder=Array.from(control.values.placeholder).slice(0,128).join('');
     const hex=Array.from(new TextEncoder().encode(JSON.stringify(metadata)),byte=>byte.toString(16).padStart(2,'0')).join('');
     const result=presentation.replace('editor:plain:',`editor:document~${hex}:`);
     if(new TextEncoder().encode(result).length>16384)throw new RangeError('Document editor value and layout exceed native text budget');
@@ -27,4 +39,13 @@ export function requestDocumentSelectionPoint(control,value) {
         : ['move','up'].includes(phase)&&previous?.phase!=='up'?previous?.origin||null:null;
     control.documentSelectionPoint=Object.freeze({x,y,phase,extend,origin,revision:(previous?.revision||0)+1});
     control.application?.invalidate(control);return control.documentSelectionPoint.revision;
+}
+
+/** Opaque host resource and exact native caret affinities. The geometry itself
+ * uses bounded native-ui upload pages, never the widget text envelope. */
+export function documentEditorShapedReference(value) {
+    if(value===null)return null;
+    if(!value||typeof value!=='object'||Array.isArray(value)||Object.keys(value).sort().join(',')!=='anchor,caret,revision,token'||
+        typeof value.token!=='string'||! /^[a-f0-9]{32}$/u.test(value.token)||!['caret','anchor'].every(k=>Number.isSafeInteger(value[k])&&value[k]>=0&&value[k]<32770)||!Number.isSafeInteger(value.revision)||value.revision<1)throw RangeError('Invalid shaped editor reference');
+    return Object.freeze({...value});
 }

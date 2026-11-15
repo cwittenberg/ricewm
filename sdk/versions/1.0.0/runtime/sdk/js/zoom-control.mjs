@@ -20,10 +20,12 @@ class ZoomActionButton extends Button {
 
 /** Shared view zoom control; changes page scale without modifying document data. */
 export class ZoomControl extends Row {
-    static constructorOptions = Object.freeze(["viewport", "name", "compact", "min", "max", "showFit", "fitLabel"]);
-    constructor({ viewport, name = 'document-zoom', compact = false, min = 10, max = 400, showFit = true, fitLabel = 'Fit slide to window', ...options } = {}) {
-        if (!viewport?.setZoom || !viewport?.onViewChanged) throw new TypeError('ZoomControl requires a DocumentViewport');
-        if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 10 || max > 400 || min >= max) throw new RangeError('Invalid zoom bounds');
+    static constructorOptions = Object.freeze(["viewport", "name", "compact", "min", "max", "showFit", "fitLabel", "label"]);
+    static authoring = Object.freeze({constructor:'new ZoomControl({viewport:documentViewportOrZoomModel,min:50,max:300,compact:true,label:"Preview zoom percent"})',methods:'Binds to view, setZoom and onViewChanged on a DocumentViewport or ZoomModel. Slider, buttons and keyboard change the actual caller-owned scale. Fixed-scale models omit Fit. label names the slider; view readiness controls native availability. destroy unsubscribes without disposing the caller-owned model.'});
+    constructor({ viewport, name = 'document-zoom', compact = false, min = 10, max = 400, showFit = viewport?.supportsFit !== false, fitLabel = 'Fit slide to window', label = 'Page zoom percent', ...options } = {}) {
+        if (!viewport?.view || typeof viewport.setZoom !== 'function' || typeof viewport.onViewChanged !== 'function') throw new TypeError('ZoomControl requires view, setZoom and onViewChanged');
+        if(typeof label!=='string'||!label.trim()||label.length>256||showFit&&viewport.supportsFit===false)throw TypeError('Invalid zoom presentation');
+        if (!Number.isSafeInteger(min) || !Number.isSafeInteger(max) || min < 1 || max > 10000 || min >= max) throw new RangeError('Invalid zoom bounds');
         super({ ...options, name, text: compact ? 'panel:fixed:accessory-height=26:gap=2:flush' : 'panel:fixed:gap=4:flush' });
         this.viewport = viewport;
         const action = (suffix, icon, title, callback) => {
@@ -31,7 +33,7 @@ export class ZoomControl extends Row {
             button.on(Message.ACTIVATE, () => { if (button.getProperty('enabled')) callback(); });
             return button;
         };
-        this.slider = new Slider({ name: `${name}-slider`, min, max, step: 1, value: 100, accessibleName: 'Page zoom percent' });
+        this.slider = new Slider({ name: `${name}-slider`, min, max, step: 1, value: 100, accessibleName: label });
         this.percentage = new Label({ name: `${name}-percent`, text: 'Fit' });
         this.minus = action('out', ZOOM_OUT_ICON, 'Zoom out', () => viewport.setZoom(Math.max(min, Math.min(max, Math.round(viewport.view.percent / 10) * 10 - 10))));
         this.plus = action('in', ZOOM_IN_ICON, 'Zoom in', () => viewport.setZoom(Math.max(min, Math.min(max, Math.round(viewport.view.percent / 10) * 10 + 10))));
@@ -53,7 +55,7 @@ export class ZoomControl extends Row {
             this.slider.setProperty('value', Math.max(min, Math.min(max, view.percent)));
             this.percentage.text = `${view.percent}%`;
             this.fit.setProperty('checked', view.zoom === 'fit');
-            for (const control of [this.slider, this.fit]) control.setProperty('enabled', view.ready);
+            this.slider.setProperty('enabled', view.ready);this.fit.setProperty('enabled',view.ready&&showFit);
             this.minus.setProperty('enabled', view.ready && view.percent > min);
             this.plus.setProperty('enabled', view.ready && view.percent < max);
         });

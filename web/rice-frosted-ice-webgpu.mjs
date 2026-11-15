@@ -1,3 +1,4 @@
+import {paintGlassImage} from './rice-glass-visible-regions.mjs';
 import { FROSTED_ICE_WGSL } from "./rice-frosted-ice-wgsl.mjs";
 
 // Share compilation and the presenter's device; each material owns only its
@@ -143,17 +144,7 @@ export class RiceWebGpuGlass {
       ]);
       if (this.drawKey === key) {
         this.counters.reuses++;
-        context.drawImage(
-          this.bitmap || this.canvas,
-          0,
-          0,
-          rect.width,
-          rect.height,
-          rect.x,
-          rect.y,
-          rect.width,
-          rect.height,
-        );
+        paintGlassImage(context, this.bitmap || this.canvas, rect, optics.paintRects);
         return true;
       }
       if (this.width !== capture.width || this.height !== capture.height) {
@@ -229,7 +220,12 @@ export class RiceWebGpuGlass {
       pass.setViewport(0, 0, rect.width, rect.height, 0, 1);
       pass.setPipeline(this.pipeline);
       pass.setBindGroup(0, this.bindGroup);
-      pass.draw(3);
+      if (optics.paintRects) {
+        for (const region of optics.paintRects) {
+          pass.setScissorRect(region.x, region.y, region.width, region.height);
+          pass.draw(3);
+        }
+      } else pass.draw(3);
       pass.end();
       device.queue.submit([encoder.finish()]);
       this.bitmap?.close();
@@ -238,17 +234,7 @@ export class RiceWebGpuGlass {
       this.bitmap = this.canvas.transferToImageBitmap();
       this.drawKey = key;
       this.counters.draws++;
-      context.drawImage(
-        this.bitmap || this.canvas,
-        0,
-        0,
-        rect.width,
-        rect.height,
-        rect.x,
-        rect.y,
-        rect.width,
-        rect.height,
-      );
+      paintGlassImage(context, this.bitmap || this.canvas, rect, optics.paintRects);
       return true;
     } catch (error) {
       this.fail(error);

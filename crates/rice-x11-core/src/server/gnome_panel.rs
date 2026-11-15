@@ -127,16 +127,17 @@ impl DisplayServer {
             self.wm_gnome_menu_image = None;
         }
         let (primary_x, primary_y, primary_width, primary_height) = self.wm_panel_output_rect();
-        let width = WM_GNOME_MENU_WIDTH.min(primary_width).max(1);
+        let width = self.wm_gnome_menu_scene.as_ref().map_or(WM_GNOME_MENU_WIDTH,
+            |(image, _)| image.width).min(primary_width).max(1);
         let maximum_height = primary_height
             .saturating_sub(WM_TASKBAR_HEIGHT.saturating_mul(2))
             .max(1);
-        let content_height = self
+        let content_height = self.wm_gnome_menu_scene.as_ref().map_or_else(|| self
             .wm_gnome_menu_items
             .iter()
             .map(wm_gnome_menu_item_height)
             .sum::<usize>()
-            .saturating_add(12);
+            .saturating_add(12), |(image, _)| usize::from(image.height));
         let height = u16::try_from(content_height)
             .unwrap_or(maximum_height)
             .min(maximum_height)
@@ -405,6 +406,27 @@ impl DisplayServer {
             }
         }
         None
+    }
+
+    /// Clear a rich actor scene when the ordinary menu ABI replaces its owner.
+    pub fn clear_gnome_menu_scene(&mut self) {
+        self.wm_gnome_menu_scene = None;
+    }
+
+    /// Retain a rasterized St actor tree and its original GJS action indexes.
+    pub fn update_gnome_menu_scene(&mut self, width: u16, height: u16,
+        pixels: Vec<u32>, hits: Vec<(u8, u16, u16, u16, u16)>) -> bool {
+        if !self.config.native_window_manager || self.wm_gnome_menu_items.is_empty()
+            || width == 0 || height == 0 || width > 1024 || height > 2048
+            || pixels.len() != usize::from(width) * usize::from(height)
+            || hits.len() > 64 || hits.iter().any(|(index, x, y, w, h)|
+                *w == 0 || *h == 0 || u32::from(*x) + u32::from(*w) > u32::from(width)
+                || u32::from(*y) + u32::from(*h) > u32::from(height)
+                || !self.wm_gnome_menu_items.iter().any(|item| item.index == *index && item.reactive)) {
+            return false;
+        }
+        self.wm_gnome_menu_scene = Some((WmGnomeMenuImage { width, height, pixels }, hits));
+        self.update_gnome_menu(self.wm_gnome_menu_items.clone())
     }
 
     /// Upload one bounded decoded image used by an extension popup row.

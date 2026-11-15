@@ -416,6 +416,12 @@ pub(super) fn encode_request(
                     writer.u16(*columns);
                     writer.u16(*rows);
                 }
+                TerminalAction::OpenClaude { columns, rows } => {
+                    validate_terminal_size(*columns, *rows).map_err(EncodeError::InvalidValue)?;
+                    writer.u8(13);
+                    writer.u16(*columns);
+                    writer.u16(*rows);
+                }
                 TerminalAction::OpenGridWithMemory { columns, rows, memory_mib } => {
                     validate_terminal_size(*columns, *rows).map_err(EncodeError::InvalidValue)?;
                     if !(384..=2048).contains(memory_mib) {
@@ -768,6 +774,12 @@ pub(super) fn decode_request(reader: &mut Reader<'_>) -> Result<HostRequest, Dec
                 return Err(DecodeError::InvalidValue("terminal session"));
             }
             let action = match reader.u8()? {
+                13 => {
+                    let columns = reader.u16()?;
+                    let rows = reader.u16()?;
+                    validate_terminal_size(columns, rows).map_err(DecodeError::InvalidValue)?;
+                    TerminalAction::OpenClaude { columns, rows }
+                }
                 12 => {
                     let columns = reader.u16()?;
                     let rows = reader.u16()?;

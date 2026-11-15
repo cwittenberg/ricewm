@@ -7,16 +7,19 @@ impl DisplayServer {
     pub(super) fn paint_wm_chrome(&mut self, id: ResourceId) {
         let dock_targets = if id == WM_TASKBAR && self.wm_dock_style { self.wm_dock_targets() } else { Vec::new() };
         let compact_dock = self.wm_dock_style;
-        let dock_corner_radius = self.wm_dock_corner_radius;
+        let icons_taskbar = self.wm_icons_taskbar;
+        let dock_axis_padding = self.wm_dock_axis_padding();
+        let dock_corner_radius = if icons_taskbar { 0 } else { self.wm_dock_corner_radius };
         let dock_tasks: Vec<Option<WmTaskTarget>> = dock_targets.iter().map(|target| match target {WmChromeTarget::Task(task) => Some(*task), WmChromeTarget::QuickLaunch(index) => self.wm_dock_launcher_task(*index), _ => None,
             }).collect();
+        let dock_active: Vec<bool> = dock_tasks.iter().map(|target| target.is_some_and(|task| self.wm_task_item(task).is_some_and(|item| item.2))).collect();
         let dock_counts: Vec<usize> = dock_tasks.iter().map(|target| match target {Some(WmTaskTarget::Group(group)) => self.wm_task_group(*group).len(), Some(_) => 1, _ => 0,
             }).collect();
         let dock_icon_sources: Vec<Option<WmTaskTarget>> = dock_tasks.iter().map(|task| match task {Some(WmTaskTarget::Group(group)) => self.wm_task_group(*group).first().copied(), other => *other,
             }).collect();
         let dock_step = if self.wm_dock_style { self.wm_dock_step() } else { 52 };
         let dock_bar_height = self.wm_dock_bar_height();
-        let dock_icon_size = WM_COMPACT_DOCK_ICON_SIZE.min(dock_bar_height.saturating_sub(12));
+        let dock_icon_size = if icons_taskbar { 24 } else { WM_COMPACT_DOCK_ICON_SIZE }.min(dock_bar_height.saturating_sub(12));
         let quick_drop = self.wm_menu_drag.as_ref().and_then(|_| self.wm_quick_drop_position(self.pointer_x, self.pointer_y));
         let native_task_active = self
             .native_tasks
@@ -82,7 +85,7 @@ impl DisplayServer {
             .map(|&workspace| self.wm_workspace_item_width(workspace))
             .collect::<Vec<_>>();
         let wm_chrome_hover = self.wm_chrome_hover;
-        let dock_magnification = self.wm_dock_magnification;
+        let dock_magnification = self.wm_dock_magnification && !icons_taskbar;
         let dock_magnification_zoom = self.wm_dock_magnification_zoom;
         let dock_magnification_spread = self.wm_dock_magnification_spread;
         let dock_pointer_axis = if compact_dock
@@ -125,6 +128,9 @@ impl DisplayServer {
         };
         let wm_gnome_menu_image = (id == WM_GNOME_MENU)
             .then(|| self.wm_gnome_menu_image.clone())
+            .flatten();
+        let wm_gnome_menu_scene = (id == WM_GNOME_MENU)
+            .then(|| self.wm_gnome_menu_scene.as_ref().map(|(image, _)| image.clone()))
             .flatten();
         let wm_gnome_menu_icons = if id == WM_GNOME_MENU {
             self.wm_gnome_menu_icons.clone()
@@ -175,7 +181,6 @@ impl DisplayServer {
         };
         let wm_menu_applications_only = self.wm_menu_applications_only;
         let wm_menu_icon_size = self.wm_menu_icon_size;
-        let wm_theme_menu_row_height = self.wm_theme_menu_row_height;
         let wm_menu_offset = self.wm_menu_offset;
         let wm_menu_max_offset = match wm_menu_level {
             WmMenuLevel::Applications(category) => self.wm_application_max_offset(category),
@@ -189,6 +194,11 @@ impl DisplayServer {
             .get(usize::from(wm_theme))
             .cloned()
             .unwrap_or_else(|| built_in_wm_themes().remove(0));
+        let taskbar_opacity = (id == WM_TASKBAR).then_some(self.wm_taskbar_opacity).flatten();
+        // Tag background paint before drawing controls. This avoids color-keying
+        // icons or text that happen to use the same RGB as the panel.
+        let taskbar_background = |color: u32| taskbar_opacity.map_or(color, |opacity|
+            (color & 0x00ff_ffff) | ((u32::from(opacity) * 255 / 100).max(1) << 24));
         let liquid_glass = wm_theme_palette.backdrop_material
             || (id == WM_MENU && wm_theme_palette.menu_backdrop_material);
         let wm_theme_names = self
@@ -201,6 +211,12 @@ impl DisplayServer {
         } else {
             (Vec::new(), Vec::new())
         };
+        let menu_panel_heights:Vec<_>=menu_columns.iter().enumerate().map(|(column,rows)|self.wm_theme_menu_panel_height(column,rows)).collect();
+        let menu_row_rects:Vec<_>=menu_columns.iter().enumerate().map(|(column,rows)|self.wm_theme_menu_row_rects(column,rows,menu_column_widths[column])).collect();
+        let menu_insets:Vec<_>=(0..menu_columns.len()).map(|column|self.wm_theme_menu_insets(column)).collect();
+        let theme_root_columns=self.wm_theme_shell_layout[6];
+        let custom_menu_layout=self.wm_theme_shell_layout[1..] != [0,0,0,0,0,1];
+
         let menu_column_offsets = if id == WM_MENU {
             self.wm_menu_column_offsets()
         } else {
@@ -261,6 +277,7 @@ impl DisplayServer {
         }
         let width = usize::from(surface.width);
         let height = usize::from(surface.height);
+        let mut taskbar_background_bounds = (0, 0, width, height, 0);
         let Some(pixels) = surface.pixels.as_mut() else {
             return;
         };
@@ -446,8 +463,16 @@ impl DisplayServer {
             let menu_text = wm_theme_palette.menu[5];
             let menu_muted = wm_theme_palette.menu[5];
             pixels.fill(menu);
+            if let Some(image) = &wm_gnome_menu_scene {
+                for y in 0..height.min(usize::from(image.height)) {
+                    let count = width.min(usize::from(image.width));
+                    pixels[y * width..y * width + count].copy_from_slice(
+                        &image.pixels[y * usize::from(image.width)..y * usize::from(image.width) + count]);
+                }
+            }
             let mut row_y = 6usize;
             for item in &wm_gnome_menu_items {
+                if wm_gnome_menu_scene.is_some() { break; }
                 let row_height = wm_gnome_menu_item_height(item);
                 if row_y >= height {
                     break;
@@ -628,10 +653,12 @@ impl DisplayServer {
             }
         } else if id == WM_TASKBAR && self.wm_dock_style {
             let [bar, ridge, _, _, _, _, accent] = wm_theme_palette.taskbar;
-            let orchard = wm_theme_palette.chrome_profile == WmChromeProfile::Orchard;
+            let orchard = !icons_taskbar && wm_theme_palette.chrome_profile == WmChromeProfile::Orchard;
             let bar_thickness = dock_bar_height;
             let edge_inset = if orchard { 8 } else { 0 };
-            let icon_inset = if !orchard && bar_thickness == WM_COMPACT_DOCK_BAR_THICKNESS {
+            let icon_inset = if icons_taskbar {
+                bar_thickness.saturating_sub(dock_icon_size) / 2
+            } else if !orchard && bar_thickness == WM_COMPACT_DOCK_BAR_THICKNESS {
                 WM_COMPACT_DOCK_ICON_INSET
             } else {
                 (bar_thickness.saturating_sub(dock_icon_size) / 2).max(6)
@@ -661,6 +688,7 @@ impl DisplayServer {
                     bar_thickness.min(height),
                 )
             };
+            taskbar_background_bounds = (bar_x, bar_y, bar_width, bar_height, dock_corner_radius);
             fill_rounded_rect(
                 pixels,
                 width,
@@ -670,7 +698,7 @@ impl DisplayServer {
                 bar_width,
                 bar_height,
                 dock_corner_radius,
-                ridge,
+                taskbar_background(ridge),
             );
             fill_rounded_rect(
                 pixels,
@@ -681,10 +709,17 @@ impl DisplayServer {
                 bar_width.saturating_sub(2),
                 bar_height.saturating_sub(2),
                 dock_corner_radius.saturating_sub(1),
-                bar,
+                taskbar_background(bar),
             );
             for (index, target) in dock_targets.iter().enumerate() {
-                let axis = WM_COMPACT_DOCK_AXIS_PADDING + index * dock_step;
+                let axis = dock_axis_padding + index * dock_step;
+                let active = dock_active[index] || wm_chrome_pressed == Some(*target)
+                    || *target == WmChromeTarget::Start && wm_menu_mapped;
+                if icons_taskbar && (active || wm_chrome_hover == Some(*target)) {
+                    let color = mix_rgb(bar, accent, if active { 60 } else { 30 }, 255);
+                    if vertical { fill_rect(pixels, width, height, bar_x, axis, bar_width, dock_step, color); }
+                    else { fill_rect(pixels, width, height, axis, bar_y, dock_step, bar_height, color); }
+                }
                 let size = dock_pointer_axis.map_or(dock_icon_size, |pointer| {
                         let center = axis + dock_step / 2;
                         let distance = center.abs_diff(pointer);
@@ -782,7 +817,22 @@ impl DisplayServer {
                 };
                 if let Some(source)=icon_source {text_overlays.push(WmTextOverlay::new(id,x,y,size,size,13,6,0,accent,bar,source.as_bytes(),80,
                     ));}
-                if running {
+                if running && icons_taskbar {
+                    let line_start = axis + if active { 0 } else { 5 };
+                    let line_length = dock_step.saturating_sub(if active { 0 } else { 10 });
+                    if vertical {
+                        let x = if wm_taskbar_edge == WmTaskbarEdge::Right { bar_x + bar_width.saturating_sub(3) } else { bar_x };
+                        fill_rect(pixels, width, height, x, line_start, 3, line_length, accent);
+                    } else {
+                        let y = if wm_taskbar_edge == WmTaskbarEdge::Bottom { bar_y + bar_height.saturating_sub(3) } else { bar_y };
+                        fill_rect(pixels, width, height, line_start, y, line_length, 3, accent);
+                    }
+                    if dock_counts[index] > 1 {
+                        // A second edge denotes multiple windows in this app group.
+                        if vertical { fill_rect(pixels, width, height, bar_x + bar_width.saturating_sub(2), axis + 4, 2, dock_step.saturating_sub(8), accent); }
+                        else { fill_rect(pixels, width, height, axis + dock_step.saturating_sub(2), bar_y + 4, 2, bar_height.saturating_sub(8), accent); }
+                    }
+                } else if running {
                     let (dot_x, dot_y) = if vertical {
                         (
                             if wm_taskbar_edge == WmTaskbarEdge::Right {
@@ -813,10 +863,10 @@ impl DisplayServer {
                 }
             }
         } else if id == WM_TASKBAR && wm_taskbar_edge.vertical() {
-            let [mut bar, mut ridge, menu, task, tray, text, accent] = wm_theme_palette.taskbar;
+            let [mut bar, mut ridge, menu, task, tray, _, accent] = wm_theme_palette.taskbar;
             if self.wm_embedded_shell { bar = wm_theme_palette.menu[0]; ridge = bar; }
             let redmond98 = wm_theme_palette.chrome_profile == WmChromeProfile::Redmond98;
-            pixels.fill(bar);
+            pixels.fill(taskbar_background(bar));
             let ridge_x = if wm_taskbar_edge == WmTaskbarEdge::Right {
                 0
             } else {
@@ -860,6 +910,8 @@ impl DisplayServer {
                         active,
                     );
                 }
+                let state=if active {b"__start_button:pressed".as_slice()}else if wm_chrome_hover==Some(target){b"__start_button:hover".as_slice()}else{b"__start_button:normal".as_slice()};
+                text_overlays.push(WmTextOverlay::new(id,3,3,width.saturating_sub(6),26,0,0,0,contrasting_text(background),background,state,32));
                 // The browser composites the real RiceWM logo asset over this
                 // square control. Do not paint the generic application glyph
                 // underneath it: its opaque center leaked through the SVG and
@@ -977,148 +1029,9 @@ impl DisplayServer {
                 }
             }
 
-            for (index, item, top, extent) in tray_layout {
-                let tray_index = u8::try_from(index).unwrap_or_default();
-                let target = WmChromeTarget::Tray(tray_index);
-                let background = if wm_chrome_pressed == Some(target) {
-                    accent
-                } else if wm_chrome_hover == Some(target) {
-                    task
-                } else {
-                    tray
-                };
-                match item {
-                    TrayItem::Clock => {
-                        fill_taskbar_control(
-                            wm_theme_palette.chrome_profile,
-                            pixels,
-                            width,
-                            height,
-                            3,
-                            top,
-                            width.saturating_sub(6),
-                            extent,
-                            background,
-                        );
-                        let clock = format!("{:02}", clock_minutes / 60);
-                        text_overlays.push(WmTextOverlay::new(
-                            id,
-                            3,
-                            top.saturating_add(4),
-                            width.saturating_sub(6),
-                            extent.saturating_sub(6),
-                            11,
-                            6,
-                            1,
-                            text,
-                            background,
-                            clock.as_bytes(),
-                            2,
-                        ));
-                    }
-                    TrayItem::Workspaces => {
-                        for (slot,&workspace) in workspace_ids.iter().enumerate() {
-                            let y = top.saturating_add(slot.saturating_mul(28));
-                            let active=workspace==active_workspace;
-                            let workspace_background = if active { accent } else { background };
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                3,
-                                y,
-                                width.saturating_sub(6),
-                                24,
-                                workspace_background,
-                            );
-                            let label = format!("{}", workspace + 1);
-                            text_overlays.push(WmTextOverlay::new(
-                                id,
-                                3,
-                                y + 2,
-                                width.saturating_sub(6),
-                                20,
-                                11,
-                                7,
-                                1,
-                                contrasting_text(workspace_background),
-                                workspace_background,
-                                label.as_bytes(),
-                                1,
-                            ));
-                        }
-                    }
-                    TrayItem::Performance => {
-                        fill_taskbar_control(
-                            wm_theme_palette.chrome_profile,
-                            pixels,
-                            width,
-                            height,
-                            3,
-                            top,
-                            width.saturating_sub(6),
-                            extent,
-                            background,
-                        );
-                        let cpu = performance_cpu.back().copied().unwrap_or_default();
-                        let bar_height =
-                            usize::from(cpu).saturating_mul(extent.saturating_sub(8)) / 100;
-                        fill_rect(
-                            pixels,
-                            width,
-                            height,
-                            width / 2 - 2,
-                            top.saturating_add(extent.saturating_sub(4 + bar_height)),
-                            4,
-                            bar_height.max(1),
-                            accent,
-                        );
-                    }
-                    TrayItem::Sound => {
-                        fill_rect(
-                            pixels,
-                            width,
-                            height,
-                            width / 2 - 6,
-                            top + 9,
-                            4,
-                            8,
-                            contrasting_text(background),
-                        );
-                        fill_rect(
-                            pixels,
-                            width,
-                            height,
-                            width / 2 - 2,
-                            top + 7,
-                            2,
-                            12,
-                            contrasting_text(background),
-                        );
-                    }
-                    TrayItem::Connectivity => draw_connectivity_icon(
-                        pixels,
-                        width,
-                        height,
-                        width.saturating_sub(20) / 2,
-                        top + 5,
-                        self.wm_connectivity_mode,
-                        contrasting_text(background),
-                    ),
-                    TrayItem::Launcher(_) => draw_app_icon(
-                        pixels,
-                        width,
-                        height,
-                        width.saturating_sub(20) / 2,
-                        top + 4,
-                        0,
-                        contrasting_text(background),
-                    ),
-                }
-            }
+
         } else if id == WM_TASKBAR {
-            let [mut bar, mut ridge, menu, task, tray, text, accent] = wm_theme_palette.taskbar;
+            let [mut bar, mut ridge, menu, task, tray, _, accent] = wm_theme_palette.taskbar;
             if self.wm_embedded_shell { bar = wm_theme_palette.menu[0]; ridge = bar; }
             let redmond98 = wm_theme_palette.chrome_profile == WmChromeProfile::Redmond98;
             // A Windows 98 Start button remains raised on hover. It becomes
@@ -1148,7 +1061,7 @@ impl DisplayServer {
                     } else {
                         bar
                     };
-                    pixels[y * width + x] = color;
+                    pixels[y * width + x] = if color == bar || color == ridge { taskbar_background(color) } else { color };
                 }
             }
             match wm_theme_palette.chrome_profile {
@@ -1292,6 +1205,12 @@ impl DisplayServer {
                     label,
                     24,
                 ));
+            }
+
+            if self.wm_gnome_dash_visible && self.wm_launcher_visible {
+                let state=if wm_menu_mapped || wm_chrome_pressed==Some(WmChromeTarget::Start){b"__start_button:pressed".as_slice()}else if wm_chrome_hover==Some(WmChromeTarget::Start){b"__start_button:hover".as_slice()}else{b"__start_button:normal".as_slice()};
+                // Prepend so the browser's optional start skin precedes its label.
+                text_overlays.insert(0,WmTextOverlay::new(id,0,0,start_button_width.max(0) as usize,height,0,0,0,start_text,start_background,state,32));
             }
 
             // User-configured quick shortcuts stay separate from task buttons.
@@ -1518,316 +1437,8 @@ impl DisplayServer {
                     true,
                 );
             }
-            for (index, item, item_x, item_width) in tray_layout {
-                let tray_index = u8::try_from(index).unwrap_or_default();
-                let target = WmChromeTarget::Tray(tray_index);
-                let background = if redmond98 {
-                    tray
-                } else if wm_chrome_pressed == Some(target) {
-                    accent
-                } else if wm_chrome_hover == Some(target) {
-                    task
-                } else {
-                    tray
-                };
-                match item {
-                    TrayItem::Clock => {
-                        let hours = clock_minutes / 60;
-                        let minutes = clock_minutes % 60;
-                        let clock = format!("{hours:02}:{minutes:02}");
-                        if !redmond98 {
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                item_x,
-                                5,
-                                item_width,
-                                22,
-                                background,
-                            );
-                        }
-                        text_overlays.push(WmTextOverlay::new(
-                            id,
-                            item_x,
-                            5,
-                            item_width,
-                            22,
-                            12,
-                            6,
-                            1,
-                            text,
-                            background,
-                            clock.as_bytes(),
-                            5,
-                        ));
-                    }
-                    TrayItem::Workspaces => {
-                        let mut workspace_x = item_x;
-                        for (slot,&workspace) in workspace_ids.iter().enumerate() {
-                            let item_width = workspace_widths.get(slot).copied().unwrap_or(28);
-                            let x = workspace_x;
-                            let workspace_target = WmChromeTarget::Workspace {
-                                tray: tray_index,
-                                workspace,
-                            };
-                            let active=workspace==active_workspace;
-                            let workspace_background =
-                                if active || wm_chrome_pressed == Some(workspace_target) {
-                                    accent
-                                } else if wm_chrome_hover == Some(workspace_target) {
-                                    task
-                                } else {
-                                    tray
-                                };
-                            let workspace_text = contrasting_text(workspace_background);
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                x,
-                                6,
-                                item_width.saturating_sub(4),
-                                20,
-                                workspace_background,
-                            );
-                            if redmond98 {
-                                // RiceWM workspaces are an extension of the
-                                // Windows 98 tray, so present them as compact
-                                // physical selector buttons inside the
-                                // right-anchored recessed tray. The current
-                                // desktop is sunken; the others remain raised.
-                                fill_redmond_bevel(
-                                    pixels,
-                                    width,
-                                    height,
-                                    x,
-                                    6,
-                                    item_width.saturating_sub(4),
-                                    20,
-                                    active || wm_chrome_pressed == Some(workspace_target),
-                                );
-                            }
-                            let label = workspace_names
-                                .get(workspace as usize)
-                                .cloned()
-                                .unwrap_or_else(|| format!("{}", workspace + 1).into_bytes());
-                            text_overlays.push(WmTextOverlay::new(
-                                id,
-                                x,
-                                6,
-                                item_width.saturating_sub(4),
-                                20,
-                                12,
-                                7,
-                                1,
-                                workspace_text,
-                                workspace_background,
-                                &label,
-                                item_width.saturating_sub(12) / 7,
-                            ));
-                            workspace_x = workspace_x.saturating_add(item_width);
-                        }
-                    }
-                    TrayItem::Performance => {
-                        if redmond98 {
-                            // Keep the CPU/storage monitor as one deliberate
-                            // Win98 tray instrument: a sunken outer well, a
-                            // reserved icon bay, and a black oscilloscope-like
-                            // plot. The browser overlays the live storage/CPU
-                            // glyph into that bay; it is not a loose icon on
-                            // top of the taskbar anymore.
-                            fill_redmond_bevel(
-                                pixels, width, height, item_x, 4, item_width, 24, true,
-                            );
-                            fill_rect(
-                                pixels,
-                                width,
-                                height,
-                                item_x.saturating_add(20),
-                                7,
-                                item_width.saturating_sub(24),
-                                18,
-                                0x000000,
-                            );
-                        } else {
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                item_x,
-                                4,
-                                item_width,
-                                24,
-                                background,
-                            );
-                        }
-                        let plot_height = 18usize;
-                        let plot_left = if redmond98 { 21 } else { 2 };
-                        let plot_width = item_width.saturating_sub(if redmond98 { 25 } else { 4 });
-                        for (sample, cpu) in performance_cpu.iter().enumerate() {
-                            let x = item_x
-                                + plot_left
-                                + sample * plot_width / performance_cpu.len().max(1);
-                            let bar = usize::from(*cpu).min(100) * plot_height / 100;
-                            fill_rect(
-                                pixels,
-                                width,
-                                height,
-                                x,
-                                24usize.saturating_sub(bar),
-                                2,
-                                bar.max(1),
-                                if redmond98 { 0x00ff00 } else { accent },
-                            );
-                        }
-                        for (sample, network) in performance_network.iter().enumerate() {
-                            let x = item_x
-                                + plot_left
-                                + sample * plot_width / performance_network.len().max(1);
-                            let y = 23usize
-                                .saturating_sub(usize::from(*network).min(100) * plot_height / 100);
-                            fill_rect(
-                                pixels,
-                                width,
-                                height,
-                                x,
-                                y,
-                                2,
-                                2,
-                                if redmond98 { 0x80ff80 } else { text },
-                            );
-                        }
-                    }
-                    TrayItem::Sound => {
-                        let color = contrasting_text(background);
-                        if !redmond98 {
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                item_x,
-                                4,
-                                item_width,
-                                24,
-                                background,
-                            );
-                        }
-                        fill_rect(pixels, width, height, item_x + 4, 12, 4, 8, color);
-                        for offset in 0..5 {
-                            fill_rect(
-                                pixels,
-                                width,
-                                height,
-                                item_x + 8 + offset,
-                                10usize.saturating_sub(offset / 2),
-                                1,
-                                12 + offset,
-                                color,
-                            );
-                        }
-                        if self.wm_volume_muted || self.wm_volume == 0 {
-                            for offset in 0..7 {
-                                fill_rect(
-                                    pixels,
-                                    width,
-                                    height,
-                                    item_x + 15 + offset,
-                                    11 + offset,
-                                    2,
-                                    2,
-                                    0x00ef_4444,
-                                );
-                                fill_rect(
-                                    pixels,
-                                    width,
-                                    height,
-                                    item_x + 21usize.saturating_sub(offset),
-                                    11 + offset,
-                                    2,
-                                    2,
-                                    0x00ef_4444,
-                                );
-                            }
-                        } else {
-                            let waves = usize::from(self.wm_volume.saturating_add(24) / 25).min(4);
-                            for wave in 0..waves {
-                                fill_rect(
-                                    pixels,
-                                    width,
-                                    height,
-                                    item_x + 15 + wave * 2,
-                                    12usize.saturating_sub(wave),
-                                    1,
-                                    8 + wave * 2,
-                                    color,
-                                );
-                            }
-                        }
-                    }
-                    TrayItem::Connectivity => {
-                        let color = contrasting_text(background);
-                        if !redmond98 {
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                item_x,
-                                4,
-                                item_width,
-                                24,
-                                background,
-                            );
-                        }
-                        draw_connectivity_icon(
-                            pixels,
-                            width,
-                            height,
-                            item_x + 3,
-                            7,
-                            self.wm_connectivity_mode,
-                            color,
-                        );
-                    }
-                    TrayItem::Launcher(launcher) => {
-                        let _ = launcher;
-                        if !redmond98 {
-                            fill_taskbar_control(
-                                wm_theme_palette.chrome_profile,
-                                pixels,
-                                width,
-                                height,
-                                item_x,
-                                4,
-                                item_width,
-                                24,
-                                background,
-                            );
-                        }
-                    }
-                }
-            }
-            if !compact_shell && self.wm_system_controls & 0x41 == 0x41 {
-                draw_system_controls_cluster(
-                    pixels,
-                    width,
-                    height,
-                    width.saturating_sub(
-                        wm_system_controls_width + WM_SYSTEM_CONTROLS_RIGHT_MARGIN),
-                    4,
-                    wm_system_controls,
-                    wm_battery_percentage,
-                    text,
-                    contrasting_text(bar),
-                    bar,
-                    tray,
-                );
-            }
+
+
         } else if id == WM_GNOME_DIALOG {
             const DIALOG_BG: u32 = 0x002e_2933;
             const DIALOG_TEXT: u32 = 0x00f4_f4f4;
@@ -1982,8 +1593,6 @@ impl DisplayServer {
             let [background, alternate, separator, hover, selected, text] = wm_theme_palette.menu;
             let command_deck = wm_theme_palette.chrome_profile == WmChromeProfile::CommandDeck;
             let redmond98 = wm_theme_palette.chrome_profile == WmChromeProfile::Redmond98;
-            let menu_row_height = if compact_dock && matches!(wm_menu_level, WmMenuLevel::TaskGroup(_)) {144} else {
-                if wm_theme_menu_row_height>0 {wm_theme_menu_row_height} else {wm_menu_base_row_height_with(redmond98, usize::from(wm_menu_icon_size))}};
             let redmond_start_menu = redmond98
                 && matches!(
                     wm_menu_level,
@@ -2024,7 +1633,7 @@ impl DisplayServer {
                     .copied()
                     .unwrap_or_default();
                 let column_y = menu_column_offsets.get(column).copied().unwrap_or_default();
-                let column_height = wm_menu_rows_height_with(entries, menu_row_height)
+                let column_height = menu_panel_heights[column]
                     .min(height.saturating_sub(column_y));
                 let column_background = if column == 0 { background } else { alternate };
                 // The drawable reserves room for future cascades. Every panel
@@ -2072,7 +1681,7 @@ impl DisplayServer {
                         column_background,
                     );
                 }
-                let has_rail = redmond_start_menu && column == 0;
+                let has_rail = redmond_start_menu && column == 0 && !custom_menu_layout;
                 let rail_width = if has_rail { 24 } else { 0 };
                 if redmond98 {
                     fill_redmond_bevel(
@@ -2132,11 +1741,21 @@ impl DisplayServer {
                         separator,
                     );
                 }
-                let mut row_y = column_y;
+                let (custom_rail,header,footer)=menu_insets[column];
+                for (marker,x,y,w,h) in [
+                    (b"__menu_rail".as_slice(),column_x,column_y+header,custom_rail,column_height.saturating_sub(header+footer)),
+                    (b"__menu_header".as_slice(),column_x,column_y,column_width,header),
+                    (b"__menu_footer".as_slice(),column_x,column_y+column_height.saturating_sub(footer),column_width,footer),
+                ] {if w>0 && h>0 {text_overlays.push(WmTextOverlay::new(id,x,y,w,h,0,0,0,text,column_background,marker,32));}}
+                if custom_menu_layout && theme_root_columns==2 && column==0 && menu_row_rects[column].iter().any(|r|r.0>custom_rail) {
+                    text_overlays.push(WmTextOverlay::new(id,column_x+custom_rail+(column_width-custom_rail)/2,column_y+header,(column_width-custom_rail).div_ceil(2),column_height.saturating_sub(header+footer),0,0,0,text,column_background,b"__menu_sidebar",32));
+                }
+
                 for (row, entry) in entries.iter().enumerate() {
-                    let row_height = wm_menu_row_height_with(entry, menu_row_height);
-                    let y = row_y;
-                    row_y = row_y.saturating_add(row_height);
+                    let (row_x,row_y,row_width,row_height)=menu_row_rects[column][row];
+                    let y=column_y+row_y;
+                    let column_x=column_x+row_x;
+                    let column_width=row_width;
                     if y + row_height > height {
                         break;
                     }
@@ -2191,6 +1810,8 @@ impl DisplayServer {
                             if hovered { hover } else { selected },
                         );
                     }
+                    let row_marker=if hovered {b"__menu_row:hover".as_slice()} else if parent_selected||dragged {b"__menu_row:selected".as_slice()} else {b"__menu_row:normal".as_slice()};
+                    text_overlays.push(WmTextOverlay::new(id,column_x+rail_width,y,column_width.saturating_sub(rail_width),row_height,0,0,0,text,column_background,row_marker,32));
                     let (label, icon): (&[u8], u8) = match entry {
                         WmMenuRow::Applications => (
                             if redmond98 {
@@ -2259,6 +1880,7 @@ impl DisplayServer {
                             (title, 0)
                         }
                         WmMenuRow::WindowClose => (rice_i18n::t("Close").as_bytes(), 6),
+                        WmMenuRow::WindowLogoutQuit => (rice_i18n::t("Logout & Quit").as_bytes(), 6),
                         WmMenuRow::WindowMaximize => (rice_i18n::t("Maximize").as_bytes(), 4),
                         WmMenuRow::WindowMinimize => (rice_i18n::t("Minimize").as_bytes(), 4),
                         WmMenuRow::WindowRestore => (rice_i18n::t("Restore").as_bytes(), 4),
@@ -2289,6 +1911,14 @@ impl DisplayServer {
                         text
                     };
                     if matches!(entry, WmMenuRow::Divider) {
+                        // Keep separator semantics after browser row skins repaint
+                        // the native menu surface. This record has no input target.
+                        text_overlays.push(WmTextOverlay::new(
+                            id, column_x + 10 + rail_width, y + row_height / 2,
+                            column_width.saturating_sub(20 + rail_width), 2,
+                            0, 0, 0, separator, column_background,
+                            b"__menu_separator", 32,
+                        ));
                         fill_rect(
                             pixels,
                             width,
@@ -2402,6 +2032,14 @@ impl DisplayServer {
                             true,
                             row_text,
                         );
+                        // Preserve the semantic cascade indicator when browser
+                        // menu skins repaint the native row underneath it.
+                        text_overlays.push(WmTextOverlay::new(
+                            id, column_x + column_width.saturating_sub(24),
+                            y + row_height.saturating_sub(16) / 2, 16, 16,
+                            0, 0, 0, row_text, column_background,
+                            b"__menu_cascade:right", 32,
+                        ));
                     }
                     let mut row_background = if hovered {
                         hover
@@ -2437,6 +2075,9 @@ impl DisplayServer {
                                 text
                             };
                             let item_background = if active { hover } else { column_background };
+                            let leading_rail = if offset == 0 { rail_width } else { 0 };
+                            let marker = if active { b"__menu_row:hover".as_slice() } else { b"__menu_row:normal".as_slice() };
+                            text_overlays.push(WmTextOverlay::new(id,column_x+offset+leading_rail,y,half.saturating_sub(leading_rail),row_height,0,0,0,item_text,column_background,marker,32));
                             text_overlays.push(
                                 WmTextOverlay::new(
                                     id,
@@ -3301,7 +2942,478 @@ impl DisplayServer {
                 }
             }
         }
-        if id == WM_TASKBAR && self.wm_dock_style {
+        // Both full-width styles share the retained tray paint and hit regions.
+        if id == WM_TASKBAR && (!compact_dock || icons_taskbar) {
+            let [bar, _, _, task, tray, text, accent] = wm_theme_palette.taskbar;
+            let redmond98 = wm_theme_palette.chrome_profile == WmChromeProfile::Redmond98;
+            let tray_inset = if icons_taskbar && !wm_taskbar_edge.vertical() { height.saturating_sub(32) / 2 } else { 0 };
+            let overlay_start = text_overlays.len();
+            let pixels = &mut pixels[tray_inset * width..];
+            let height = height - tray_inset;
+            if wm_taskbar_edge.vertical() {
+                for (index, item, top, extent) in tray_layout {
+                    let tray_index = u8::try_from(index).unwrap_or_default();
+                    let target = WmChromeTarget::Tray(tray_index);
+                    let background = if wm_chrome_pressed == Some(target) {
+                        accent
+                    } else if wm_chrome_hover == Some(target) {
+                        task
+                    } else {
+                        tray
+                    };
+                    match item {
+                        TrayItem::Clock => {
+                            fill_taskbar_control(
+                                wm_theme_palette.chrome_profile,
+                                pixels,
+                                width,
+                                height,
+                                3,
+                                top,
+                                width.saturating_sub(6),
+                                extent,
+                                background,
+                            );
+                            let clock = format!("{:02}", clock_minutes / 60);
+                            text_overlays.push(WmTextOverlay::new(
+                                id,
+                                3,
+                                top.saturating_add(4),
+                                width.saturating_sub(6),
+                                extent.saturating_sub(6),
+                                11,
+                                6,
+                                1,
+                                text,
+                                background,
+                                clock.as_bytes(),
+                                2,
+                            ));
+                        }
+                        TrayItem::Workspaces => {
+                            for (slot,&workspace) in workspace_ids.iter().enumerate() {
+                                let y = top.saturating_add(slot.saturating_mul(28));
+                                let active=workspace==active_workspace;
+                                let workspace_background = if active { accent } else { background };
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    3,
+                                    y,
+                                    width.saturating_sub(6),
+                                    24,
+                                    workspace_background,
+                                );
+                                let label = format!("{}", workspace + 1);
+                                text_overlays.push(WmTextOverlay::new(
+                                    id,
+                                    3,
+                                    y + 2,
+                                    width.saturating_sub(6),
+                                    20,
+                                    11,
+                                    7,
+                                    1,
+                                    contrasting_text(workspace_background),
+                                    workspace_background,
+                                    label.as_bytes(),
+                                    1,
+                                ));
+                            }
+                        }
+                        TrayItem::Performance => {
+                            fill_taskbar_control(
+                                wm_theme_palette.chrome_profile,
+                                pixels,
+                                width,
+                                height,
+                                3,
+                                top,
+                                width.saturating_sub(6),
+                                extent,
+                                background,
+                            );
+                            let cpu = performance_cpu.back().copied().unwrap_or_default();
+                            let bar_height =
+                                usize::from(cpu).saturating_mul(extent.saturating_sub(8)) / 100;
+                            fill_rect(
+                                pixels,
+                                width,
+                                height,
+                                width / 2 - 2,
+                                top.saturating_add(extent.saturating_sub(4 + bar_height)),
+                                4,
+                                bar_height.max(1),
+                                accent,
+                            );
+                        }
+                        TrayItem::Sound => {
+                            fill_rect(
+                                pixels,
+                                width,
+                                height,
+                                width / 2 - 6,
+                                top + 9,
+                                4,
+                                8,
+                                contrasting_text(background),
+                            );
+                            fill_rect(
+                                pixels,
+                                width,
+                                height,
+                                width / 2 - 2,
+                                top + 7,
+                                2,
+                                12,
+                                contrasting_text(background),
+                            );
+                        }
+                        TrayItem::Connectivity => draw_connectivity_icon(
+                            pixels,
+                            width,
+                            height,
+                            width.saturating_sub(20) / 2,
+                            top + 5,
+                            self.wm_connectivity_mode,
+                            contrasting_text(background),
+                        ),
+                        TrayItem::Launcher(_) => draw_app_icon(
+                            pixels,
+                            width,
+                            height,
+                            width.saturating_sub(20) / 2,
+                            top + 4,
+                            0,
+                            contrasting_text(background),
+                        ),
+                    }
+                }
+            } else {
+                for (index, item, item_x, item_width) in tray_layout {
+                    let tray_index = u8::try_from(index).unwrap_or_default();
+                    let target = WmChromeTarget::Tray(tray_index);
+                    let background = if redmond98 {
+                        tray
+                    } else if wm_chrome_pressed == Some(target) {
+                        accent
+                    } else if wm_chrome_hover == Some(target) {
+                        task
+                    } else {
+                        tray
+                    };
+                    match item {
+                        TrayItem::Clock => {
+                            let hours = clock_minutes / 60;
+                            let minutes = clock_minutes % 60;
+                            let clock = format!("{hours:02}:{minutes:02}");
+                            if !redmond98 {
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x,
+                                    5,
+                                    item_width,
+                                    22,
+                                    background,
+                                );
+                            }
+                            text_overlays.push(WmTextOverlay::new(
+                                id,
+                                item_x,
+                                5,
+                                item_width,
+                                22,
+                                12,
+                                6,
+                                1,
+                                text,
+                                background,
+                                clock.as_bytes(),
+                                5,
+                            ));
+                        }
+                        TrayItem::Workspaces => {
+                            let mut workspace_x = item_x;
+                            for (slot,&workspace) in workspace_ids.iter().enumerate() {
+                                let item_width = workspace_widths.get(slot).copied().unwrap_or(28);
+                                let x = workspace_x;
+                                let workspace_target = WmChromeTarget::Workspace {
+                                    tray: tray_index,
+                                    workspace,
+                                };
+                                let active=workspace==active_workspace;
+                                let workspace_background =
+                                    if active || wm_chrome_pressed == Some(workspace_target) {
+                                        accent
+                                    } else if wm_chrome_hover == Some(workspace_target) {
+                                        task
+                                    } else {
+                                        tray
+                                    };
+                                let workspace_text = contrasting_text(workspace_background);
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    x,
+                                    6,
+                                    item_width.saturating_sub(4),
+                                    20,
+                                    workspace_background,
+                                );
+                                if redmond98 {
+                                    // RiceWM workspaces are an extension of the
+                                    // Windows 98 tray, so present them as compact
+                                    // physical selector buttons inside the
+                                    // right-anchored recessed tray. The current
+                                    // desktop is sunken; the others remain raised.
+                                    fill_redmond_bevel(
+                                        pixels,
+                                        width,
+                                        height,
+                                        x,
+                                        6,
+                                        item_width.saturating_sub(4),
+                                        20,
+                                        active || wm_chrome_pressed == Some(workspace_target),
+                                    );
+                                }
+                                let label = workspace_names
+                                    .get(workspace as usize)
+                                    .cloned()
+                                    .unwrap_or_else(|| format!("{}", workspace + 1).into_bytes());
+                                text_overlays.push(WmTextOverlay::new(
+                                    id,
+                                    x,
+                                    6,
+                                    item_width.saturating_sub(4),
+                                    20,
+                                    12,
+                                    7,
+                                    1,
+                                    workspace_text,
+                                    workspace_background,
+                                    &label,
+                                    item_width.saturating_sub(12) / 7,
+                                ));
+                                workspace_x = workspace_x.saturating_add(item_width);
+                            }
+                        }
+                        TrayItem::Performance => {
+                            if redmond98 {
+                                // Keep the CPU/storage monitor as one deliberate
+                                // Win98 tray instrument: a sunken outer well, a
+                                // reserved icon bay, and a black oscilloscope-like
+                                // plot. The browser overlays the live storage/CPU
+                                // glyph into that bay; it is not a loose icon on
+                                // top of the taskbar anymore.
+                                fill_redmond_bevel(
+                                    pixels, width, height, item_x, 4, item_width, 24, true,
+                                );
+                                fill_rect(
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x.saturating_add(20),
+                                    7,
+                                    item_width.saturating_sub(24),
+                                    18,
+                                    0x000000,
+                                );
+                            } else {
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x,
+                                    4,
+                                    item_width,
+                                    24,
+                                    background,
+                                );
+                            }
+                            let plot_height = 18usize;
+                            let plot_left = if redmond98 { 21 } else { 2 };
+                            let plot_width = item_width.saturating_sub(if redmond98 { 25 } else { 4 });
+                            for (sample, cpu) in performance_cpu.iter().enumerate() {
+                                let x = item_x
+                                    + plot_left
+                                    + sample * plot_width / performance_cpu.len().max(1);
+                                let bar = usize::from(*cpu).min(100) * plot_height / 100;
+                                fill_rect(
+                                    pixels,
+                                    width,
+                                    height,
+                                    x,
+                                    24usize.saturating_sub(bar),
+                                    2,
+                                    bar.max(1),
+                                    if redmond98 { 0x00ff00 } else { accent },
+                                );
+                            }
+                            for (sample, network) in performance_network.iter().enumerate() {
+                                let x = item_x
+                                    + plot_left
+                                    + sample * plot_width / performance_network.len().max(1);
+                                let y = 23usize
+                                    .saturating_sub(usize::from(*network).min(100) * plot_height / 100);
+                                fill_rect(
+                                    pixels,
+                                    width,
+                                    height,
+                                    x,
+                                    y,
+                                    2,
+                                    2,
+                                    if redmond98 { 0x80ff80 } else { text },
+                                );
+                            }
+                        }
+                        TrayItem::Sound => {
+                            let color = contrasting_text(background);
+                            if !redmond98 {
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x,
+                                    4,
+                                    item_width,
+                                    24,
+                                    background,
+                                );
+                            }
+                            fill_rect(pixels, width, height, item_x + 4, 12, 4, 8, color);
+                            for offset in 0..5 {
+                                fill_rect(
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x + 8 + offset,
+                                    10usize.saturating_sub(offset / 2),
+                                    1,
+                                    12 + offset,
+                                    color,
+                                );
+                            }
+                            if self.wm_volume_muted || self.wm_volume == 0 {
+                                for offset in 0..7 {
+                                    fill_rect(
+                                        pixels,
+                                        width,
+                                        height,
+                                        item_x + 15 + offset,
+                                        11 + offset,
+                                        2,
+                                        2,
+                                        0x00ef_4444,
+                                    );
+                                    fill_rect(
+                                        pixels,
+                                        width,
+                                        height,
+                                        item_x + 21usize.saturating_sub(offset),
+                                        11 + offset,
+                                        2,
+                                        2,
+                                        0x00ef_4444,
+                                    );
+                                }
+                            } else {
+                                let waves = usize::from(self.wm_volume.saturating_add(24) / 25).min(4);
+                                for wave in 0..waves {
+                                    fill_rect(
+                                        pixels,
+                                        width,
+                                        height,
+                                        item_x + 15 + wave * 2,
+                                        12usize.saturating_sub(wave),
+                                        1,
+                                        8 + wave * 2,
+                                        color,
+                                    );
+                                }
+                            }
+                        }
+                        TrayItem::Connectivity => {
+                            let color = contrasting_text(background);
+                            if !redmond98 {
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x,
+                                    4,
+                                    item_width,
+                                    24,
+                                    background,
+                                );
+                            }
+                            draw_connectivity_icon(
+                                pixels,
+                                width,
+                                height,
+                                item_x + 3,
+                                7,
+                                self.wm_connectivity_mode,
+                                color,
+                            );
+                        }
+                        TrayItem::Launcher(launcher) => {
+                            let _ = launcher;
+                            if !redmond98 {
+                                fill_taskbar_control(
+                                    wm_theme_palette.chrome_profile,
+                                    pixels,
+                                    width,
+                                    height,
+                                    item_x,
+                                    4,
+                                    item_width,
+                                    24,
+                                    background,
+                                );
+                            }
+                        }
+                    }
+                }
+                if !compact_shell && self.wm_system_controls & 0x41 == 0x41 {
+                    draw_system_controls_cluster(
+                        pixels,
+                        width,
+                        height,
+                        width.saturating_sub(
+                            wm_system_controls_width + WM_SYSTEM_CONTROLS_RIGHT_MARGIN),
+                        4,
+                        wm_system_controls,
+                        wm_battery_percentage,
+                        text,
+                        contrasting_text(bar),
+                        bar,
+                        tray,
+                    );
+                }
+            }
+            for overlay in &mut text_overlays[overlay_start..] { overlay.y += tray_inset as u16; }
+        }
+        if let Some(opacity) = taskbar_opacity {
+            let (x, y, width, height, radius) = taskbar_background_bounds;
+            text_overlays.push(WmTextOverlay::new(id, x, y, width, height, 0, 0, 0,
+                radius as u32, 0, b"__taskbar_background", 255));
+            for pixel in pixels.iter_mut().filter(|pixel| **pixel != 0) {
+                if *pixel >> 24 == 0 { *pixel |= 0xff00_0000; }
+                else if opacity == 0 && *pixel >> 24 == 1 { *pixel &= 0x00ff_ffff; }
+            }
+        } else if id == WM_TASKBAR && self.wm_dock_style && !icons_taskbar {
             for pixel in pixels.iter_mut().filter(|pixel| **pixel != 0) {
                 *pixel = (*pixel & 0x00ff_ffff) | if *pixel == wm_theme_palette.taskbar[0] { 0xb800_0000 } else { 0xff00_0000 };
             }
@@ -3345,6 +3457,11 @@ impl DisplayServer {
                     *dst = 0xff000000 | (channel(16)<<16) | (channel(8)<<8) | channel(0);
                 }
             }}
+        }
+        if frame_client.is_some() && self.wm_window_chrome.is_some() {
+            let action=|target|match target {Some(WmChromeTarget::FrameControl(frame,action)) if frame==id=>usize::from(action)+1,_=>0};
+            // Alignment 4 is metadata only; x/y carry hover/press action IDs.
+            text_overlays.push(WmTextOverlay::new(id,action(wm_chrome_hover),action(wm_chrome_pressed),0,0,0,0,4,0,0,b"",0));
         }
         if frame_client.is_some() {
             // Alignment value 3 is a semantic window-title record, not paint.

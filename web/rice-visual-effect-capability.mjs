@@ -73,3 +73,16 @@ export function createRiceVisualEffectWebGl2Context(
     }
     return null;
 }
+
+export function riceWebGpuPresentationNeedsResizeWorkaround(scope = globalThis) {
+    const navigator = scope?.navigator;
+    // iOS 26 WebGPU can retain Metal allocations across texture/viewport
+    // changes and force-reload the page, even when textures are destroyed.
+    // WebGL is unaffected in that reproducer and keeps hardware acceleration.
+    // https://bugs.webkit.org/show_bug.cgi?id=312563
+    // iPad desktop mode reports a Macintosh user agent.
+    return /iPhone|iPad|iPod/i.test(String(navigator?.userAgent || "")) ||
+        (/Macintosh|MacIntel/i.test(`${navigator?.userAgent || ""} ${navigator?.platform || ""}`) &&
+            Number(navigator?.maxTouchPoints) > 1);
+}
+

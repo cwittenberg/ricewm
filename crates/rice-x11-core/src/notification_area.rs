@@ -14,7 +14,7 @@ impl DisplayServer {
         let (_, _, width, height) = self.wm_taskbar_rect();
         let vertical = self.wm_taskbar_edge.vertical();
         let visible = self.wm_notification_icons.iter().filter(|icon| !icon.hidden).collect::<Vec<_>>();
-        let end = if self.wm_dock_style {
+        let end = if self.wm_dock_style && !self.wm_icons_taskbar {
             if vertical { usize::from(height) } else { usize::from(width) }.saturating_sub(WM_COMPACT_DOCK_AXIS_PADDING)
         } else if vertical {
             self.wm_vertical_tray_layout().first().map_or(usize::from(height), |entry| entry.2)

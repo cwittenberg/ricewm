@@ -21,12 +21,15 @@ export function paintTable(builder, object, textFrames, selectedCell = null, edi
     paintTableSelection(builder, object, selectedCell);
 }
 /** Selection is editor chrome; callers paint it outside effect scopes. */
-export function paintTableSelection(builder, object, selectedCell) {
+export function paintTableSelection(builder, object, selectedCell, {transform=null,width=1.5,color=0xffc47b25}={}) {
     if (selectedCell?.object.id !== object.id) return;
     const cell=object.table.cells.find(cell=>!cell.covered && cell.row===selectedCell.row && cell.column===selectedCell.column);
     if (!cell) return;
-    const {x,y,width:w,height:h}=cell.bounds, points=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]];
-    for (let i=0;i<4;i++) builder.line(points[i],points[(i+1)%4],1.5,0xffc47b25);
+    const cells=selectedCell.range?object.table.cells.filter(c=>!c.covered&&c.row>=selectedCell.range.firstRow&&c.row<=selectedCell.range.lastRow&&c.column>=selectedCell.range.firstColumn&&c.column<=selectedCell.range.lastColumn):[cell];
+    const x=Math.min(...cells.map(c=>c.bounds.x)),y=Math.min(...cells.map(c=>c.bounds.y)),w=Math.max(...cells.map(c=>c.bounds.x+c.bounds.width))-x,h=Math.max(...cells.map(c=>c.bounds.y+c.bounds.height))-y;
+    const points=[[x,y],[x+w,y],[x+w,y+h],[x,y+h]].map(([px,py])=>transform?
+        [transform[0]*px+transform[2]*py+transform[4],transform[1]*px+transform[3]*py+transform[5]]:[px,py]);
+    for (let i=0;i<4;i++) builder.line(points[i],points[(i+1)%4],width,color);
 }
 export function tableCellAt(object,point, borderMargin = 0) {
     if(!object?.table || !object.transform) return null;

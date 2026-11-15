@@ -83,6 +83,7 @@
         let value = 0;
         if (event?.shiftKey) value |= 0x0001;
         if (event?.getModifierState?.("CapsLock")) value |= 0x0002;
+        if (event?.getModifierState?.("NumLock")) value |= 0x0010;
         if (event?.ctrlKey) value |= 0x0004;
         if (event?.altKey) value |= 0x0008;
         if (event?.metaKey) value |= 0x0040;
@@ -251,12 +252,15 @@
             this.heldKeys = new Map();
             this.lastPoint = { x: 0, y: 0 };
             this.lastState = 0;
+            this.observedLocks = null;
+            this.lockPresses = new Map();
         }
         point(event) {
             this.lastPoint = canvasPoint(
                 event, this.canvas, this.mapPoint, this.rounding,
             );
             this.lastState = eventState(event);
+            if(typeof event?.getModifierState==='function')this.observedLocks=this.lastState&0x12;
             return this.lastPoint;
         }
         motion(event) {
@@ -304,7 +308,21 @@
             return wheel(event, point, this.wheelTicks?.(event) ?? 1);
         }
         key(event, pressed, compositionActive = false) {
-            const normalized = keyEvents(event, pressed, compositionActive);
+            let normalized = keyEvents(event, pressed, compositionActive);
+            const lockMask=event?.key===event?.code?(event.code==='CapsLock'?2:event.code==='NumLock'?16:0):0;
+            if(lockMask){
+                const keycode=keycodes[event.code];
+                if(pressed&&!this.heldKeys.has(keycode)&&!event.repeat){
+                    // The DOM may report the pre-toggle mask on both events
+                    // when unlocking under X11. A known previous observation
+                    // plus one physical lock-key cycle supplies the new mask.
+                    this.lockPresses.set(lockMask,this.observedLocks===null?null:(this.observedLocks^lockMask)&lockMask);
+                }else if(!pressed&&this.lockPresses.has(lockMask)){
+                    const value=this.lockPresses.get(lockMask);this.lockPresses.delete(lockMask);
+                    if(value!==null)normalized=Object.freeze(normalized.map(input=>Object.freeze({...input,state:(input.state&~lockMask)|value})));
+                }
+            }
+            if(normalized.length)this.observedLocks=normalized.at(-1).state&0x12;
             for (const input of normalized) {
                 if (input.input !== "key") continue;
                 if (input.pressed) {
@@ -312,7 +330,7 @@
                         modifierMasks[event?.code] || 0);
                 } else this.heldKeys.delete(input.keycode);
             }
-            this.lastState = eventState(event);
+            this.lastState = normalized.at(-1)?.state??eventState(event);
             return normalized;
         }
         cancelPointer() {
@@ -337,6 +355,8 @@
                 }));
             }
             this.heldKeys.clear();
+            this.lockPresses.clear();
+            this.observedLocks=null;
             this.lastState = 0;
             return Object.freeze(events);
         }

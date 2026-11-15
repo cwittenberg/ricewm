@@ -128,8 +128,8 @@ impl DisplayServer {
         width: u16,
         height: u16,
     ) {
-        // Publish the WM state before ConfigureNotify. Toolkits such as SDL
-        // read _NET_WM_STATE to distinguish a maximize from an ordinary resize.
+        // Publish the WM state before ConfigureNotify. Toolkits such as Qt
+        // and SDL distinguish fullscreen/maximize from an ordinary resize.
         // Every maximize/restore/snap/drag path converges here; do not emit a
         // redundant PropertyNotify on each pointer-sized geometry update.
         self.publish_managed_maximized_state(client);
@@ -193,12 +193,14 @@ impl DisplayServer {
         let atom_type = self.atoms.intern("ATOM", false);
         let vertical = self.atoms.intern("_NET_WM_STATE_MAXIMIZED_VERT", false);
         let horizontal = self.atoms.intern("_NET_WM_STATE_MAXIMIZED_HORZ", false);
+        let fullscreen = self.atoms.intern("_NET_WM_STATE_FULLSCREEN", false);
         let maximized = self.maximized_geometries.contains_key(&client.0);
+        let full = self.restore_geometries.contains_key(&client.0);
         let existing = self
             .windows
             .get(&client.0)
             .and_then(|window| window.properties.get(&property));
-        if existing.is_none() && !maximized {
+        if existing.is_none() && !maximized && !full {
             return;
         }
         let mut states: Vec<u32> = existing
@@ -206,9 +208,12 @@ impl DisplayServer {
             .map(|value| value.data.chunks_exact(4).map(read_u32_le).collect())
             .unwrap_or_default();
         // Leave unrelated state hints intact, including modal/attention hints.
-        states.retain(|atom| *atom != vertical.0 && *atom != horizontal.0);
+        states.retain(|atom| *atom != vertical.0 && *atom != horizontal.0 && *atom != fullscreen.0);
         if maximized {
             states.extend([vertical.0, horizontal.0]);
+        }
+        if full {
+            states.push(fullscreen.0);
         }
         let data = states.into_iter().flat_map(u32::to_le_bytes).collect();
         self.set_wm_property_if_changed(client, "_NET_WM_STATE", "ATOM", 32, data);

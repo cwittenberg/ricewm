@@ -406,8 +406,8 @@ impl DisplayServer {
             offset += 4;
         }
         for keycode in 8..=255u16 {
-            let name = format!("K{keycode:03}");
-            output[offset..offset + 4].copy_from_slice(name.as_bytes());
+            let name = super::xkb_key_names::evdev_key_name(keycode as u8);
+            output[offset..offset + 4].copy_from_slice(&name);
             offset += 4;
         }
         debug_assert_eq!(offset, output.len());

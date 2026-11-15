@@ -23,13 +23,22 @@
       "compute.close",
       "files.read",
       "files.write",
+      "clipboard.readFormats",
+      "clipboard.writeFormats",
+      "clipboard.readText",
+      "clipboard.writeText",
       "dialogs.openFile",
       "dialogs.saveFile",
       "dialogs.confirm",
+      "actions.register",
+      "actions.unregister",
       "assets.read",
       "assets.stat"
     ],
     "bus": {
+      "subscribe": [
+        "org.ricewm.sheet/actions/invoke"
+      ],
       "provide": [
         "org.ricewm.sheet/engine/",
         "org.ricewm.sheet/copilot/"
@@ -38,5 +47,8 @@
         "org.ricewm.sheet/engine/"
       ]
     }
+  },
+  "sdk": {
+    "version": "1.0.0"
   }
 }

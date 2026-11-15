@@ -76,7 +76,11 @@ impl DisplayServer {
         if self.wm_menu_show_workspaces && !self.wm_compact_shell() {
             rows.push(WmMenuRow::WorkspaceNavigation);
         }
-        rows.extend([WmMenuRow::Run, WmMenuRow::Exit]);
+        rows.extend([
+            WmMenuRow::Run,
+            WmMenuRow::Divider,
+            WmMenuRow::Exit,
+        ]);
         rows
     }
 
@@ -258,6 +262,15 @@ impl DisplayServer {
         }
         rows.push(WmMenuRow::Divider);
         rows.push(WmMenuRow::WindowClose);
+        if let WmTaskTarget::Native(id) = target {
+            // Same application identity hash as rice-display-core.mjs. Titles
+            // and icons can change without changing the account owner.
+            let paddy_key = b"native:rice-paddy".iter().fold(2166136261_u32,
+                |hash, byte| (hash ^ u32::from(*byte)).wrapping_mul(16777619));
+            if self.wm_dock_task_keys.get(&id) == Some(&paddy_key) {
+                rows.push(WmMenuRow::WindowLogoutQuit);
+            }
+        }
         rows
     }
 
@@ -357,12 +370,13 @@ impl DisplayServer {
             .wm_themes
             .get(usize::from(self.wm_theme))
             .is_some_and(|theme| theme.chrome_profile == WmChromeProfile::Redmond98);
-        let category_width = if redmond98 {
+        let root_width = if self.wm_theme_shell_layout[1]>0 {self.wm_theme_shell_layout[1]} else {WM_MENU_ROOT_WIDTH};
+        let category_width = if self.wm_theme_shell_layout[2]>0 {self.wm_theme_shell_layout[2]} else if redmond98 {
             188
         } else {
             WM_MENU_CATEGORY_WIDTH
         };
-        let application_width = if redmond98 {
+        let application_width = if self.wm_theme_shell_layout[2]>0 {self.wm_theme_shell_layout[2]} else if redmond98 {
             210
         } else {
             WM_MENU_APPLICATION_WIDTH
@@ -377,7 +391,7 @@ impl DisplayServer {
             let reveal = 32.min(available / 8);
             return (0..count).map(|index| {
                 (if index == 0 && !self.wm_menu_hides_applications_root() {
-                    WM_MENU_ROOT_WIDTH.min(available)
+                    root_width.min(available)
                 } else { application_width.min(available.saturating_sub(reveal)) }).max(1)
             }).collect();
         }
@@ -385,19 +399,19 @@ impl DisplayServer {
             // A cascade must never resize the pane that opened it. Keeping the
             // root width identical at every level also keeps its disclosure
             // carets stationary while the child pane is being mapped.
-            WmMenuLevel::Root => vec![WM_MENU_ROOT_WIDTH.min(available)],
+            WmMenuLevel::Root => vec![root_width.min(available)],
             WmMenuLevel::Categories | WmMenuLevel::Themes => {
-                let total = (WM_MENU_ROOT_WIDTH + application_width).min(available);
-                let root = WM_MENU_ROOT_WIDTH.min(total.saturating_sub(1));
+                let total = (root_width + application_width).min(available);
+                let root = root_width.min(total.saturating_sub(1));
                 vec![root, total.saturating_sub(root)]
             }
             WmMenuLevel::Applications(_) => {
                 let total =
-                    (WM_MENU_ROOT_WIDTH + category_width + application_width).min(available);
+                    (root_width + category_width + application_width).min(available);
                 // Protect the already-visible panes first. The newest, last
                 // cascade absorbs any narrow-output reduction so opening it
                 // cannot move a disclosure caret under the pointer.
-                let root = WM_MENU_ROOT_WIDTH.min(total.saturating_sub(2)).max(1);
+                let root = root_width.min(total.saturating_sub(2)).max(1);
                 let category = category_width.min(total.saturating_sub(root + 1)).max(1);
                 vec![root, category, total.saturating_sub(root + category)]
             }
@@ -407,7 +421,7 @@ impl DisplayServer {
                     _ => 0,
                 };
                 let pane_count = 2usize.saturating_add(folder_depth);
-                let desired_total = WM_MENU_ROOT_WIDTH
+                let desired_total = root_width
                     .saturating_add(category_width.saturating_mul(folder_depth))
                     .saturating_add(application_width);
                 let total = desired_total.min(available).max(pane_count);
@@ -416,7 +430,7 @@ impl DisplayServer {
                 for pane in 0..pane_count {
                     let panes_after = pane_count.saturating_sub(pane + 1);
                     let desired = if pane == 0 {
-                        WM_MENU_ROOT_WIDTH
+                        root_width
                     } else if pane + 1 == pane_count {
                         application_width
                     } else {
@@ -444,7 +458,7 @@ impl DisplayServer {
             widths.remove(0);
         }
         if self.wm_dock_style && !self.wm_taskbar_edge.vertical() && self.wm_menu_window_anchor.is_none() && self.wm_menu_is_start_cascade() {
-            let mut left=i32::from(self.wm_taskbar_rect().0)+8;
+            let mut left=self.wm_dock_menu_anchor_x(widths.first().copied().unwrap_or(0));
             let mut right=left+widths.first().copied().unwrap_or(0) as i32;
             for width in widths.iter_mut().skip(1) {
                 let right_space=(i32::from(self.config.width_px)-4-right).max(0) as usize;
@@ -480,7 +494,7 @@ impl DisplayServer {
             return offsets;
         }
         if self.wm_dock_style && !self.wm_taskbar_edge.vertical() && self.wm_menu_window_anchor.is_none() && self.wm_menu_is_start_cascade() {
-            let anchor=i32::from(self.wm_taskbar_rect().0)+8;
+            let anchor=self.wm_dock_menu_anchor_x(widths.first().copied().unwrap_or(0));
             let mut left=anchor;
             let mut right=anchor+widths.first().copied().unwrap_or(0) as i32;
             let mut positions=vec![anchor];

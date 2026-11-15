@@ -1,4 +1,4 @@
-import { Column, Container, Label, Menu, MenuItem, Message, Row, SceneBuilder, SceneSurface, ScrollView, State, Tooltip } from '@ricewm/app';
+import { Column, Container, Label, Menu, MenuItem, Message, Row, SceneBuilder, SceneSurface, ScrollView, SplitButton, State, Tooltip } from '@ricewm/app';
 import { layouts, layoutById } from './layout-catalog.mjs';
 
 /** A miniature document page, drawn exclusively from native placeholder boxes. */
@@ -50,8 +50,22 @@ export function createLayoutTools({ onApply, onInsert, notice = () => {}, namePr
     };
     const apply = makeMenu('slide-layout', 'Layout', 41, onApply);
     const insert = makeMenu('new-slide-layout', 'New slide', 10, onInsert);
+    const newSlide = new SplitButton({ name: namePrefix + 'new-slide', text: 'New slide', icon: 10,
+        menu: insert.menu, presentation: 'ribbon', enabled: false,
+        onActivate: () => {
+            if (!newSlide.enabled) return;
+            const current = layoutById(selectedLayout);
+            const layout = current?.id !== 'title-slide' && current || layoutById('title-content') || current || layouts()[0];
+            if (layout) return invoke(insert, layout.id);
+        } });
+    function invoke(record, id) {
+        if (!record.menu.enabled || !layoutById(id)) return;
+        try { return Promise.resolve(record.callback(id)).catch(error => notice(error.message || 'Could not change slide layout')); }
+        catch (error) { notice(error.message || 'Could not change slide layout'); }
+    }
     function update() {
         for (const record of [apply, insert]) record.menu.setProperty('enabled', ready && !busy && (record !== apply || canApply) && layouts().length > 0 && typeof record.callback === 'function');
+        newSlide.enabled = insert.menu.enabled;
         for (const { action, layout, record } of choices) {
             action.setProperty('enabled', record.menu.getProperty('enabled'));
             action.setProperty('selected', record === apply && layout.id === selectedLayout);
@@ -75,8 +89,7 @@ export function createLayoutTools({ onApply, onInsert, notice = () => {}, namePr
                     ]);
                     action.on(Message.ACTIVATE, () => {
                         if (!action.getProperty('enabled') || !layoutById(layout.id)) return;
-                        try { Promise.resolve(record.callback(layout.id)).catch(error => notice(error.message || 'Could not change slide layout')); }
-                        catch (error) { notice(error.message || 'Could not change slide layout'); }
+                        void invoke(record, layout.id);
                     });
                     row.append(action); choices.push({ action, layout, record });
                 }
@@ -86,7 +99,7 @@ export function createLayoutTools({ onApply, onInsert, notice = () => {}, namePr
         update();
     }
     refresh();
-    return Object.freeze({ layoutMenu: apply.menu, newSlideMenu: insert.menu, refresh,
+    return Object.freeze({ layoutMenu: apply.menu, newSlideMenu: newSlide, refresh,
         setState(state = {}) {
             ready = state.ready ?? ready; busy = state.busy ?? busy;
             canApply = state.canApply ?? canApply;

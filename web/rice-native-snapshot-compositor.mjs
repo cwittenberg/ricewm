@@ -1,3 +1,7 @@
+import {translateMenuCommands,removeApplicationMenuBand} from './rice-application-menu.mjs';
+import {applyNativeTitlebarVisibility} from './rice-native-window-stack.mjs';
+import {nativeClientRect} from './rice-native-window-stack.mjs';
+import {popupSurfaceRects} from './rice-native-canvas-window-damage.mjs';
 import { t } from "./rice-i18n.mjs";
 import {
     riceColorChannels,
@@ -5,6 +9,7 @@ import {
 import {
     nativeChromeTheme,
     nativeResizeHandles,
+    nativeWindowResizeFrame,
 } from "./rice-native-window-stack.mjs";
 
 const WINDOW_ID = 1n;
@@ -47,16 +52,60 @@ export function composeNativeWindowStack({
     const snapshotWindows = includeHidden
         ? windows
         : windows.filter(window => !window.minimized);
+    const context=activeWindow?.transientPopup?activeWindow.applicationContext:activeWindow;
+    const applicationWindow=context&&snapshotWindows.includes(context)&&!context.minimized&&!context.background&&context.role!=='desktop'?context:null;
     const snapshots = snapshotWindows.map(window => {
+        applyNativeTitlebarVisibility(window);
         const { frame } = window;
         if (dialogWorkArea) bridge.setDialogWorkArea?.(window.app, window.window || WINDOW_ID, dialogWorkArea(window));
-        const snapshot = bridge.render(
+        let snapshot = bridge.render(
             window.app,
             window.window || WINDOW_ID,
-            frame.width,
-            frame.contentHeight,
+            nativeClientRect(frame).width,
+            frame.contentHeight + (window.menuPresentationHeight || 0),
         );
-        window.popup = snapshot.popup;
+        let editorPopupTranslation=null;
+        window.browserEditorPopupSize=null;
+        if(window.browserEditorMenuAnchor&&snapshot.popup&&dialogWorkArea){
+            const normal=snapshot,area=dialogWorkArea(window),expanded=bridge.render(window.app,WINDOW_ID,area.width,area.height);
+            if(expanded.popup){
+                window.browserEditorPopupSize={width:area.width,height:area.height};
+                const menuCommands=expanded.commands.slice(expanded.popup.commandStart);
+                const root=popupSurfaceRects(menuCommands,expanded.popup.rect)[0],anchor=window.browserEditorMenuAnchor;
+                // Reserve a cascade beside the root from its first paint. The
+                // root stays still as the pointer opens/closes child menus.
+                const x=Math.max(0,Math.min(anchor.x-(frame.x+nativeClientRect(frame).x+area.x),area.width-Math.min(area.width,root.width*2)));
+                const y=Math.max(0,Math.min(anchor.y-(frame.y+frame.titleHeight+area.y),area.height-root.height));
+                editorPopupTranslation={x:area.x+x-root.x,y:area.y+y-root.y};
+                const base=normal.commands.slice(0,normal.popup.commandStart);
+                snapshot={...normal,popup:{...expanded.popup,commandStart:base.length},commands:[...base,...menuCommands]};
+            }
+        }else if(!snapshot.popup)window.browserEditorMenuAnchor=null;
+        const globalMenus = theme?.bundle?.shellAppearance?.menuBar?.mode === 'application' && shellSettings.gnomePanelVisible && !window.fullscreen && window.role !== 'desktop';
+        let applicationMenu = globalMenus ? snapshot.applicationMenu : null;
+        let menuHeight = applicationMenu?.height || 0;
+        if (menuHeight !== (window.menuPresentationHeight || 0)) {
+            snapshot = bridge.render(window.app, WINDOW_ID, nativeClientRect(frame).width, frame.contentHeight + menuHeight);
+            applicationMenu = globalMenus ? snapshot.applicationMenu : null;
+            menuHeight = applicationMenu?.height || 0;
+        }
+        window.menuPresentationHeight = menuHeight;
+        window.menuPresentationTop = applicationMenu?.y || 0;
+        window.applicationMenu = applicationMenu;
+        let popup = snapshot.popup;
+        let popupTranslation = {x:0, y:!popup || popup.rect.y >= window.menuPresentationTop ? -menuHeight : 0};
+        if(editorPopupTranslation)popupTranslation=editorPopupTranslation;
+        if (popup && window.applicationMenuAnchor && globalMenus && window === activeWindow && foregroundActive) {
+            const anchor = window.applicationMenuAnchor;
+            anchor.popupOrigin ||= {x:popup.rect.x, y:popup.rect.y};
+            popupTranslation = {
+                x: anchor.x - frame.x - nativeClientRect(frame).x - anchor.popupOrigin.x,
+                y: anchor.y + anchor.height - frame.y - frame.titleHeight - anchor.popupOrigin.y,
+            };
+        } else if (!popup) window.applicationMenuAnchor = null;
+        window.popupPresentationTranslation = popupTranslation;
+        if (popup) popup = {...popup, rect:{...popup.rect, x:popup.rect.x+popupTranslation.x, y:popup.rect.y+popupTranslation.y}};
+        window.popup = popup;
         if (
             snapshot.dialog &&
             !window.dialogTaskbarId &&
@@ -71,7 +120,21 @@ export function composeNativeWindowStack({
         const popupCommands = Number.isInteger(commandStart)
             ? snapshot.commands.slice(commandStart)
             : [];
-        const adaptCommand = command => {
+        // Retained Paper engines omit the dark suffix from paged rich text.
+        // Use the actual checked native View item (paper::FORCE_DARK_MODE_MENU),
+        // retained from accepted patches, rather than duplicating preferences.
+        const paperDarkItem = window.entrypoint === 'rice-paper'
+            ? bridge.applicationMenus?.windows.get(`${window.app}:${WINDOW_ID}`)?.get('38') : null;
+        const paperRichDark = paperDarkItem?.kind === 14 && Boolean(paperDarkItem.state & (1 << 5));
+        const adaptCommand = input => {
+            let command = input;
+            if (paperRichDark && command.type === 'text' && command.role === 'editor' &&
+                /^editor:rich(?:~|:)/u.test(command.text)) {
+                const end = command.text.indexOf(':', 'editor:'.length);
+                if (end > 0 && !command.text.slice(0, end).endsWith('~dark')) {
+                    command = Object.freeze({...command, text: command.text.slice(0, end) + '~dark' + command.text.slice(end)});
+                }
+            }
             if (command.type === "text" && shellSettings.largeText) {
                 return Object.freeze({
                     ...command,
@@ -88,7 +151,7 @@ export function composeNativeWindowStack({
                 })
                 : command;
         };
-        const commands = baseCommands.map(adaptCommand);
+        const commands = removeApplicationMenuBand(baseCommands, window.menuPresentationTop, menuHeight).map(adaptCommand);
         const chrome = theme ? nativeChromeTheme(theme) : null;
         const tiled = !!window.autoTileRestoreFrame;
         const tileControls = tiled ? tileControlAvailability?.(window) || {} : {};
@@ -106,18 +169,28 @@ export function composeNativeWindowStack({
             : actionLabel === null ? null : `${actionLabel} · ${availability}`;
         return Object.freeze({
             ...snapshot,
+            height: frame.contentHeight,
+            popup,
+            applicationMenu: applicationMenu ? {...applicationMenu, activeTarget:snapshot.popup ? window.applicationMenuAnchor?.target || null : null} : null,
+            menuPresentationHeight: menuHeight,
             commands: Object.freeze(commands),
-            popupCommands: Object.freeze(popupCommands.map(adaptCommand)),
+            popupCommands: Object.freeze(translateMenuCommands(popupCommands, popupTranslation.x, popupTranslation.y).map(adaptCommand)),
             app: snapshot.app.toString(),
             window: snapshot.window.toString(),
             title: window.title,
             entrypoint: window.entrypoint,
-            applicationId: window.applicationId,
+            applicationId: window.riceAppId || window.applicationId,
+            riceAppId: window.riceAppId || "",
             iconName: window.iconName || "",
             role: window.role,
             dialogOnly: Boolean(window.dialogOnly),
+            editorRegions:window.editorRegions||null,editorShapeRevision:window.editorShapeRevision||0,
+            fileChooser: Boolean(window.fileChooser),
+            actorPopup:window.transientPopup===true&&window.riceAppId==='org.ricewm.gnome.actor-popup',
+            transientPopup:Boolean(window.transientPopup),
             titleTools: Object.freeze([...(window.titleTools || [])]),
             active: foregroundActive && window === activeWindow,
+            applicationActive: Boolean(foregroundActive && window === applicationWindow),
             workspace: window.workspace,
             taskbarId: window.taskbarId,
             dialogTaskbarId: snapshot.dialog
@@ -132,8 +205,8 @@ export function composeNativeWindowStack({
             frame: Object.freeze({ ...frame }),
             layoutTransition: window.layoutTransition || null,
             tileClip: window.tileClip || null,
-            resizeHandles: window.resizable !== false && window.role !== "desktop" && !window.dialogOnly && !window.maximized && !window.fullscreen
-                ? nativeResizeHandles(frame) : [],
+            resizeHandles: window.resizable !== false && window.role !== "desktop" && !window.maximized && !window.fullscreen && nativeWindowResizeFrame(window, snapshot.dialog)
+                ? nativeResizeHandles(nativeWindowResizeFrame(window, snapshot.dialog)) : [],
             chrome: chrome ? {...chrome,windowDecorations:{...chrome.windowDecorations,tiled,showTileControls,tileControls,maximizable:window.maximizable!==false}} : null,
             tiled, titleControlTooltip,
             hoveredControl: hoveredTitleControl?.app === window.app &&

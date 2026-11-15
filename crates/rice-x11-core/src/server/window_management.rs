@@ -50,6 +50,10 @@ impl DisplayServer {
         })};
         let border = if has(2) || has(4) { WM_BORDER_WIDTH } else { 0 };
         let top = if has(8) { WM_TITLE_HEIGHT } else { border };
+        if let Some(v)=self.wm_window_chrome {
+            let has_border=has(2)||has(4);
+            return (if has_border {v[3]as u16}else{0},if has_border {v[1]as u16}else{0},if has(8){v[4]as u16}else if has_border {v[0]as u16}else{0},if has_border {v[2]as u16}else{0});
+        }
         (border, border, top, border)
     }
 

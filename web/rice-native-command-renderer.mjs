@@ -1,7 +1,9 @@
 import {RiceThemeSkinRenderer} from './rice-theme-skin-renderer.mjs';
+import {paintGridDecorations} from './rice-grid-decoration-paint.mjs';
 import {desktopThemeFont,themeColor} from './rice-theme-customization.mjs';
 import {classicUiFont, ensureClassicUiFonts} from "./rice-classic-ui.mjs";
-import {isDocumentEditor, paintDocumentEditor} from './rice-document-editor-layout.mjs';
+import {isDocumentEditor, paintDocumentEditor, paintShapedTextSelection} from './rice-document-editor-layout.mjs';
+import {parsePresentation} from './rice-native-editor-renderer.mjs';
 import { documentCanvasFont, singleLineGeometry, documentTextBlockGeometry, ensureDocumentTextFonts } from "./rice-document-text-metrics.mjs";
 // Advertised only when paired with the matching native snapshot decoder.
 export const GRID_TEXT_STYLE_RENDERER_VERSION = 1;
@@ -54,6 +56,36 @@ function overlaps(rect, clip) {
         rect.y + rect.height > clip.y;
 }
 
+function accentPanelText(command, surfaces, chrome) {
+    // Retained native trees can give both a panel and its labels ACCENT.
+    // Labels normally use accent ink, but on that solid face they need the
+    // contrasting ink. Resolve against the last painted surface,
+    // so an intervening neutral control keeps its ordinary accent label.
+    const sameRgb = (left, right) => Array.isArray(left) && Array.isArray(right) &&
+        left.slice(0, 3).every((channel, index) => channel === right[index]);
+    if (command.type !== 'text' || command.font || command.documentText ||
+        command.documentEditor || command.brand || command.gradient ||
+        !sameRgb(command.color, chrome?.selection)) return command;
+    const rect = command.rect;
+    for (let index = surfaces.length - 1; index >= 0; index--) {
+        const surface = surfaces[index];
+        if (!overlaps(rect, surface.rect)) continue;
+        if (rect.x < surface.rect.x || rect.y < surface.rect.y ||
+            rect.x + rect.width > surface.rect.x + surface.rect.width ||
+            rect.y + rect.height > surface.rect.y + surface.rect.height) return command;
+        if (!sameRgb(surface.color, command.color)) return command;
+        const linear = channel => channel / 255 <= .04045
+            ? channel / 255 / 12.92 : ((channel / 255 + .055) / 1.055) ** 2.4;
+        const luminance = linear(surface.color[0]) * .2126 +
+            linear(surface.color[1]) * .7152 + linear(surface.color[2]) * .0722;
+        return {...command, color: [
+            ...(luminance >= .179129 ? [10, 8, 13] : [255, 255, 255]),
+            command.color[3] ?? 255,
+        ]};
+    }
+    return command;
+}
+
 // An image underlay is captured before the rest of the command list paints.
 // Controls in that same list can cover it without separate popup/dialog
 // metadata. Replaying only the image would erase those foreground pixels.
@@ -102,9 +134,9 @@ export function paintStructuralGlass(
     const sourceHeight = Math.max(1, sourceBottom - sourceY);
     context.filter = "blur(10px) saturate(1.16) contrast(1.025)";
     context.drawImage(
-        source,
-        sourceX,
-        sourceY,
+        source.surface || source,
+        sourceX - (source.surface ? source.x : 0),
+        sourceY - (source.surface ? source.y : 0),
         sourceWidth,
         sourceHeight,
         rect.x - (sampleRect.x - sourceX),
@@ -276,25 +308,62 @@ export class RiceNativeCommandRenderer {
         if(chrome?.typography?.family==='manrope'||chrome?.typography?.titleFamily==='manrope')this.#loadBrandFont();
         const context = this.context;
         this.skinRenderer ||= new RiceThemeSkinRenderer(()=>this.onDamage());
+        // Retained native engines can emit an input skin after a document
+        // editor's glyphs. Document content owns its paint, including a fully
+        // transparent shaped editor; desktop input skins must never cover it.
+        // Paper's forced-dark presentation likewise owns its surface and ink.
+        const documentSurfaces=new Set(),documentClips=[];
+        const rectKey=rect=>`${rect.x},${rect.y},${rect.width},${rect.height}`;
+        for(const command of commands){
+            if(command.type==='push-clip')documentClips.push(command.rect);
+            else if(command.type==='pop-clip')documentClips.pop();
+            else if(command.type==='text'){
+                const forcedDark=command.role==='editor'&&parsePresentation(command.text).forceDarkMode;
+                if(!isDocumentEditor(command)&&!forcedDark)continue;
+                documentSurfaces.add(rectKey(command.rect));
+                documentSurfaces.add(rectKey(documentClips.reduce(intersectRects,command.rect)));
+                // Native TextEditor clips enclose the whole input face even
+                // when its text rectangle is inset by theme padding.
+                if(forcedDark&&documentClips.length)documentSurfaces.add(rectKey(documentClips.reduce(intersectRects)));
+            }
+        }
+        const documentSkin=command=>command.type==='theme-surface'&&command.surfaceRole==='input'&&documentSurfaces.has(rectKey(command.rect));
         const skippedFaces=new Set();
         for(let i=0;i<commands.length;i++)if(commands[i].type==='theme-surface'){
+            if(documentSkin(commands[i]))continue;
             const tag=commands[i],skin=this.skinRenderer.style(chrome,tag.surfaceRole,tag.surfaceState);
             for(let j=i-1;j>=0&&['fill','border','shaped-fill','shaped-border','glass','stroke-line'].includes(commands[j].type);j--){
                 const command=commands[j];if(!command.rect||!Object.keys(tag.rect).every(key=>command.rect[key]===tag.rect[key]))continue;
                 const face=['fill','shaped-fill','glass'].includes(command.type),border=['border','shaped-border'].includes(command.type);
-                if(face&&(skin.background!==undefined||skin.gradient||skin.artwork&&this.skinRenderer.image(skin.artwork))||border&&skin.border!==undefined)skippedFaces.add(j);
+                if(face&&(skin.background!==undefined||skin.gradient||skin.artwork&&this.skinRenderer.image(skin.artwork))||border&&(skin.border!==undefined||skin.rims?.length||skin.bevel||skin.bevels?.length))skippedFaces.add(j);
             }
         }
         let surface=null,iconOverride=null;
         let clipDepth = 0;
         const clipStack = [];
+        const paintedSurfaces = [];
         try {
             for (let commandIndex = 0; commandIndex < commands.length; commandIndex++) {
                 if(skippedFaces.has(commandIndex))continue;
                 let command = commands[commandIndex];
                 if(command.type==='icon-override'){iconOverride=command;continue;}
-                if(command.type==='theme-surface'){surface=command;this.skinRenderer.paint(context,command.rect,chrome,command.surfaceRole,command.surfaceState);continue;}
+                if (command.type === 'theme-surface') {
+                    if (documentSkin(command)) {surface = null; continue;}
+                    surface = command;
+                    this.skinRenderer.paint(context, command.rect, chrome, command.surfaceRole, command.surfaceState);
+                    const skin = this.skinRenderer.style(chrome, command.surfaceRole, command.surfaceState);
+                    if (skin.background !== undefined || skin.gradient || skin.artwork) paintedSurfaces.push({
+                        rect: clipStack.length ? intersectRects(command.rect, clipStack.at(-1)) : command.rect,
+                        color: !skin.gradient && !skin.artwork ? themeColor(skin.background) : null,
+                    });
+                    continue;
+                }
                 if(surface&&command.type==='text'&&!command.font&&command.rect.x>=surface.rect.x&&command.rect.y>=surface.rect.y&&command.rect.x+command.rect.width<=surface.rect.x+surface.rect.width&&command.rect.y+command.rect.height<=surface.rect.y+surface.rect.height){const foreground=this.skinRenderer.style(chrome,surface.surfaceRole,surface.surfaceState).foreground;if(foreground)command={...command,color:themeColor(foreground,command.color)};}
+                if(surface && /^(?:scrollbar(?:Decrement|Increment)(?:Horizontal|Vertical)|checkboxGlyph|radioGlyph|switchGlyph)$/.test(surface.surfaceRole) && command.type==='fill' && command.rect.x>=surface.rect.x && command.rect.y>=surface.rect.y && command.rect.x+command.rect.width<=surface.rect.x+surface.rect.width && command.rect.y+command.rect.height<=surface.rect.y+surface.rect.height){
+                    const skin=this.skinRenderer.style(chrome,surface.surfaceRole,surface.surfaceState);
+                    if(skin.artwork && this.skinRenderer.image(skin.artwork))continue;
+                    if(skin.foreground)command={...command,color:themeColor(skin.foreground,command.color)};
+                }
                 const rect = command.rect;
                 if (command.type === "pop-clip") {
                     if (clipDepth > 0) {
@@ -330,8 +399,13 @@ export class RiceNativeCommandRenderer {
                     // commands before any renderer-specific work begins.
                     continue;
                 } else if (command.type === "fill") {
+                    const color = this.#materialFillColor(command);
+                    paintedSurfaces.push({
+                        rect: clipStack.length ? intersectRects(rect, clipStack.at(-1)) : rect,
+                        color: (color?.[3] ?? 255) === 255 ? color : null,
+                    });
                     context.fillStyle = rgbaColor(
-                        this.#materialFillColor(command),
+                        color,
                     );
                     context.beginPath();
                     if (command.shape === "wedged") {
@@ -349,6 +423,8 @@ export class RiceNativeCommandRenderer {
                     if(rect.width<=w){context.moveTo(rect.x+w/2,rect.y);context.lineTo(rect.x+w/2,rect.y+rect.height);}
                     else {context.moveTo(rect.x,rect.y+w/2);context.lineTo(rect.x+rect.width,rect.y+w/2);}
                     context.stroke();context.restore();
+                } else if(command.type==='grid-decorations'){
+                    paintGridDecorations(context,command);
                 } else if (command.type === "dotted-line") {
                     context.save();
                     context.strokeStyle = rgbaColor(command.color);
@@ -390,7 +466,7 @@ export class RiceNativeCommandRenderer {
                         this.terminalImageCapture(target, {...image, replaySafe:
                             !terminalImageHasForeground(target, commands, end, image, this.paintOrigin)}) : null;
                     renderTerminalRows(context, commands.slice(commandIndex, end), this.terminalTheme, this.onDamage,
-                        this.motionRasterScale, this.paintOrigin, this.terminalImageVisible, capture);
+                        this.motionRasterScale, this.paintOrigin, this.terminalImageVisible, capture, this.decorativeMotion);
                     commandIndex = end - 1;
                 } else if (command.type === "group-box-frame") {
                     this.#renderGroupBoxFrame(command);
@@ -398,9 +474,12 @@ export class RiceNativeCommandRenderer {
                     this.#renderBalloonFrame(command);
                 } else if (command.type === "text-selection") {
                     this.#renderTextSelection(command, chrome);
+                } else if(command.type==='shaped-text-selection'){
+                    paintShapedTextSelection(context,command.editor);
                 } else if (command.type === "text") {
+                    command = accentPanelText(command, paintedSurfaces, chrome);
                     if (isDocumentEditor(command)) {
-                        const pending=ensureDocumentTextFonts(command,context.canvas?.ownerDocument);
+                        const pending=command.shapedEditor||command.shapedEditorPending?null:ensureDocumentTextFonts(command,context.canvas?.ownerDocument);
                         if(pending&&!this.documentFontWork.has(pending)){this.documentFontWork.add(pending);pending.then(()=>this.onDamage()).catch(()=>{});}
                         paintDocumentEditor(context,command);continue;
                     }
@@ -415,6 +494,29 @@ export class RiceNativeCommandRenderer {
                         try { this.#renderText(command, chrome); } finally { context.restore(); }
                     }
                 } else if (command.type === "icon") {
+                    // Tree rows own their ink and hover surface. The global
+                    // selection background is not the background of an idle
+                    // or hovered row, especially with classic caption-only
+                    // selection. Keep color artwork intact and use the row's
+                    // explicit foreground for monochrome glyphs.
+                    if(surface?.surfaceRole==='tabClose' && command.rect.x>=surface.rect.x && command.rect.y>=surface.rect.y && command.rect.x+command.rect.width<=surface.rect.x+surface.rect.width && command.rect.y+command.rect.height<=surface.rect.y+surface.rect.height){
+                        const skin=this.skinRenderer.style(chrome,'tabClose',surface.surfaceState);
+                        if(skin.artwork && this.skinRenderer.image(skin.artwork))continue;
+                        command={...command,scopedColor:true,...(skin.foreground?{color:themeColor(skin.foreground,command.color)}:{})};
+                    }
+                    if(surface?.surfaceRole==='treeItem' && command.rect.x>=surface.rect.x && command.rect.y>=surface.rect.y && command.rect.x+command.rect.width<=surface.rect.x+surface.rect.width && command.rect.y+command.rect.height<=surface.rect.y+surface.rect.height){
+                        const foreground=this.skinRenderer.style(chrome,'treeItem',surface.surfaceState).foreground;
+                        command={...command,scopedColor:true,...(foreground?{color:themeColor(foreground,command.color)}:{})};
+                    }
+                    // Ordinary controls already carry ink resolved against their
+                    // actual surface. Global icon-hover ink belongs to shell
+                    // surfaces and may be white on a light settings row.
+                    if (['button', 'flatButton'].includes(surface?.surfaceRole) &&
+                        command.rect.x >= surface.rect.x && command.rect.y >= surface.rect.y &&
+                        command.rect.x + command.rect.width <= surface.rect.x + surface.rect.width &&
+                        command.rect.y + command.rect.height <= surface.rect.y + surface.rect.height) {
+                        command = {...command, scopedColor: true};
+                    }
                     if(iconOverride){const overridden=this.icons.renderOverride(iconOverride.selector,command);iconOverride=null;if(overridden){this.icons.renderShortcutOverlay(command);continue;}}
                     const animated = command.animated === true;
                     if (animated) {
@@ -457,7 +559,7 @@ export class RiceNativeCommandRenderer {
                 } else if (command.type === "web-scene") {
                     this.renderWebScene(command);
                 } else if (command.type === "host-portal") {
-                    const surface = this.hostSurface(command.identity);
+                    const surface = this.hostSurface(command.identity,command.ownerApp);
                     if (surface) {
                         // Retained native buffers follow the same window clip,
                         // opacity and stacking as other RiceWM draw commands.
@@ -622,14 +724,14 @@ export class RiceNativeCommandRenderer {
             : rgbaColor(command.color);
         context.font = command.font
             ? documentCanvasFont(command)
-            : `${command.brand ? 700 : 400} ${Math.max(8, Number(command.sizePx) || 12)}px ` +
+            : `${command.brand || command.role === "emphasized" ? 700 : 400} ${Math.max(8, Number(command.sizePx) || 12)}px ` +
             (command.brand
                 ? '"Manrope", "RiceWM Sans", "RiceWM CJK", sans-serif'
                 : emojiOnlyFont
                     ? '"RiceWM Sans", "RiceWM Emoji", "Noto Color Emoji", "Apple Color Emoji", "RiceWM CJK", sans-serif'
                     : chrome?.redmond98 ? classicUiFont
                     : '"RiceWM Sans", "RiceWM CJK", sans-serif');
-        if(!command.font&&!command.brand&&chrome?.typography&&Object.keys(chrome.typography).length)context.font=desktopThemeFont(chrome.typography,'body',Math.max(8,Number(command.sizePx)||12));
+        if(!command.font&&!command.brand&&chrome?.typography&&Object.keys(chrome.typography).length)context.font=desktopThemeFont(command.role === 'emphasized' ? {...chrome.typography,bodyWeight:Math.max(700,Number(chrome.typography.bodyWeight)||400)} : chrome.typography,'body',Math.max(8,Number(command.sizePx)||12));
         if(command.font) context.textRendering='geometricPrecision';
         if (command.brand && command.gradient && command.text === "RiceWM") {
             context.textAlign = "left";
@@ -1355,10 +1457,10 @@ export class RiceNativeCommandRenderer {
             return;
         }
         const sourceWidth = Number(
-            source.displayWidth || source.videoWidth || source.naturalWidth || source.width,
+            source.riceNativeLogicalWidth || source.displayWidth || source.videoWidth || source.naturalWidth || source.width,
         );
         const sourceHeight = Number(
-            source.displayHeight || source.videoHeight || source.naturalHeight || source.height,
+            source.riceNativeLogicalHeight || source.displayHeight || source.videoHeight || source.naturalHeight || source.height,
         );
         if (!Number.isFinite(sourceWidth) || sourceWidth <= 0 ||
             !Number.isFinite(sourceHeight) || sourceHeight <= 0) {

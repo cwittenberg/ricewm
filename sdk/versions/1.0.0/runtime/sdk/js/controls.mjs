@@ -1,4 +1,5 @@
 import { documentEditorLayout, documentEditorPresentation, requestDocumentSelectionPoint } from './document-editor.mjs';
+import { BrowserEditorSurface } from './browser-editor-surface.mjs';
 import {
     CollectionControl,
     CommandControl,
@@ -56,17 +57,34 @@ export class Stack extends Container { static kind = 4; }
 export class SplitPane extends Container {
     static kind = 5;
     static properties = Object.freeze({
-        orientation: { default: "horizontal", validate: oneOf(["horizontal", "vertical"], "orientation"), reflect: false },
-        position: { default: 0.5, validate: numberInRange(0, 1, "position"), reflect: false },
+        orientation: { default: "horizontal", validate: oneOf(["horizontal", "vertical"], "orientation") },
+        position: { default: 0.5, validate: numberInRange(0, 1, "position") },
     });
     windowProc(current) {
-        if (current.type === Message.POINTER && ["down", "move", "up"].includes(current.detail?.kind)) {
-            const permille = Math.max(100, Math.min(900, Math.round(Number(current.detail?.x) || 0)));
-            const suffix = String(this.text || "").split(":").slice(2).filter(Boolean);
-            this.setProperty("position", permille / 1000);
-            this.setProperty("text", [`split:${permille}`, ...suffix].join(":"));
+        if (current.type === Message.POINTER && (!current.target || current.target === this)) {
+            const detail = current.detail || {};
+            if (detail.kind === "leave" || detail.kind === "cancel") this.splitDragging = false;
+            if (detail.kind === "down") this.splitDragging = detail.button === 1;
+            const owned = this.splitDragging && ["down", "move", "up"].includes(detail.kind)
+                && (detail.kind !== "up" || detail.button === 1);
+            if (detail.kind === "up" && detail.button === 1) this.splitDragging = false;
+            const coordinate = detail[this.values.orientation === 'vertical' ? 'y' : 'x'];
+            // Native hit testing starts a gesture only on this divider and
+            // supplies logical permille coordinates, including in RTL layouts.
+            // Hover and bubbled child selection must never move the divider.
+            if (owned && Number.isFinite(coordinate)) {
+                const permille = Math.max(100, Math.min(900, Math.round(coordinate)));
+                const suffix = String(this.text || "").split(":").slice(2).filter(Boolean);
+                this.setProperty("position", permille / 1000);
+                this.setProperty("text", [`split:${permille}`, ...suffix].join(":"));
+            }
         }
         return super.windowProc(current);
+    }
+    toWidget() {
+        const widget = super.toWidget();
+        const text = widget.text || `split:${Math.round(this.values.position * 1000)}`;
+        return Object.freeze({...widget, text: this.values.orientation === 'vertical' && !text.split(':').includes('vertical') ? text + ':vertical' : text});
     }
 }
 
@@ -279,13 +297,27 @@ export class Markdown extends ContentControl {
     static properties = Object.freeze({ selectable: { default: true, validate: bool, reflect: false } });
 }
 
-export class MenuBar extends ContainerControl { static kind = 30; }
+export class MenuBar extends ContainerControl {
+    static kind = 30;
+    static authoring = Object.freeze({
+        constructor: 'new MenuBar(properties,[new Menu({text:"File"},[MenuItem,...]),...])',
+        behavior: 'Native top-level menu bar. File lifecycle/export/help belong in menus. Use CommandRegistry.menuBar for a declarative tree whose items share command state with a Ribbon. For an integrated Ribbon header use text:"panel:office-ribbon-heading:flush:fixed" and ribbon.setHeader({leading:[menuBar]}).',
+    });
+}
 export class Menu extends ContainerControl {
     static kind = 31;
+    static authoring = Object.freeze({
+        constructor: 'new Menu({text:"File",...properties},[new MenuItem({text:"Open…"}),...])',
+        behavior: 'Native popup. Nested cascades use MenuItem({text:"Export"},[new Menu({},[commands])]); never Menu directly inside Menu. Native pointer/keyboard input opens and dismisses menus. Keep disabled command state synchronized with the document.',
+    });
     static properties = Object.freeze({ open: { default: false, validate: bool, reflect: false } });
 }
 export class MenuItem extends CommandControl {
     static kind = 32;
+    static authoring = Object.freeze({
+        constructor: 'new MenuItem({text:"Save\\tCtrl+S",...properties},[optional submenu Menu])',
+        behavior: 'Message.ACTIVATE invokes the command. Use checked/enabled/visible for state. text:"menu:separator", enabled:false creates a separator. The tab-separated shortcut is a displayed hint; implement the corresponding native keyboard handler. CommandRegistry shares actions and state across menu/ribbon instances.',
+    });
     static properties = Object.freeze({
         shortcut: { default: null, validate: value => optionalString(value, "shortcut"), reflect: false },
     });
@@ -298,7 +330,13 @@ export class ToolBar extends ContainerControl {
         example: "const undo=new Button({text:'Undo',state:State.START_ALIGNED}); undo.on(Message.ACTIVATE,undoChange); const tools=new ToolBar({},[undo]);",
     });
 }
-export class Tabs extends CollectionControl { static kind = 34; }
+export class Tabs extends CollectionControl {
+    static kind = 34;
+    static authoring = Object.freeze({
+        constructor: 'new Tabs(properties,[native Button tabs])',
+        behavior: 'Low-level native strip; TabControl is the equivalent name. Prefer TabView with TabPage for retained content, automatic selected state, arrow navigation and page visibility. Do not simulate destination tabs using a Row of ordinary buttons.',
+    });
+}
 export class Breadcrumb extends CollectionControl { static kind = 35; }
 export class Slider extends InputControl {
     static kind = 36;
@@ -414,6 +452,18 @@ export class Dialog extends OverlayControl {
         open: { default: true, validate: bool, reflect: false },
         modal: { default: true, validate: bool, reflect: false },
     });
+    static authoring = Object.freeze({
+        constructor:'new Dialog({text,open:true,modal:true},[content,actions])',
+        behavior:'open controls native visibility. Modal dialogs use the native dialog overlay and focus scope; modal:false is a modeless native panel. Use WindowManager for a separate owned dialog window. Close via setProperty("open",false); destroy() releases controls. DialogController provides promises, cancellation and focus return.',
+    });
+    get kind() { return this.values?.modal === false ? GroupBox.kind : super.kind; }
+    setProperty(name, value, options) {
+        if (name === 'visible' && this.values.open === false && value) value = false;
+        const result = super.setProperty(name, value, options);
+        if (name === 'open') super.setProperty('visible', this.values.open, options);
+        if (name === 'modal' && options?.render !== false) this.application?.invalidate(this);
+        return result;
+    }
 }
 export class Popover extends OverlayControl { static kind = 51; }
 export class Tooltip extends OverlayControl { static kind = 52; }
@@ -435,6 +485,7 @@ export class GroupBox extends ContainerControl { static kind = 55; }
 
 /** One native virtual viewport. Frame values are copied and frozen at ingress. */
 export class VirtualGrid extends SurfaceControl {
+    static acceptsChildren = false;
     static kind = 45;
     static properties = Object.freeze({
         frame: { default: null, validate: value => value === null ? null : copyGridFrame(value) },
@@ -558,7 +609,7 @@ export const CONTROL_CLASSES = Object.freeze({
     PasswordField, Markdown, MenuBar, Menu, MenuItem, ToolBar, Tabs, Breadcrumb, Slider,
     List, Table, Tree, IconGrid, TreeItem, VirtualGrid, Dialog, Popover, Tooltip,
     Notification: NotificationBanner, Accordion, GroupBox, WebSurface, TerminalSurface,
-    HostSurface, SceneSurface,
+    HostSurface, SceneSurface, BrowserEditorSurface,
 });
 
 export function createControl(type, properties = {}, children = []) {

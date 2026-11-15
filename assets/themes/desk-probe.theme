@@ -1,13 +1,13 @@
 {
   "$schema": "ricewm.theme/v2",
-  "name": "Desk Probe",
+  "name": "Desk",
   "appearance": {
     "taskbar.bar": "56432d",
     "taskbar.ridge": "897858",
     "taskbar.start": "bcab83",
     "taskbar.task": "d9cfb6",
     "taskbar.tray": "d9cfb6",
-    "taskbar.text": "392f24",
+    "taskbar.text": "f8f3e8",
     "accent": "aa743c",
     "menu.background": "efe6d1",
     "menu.alternate": "f8f3e8",
@@ -35,8 +35,12 @@
     "builtin": {
       "asset": "assets/worlds/desk-probe.riceapp",
       "id": "rice.scene.desk-probe",
-      "hash": "66a86e2f9153107f2fad18f8bf2d6a44307bb2169216115122bf75180b0b192a"
+      "hash": "6169864812863b4b1cc4146466f35a1645626079a17ff46110f06e76c1f02a12"
     }
   },
-  "description": "An animated under-desk drawer and live paper window probe. Full service presenters remain under development."
+  "description": "A wooden desktop with live paper applications, an animated drawer, a pencil holder for Rice Hub, and a basket linked to Trash.",
+  "layout": {
+    "dock.top_bar.visible": "true",
+    "dock.top_bar.transparent": "true"
+  }
 }

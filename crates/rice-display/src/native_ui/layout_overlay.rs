@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use rice_native_app_protocol::WidgetId;
 use rice_ui::{Point, Rect, RetainedTree, Size, Theme, WidgetKind, WidgetState};
 
-use super::layout::{layout_widget, preferred_size};
+use super::layout::{layout_widget, preferred_height_for_width, preferred_size};
 
 const MIN_DIALOG_WIDTH_CONTROLS: u32 = 12;
 const MAX_DIALOG_WIDTH_CONTROLS: u32 = 22;
@@ -314,14 +314,13 @@ pub(super) fn layout_dialog_overlay(
             height: available.height,
         }
     } else {
-        Size {
-            width: preferred
-                .width
-                .max(control.saturating_mul(MIN_DIALOG_WIDTH_CONTROLS))
-                .min(control.saturating_mul(MAX_DIALOG_WIDTH_CONTROLS))
-                .min(available.width),
-            height: preferred.height.min(available.height),
-        }
+        let width = preferred.width
+            .max(control.saturating_mul(MIN_DIALOG_WIDTH_CONTROLS))
+            .min(control.saturating_mul(MAX_DIALOG_WIDTH_CONTROLS))
+            .min(available.width);
+        // Form rows can become taller at the clamped dialog width. Measure
+        // that width before allocating the footer so actions keep their height.
+        Size { width, height: preferred_height_for_width(tree, dialog, width, theme).min(available.height) }
     };
     let rect = Rect {
         origin: Point {
