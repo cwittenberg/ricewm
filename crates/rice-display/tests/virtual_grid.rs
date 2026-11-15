@@ -507,7 +507,7 @@ fn document_paint_renders_blank_fill_borders_layout_and_retains_selection_outlin
     use rice_ui::grid_frame::{GridPaint,GridBorders,GridBorder};
     use rice_ui::Color;
     let (app,window,_)=ids();let mut frame=frame();
-    frame.styles[1].paint=Some(GridPaint{foreground:Some("#123456".into()),background:Some("#abcdef".into()),vertical:Some("bottom".into()),wrap:Some(true),strike:Some(true),borders:Some(GridBorders{bottom:Some(GridBorder{style:"double".into(),color:"#654321".into()}),..Default::default()})});
+    frame.styles[1].paint=Some(GridPaint{foreground:Some("#123456".into()),background:Some("#abcdef".into()),vertical:Some("bottom".into()),wrap:Some(true),strike:Some(true),borders:Some(GridBorders{bottom:Some(GridBorder{style:"double".into(),color:"#654321".into()}),..Default::default()}),decorations:None});
     let mut host=host(frame.encode().unwrap());let output=host.render(app,window,constraints()).unwrap();
     assert!(output.commands.iter().any(|c|matches!(c,DrawCommand::GridText{text,color,vertical:2,wrap:true,strike:true,..} if text=="125.50"&&*color==Color::opaque(0x12,0x34,0x56))));
     assert_eq!(output.commands.iter().filter(|c|matches!(c,DrawCommand::StrokeLine{color,width:1,pattern:0,..} if *color==Color::opaque(0x65,0x43,0x21))).count(),2);

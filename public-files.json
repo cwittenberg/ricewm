@@ -209,7 +209,7 @@
     "crates/rice-display/tests/color_control.rs": "e381ba7e572971206a13d8c6fd4851a2cbbfb0a93689e5485d5ac9d0283ab74d",
     "crates/rice-display/tests/grid_damage.rs": "1108de1949ca537adeee511beb6a8b3556cae70c8a867dcf50233effdae01e6e",
     "crates/rice-display/tests/native_ui/tab_folders.rs": "6bc587b66d159081378ad51121192d6ffe41fe4dde6484590f68a8a894e2e393",
-    "crates/rice-display/tests/virtual_grid.rs": "d37daa7b1584dd4bd17f08649a8335c7e2cf233135131b921b683af5885fa3ae",
+    "crates/rice-display/tests/virtual_grid.rs": "3df6d6d91abebc591e713a122a050155263a954bf306b82540bd3b2fe66b8908",
     "crates/rice-files/Cargo.toml": "a459f6a35591fe23dc7d11d6ab590bf4074dd6d800387ffc8dc45d07f1d2a5a7",
     "crates/rice-files/README.md": "b58748ee96f910dffe3a26b8df705c6ed1c933eee38a1fe7ea3d8c5d181b8320",
     "crates/rice-files/src/association.rs": "b542c1bfb259b99851554ec73ae9285b32229165f09a96d26181530b99f91ce4",
