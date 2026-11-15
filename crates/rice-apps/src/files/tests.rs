@@ -1775,18 +1775,17 @@ fn theme_layout_selects_real_folder_tree_and_independent_persistent_view_default
 }
 
 #[test]
-fn theme_zoom_and_automation_update_the_real_native_slider() {
+fn theme_zoom_and_native_input_update_the_real_native_slider() {
     use rice_native_app_protocol::{SettingEntry,SettingsResponse,SettingsResult};
     let (mut actor,_)=loaded_actor();
     actor.handle_settings_response(&SettingsResponse{request:request(1),result:SettingsResult::Values(vec![SettingEntry{key:"ricefiles.zoom".into(),value:"125".into()}])}).unwrap();
-    assert_eq!(actor.copilot_context()["zoomPercent"],125);
+    assert_eq!(actor.view_zoom_permille / 10,125);
     assert_eq!(actor.tree.get(widget_id(ZOOM_SLIDER)).unwrap().kind,WidgetKind::Slider);
-    actor.copilot_action("zoom",&serde_json::json!({"percent":200}),request(40)).unwrap();
+    actor.handle_event(&event(ZOOM_SLIDER,UiEvent::ValueChanged("1000/1000".into())),request(40)).unwrap();
     assert_eq!(actor.view_zoom_permille,2000);
     super::files_preferences::load(&mut actor,request(41));
     actor.handle_settings_response(&SettingsResponse{request:request(41),result:SettingsResult::Values(vec![SettingEntry{key:"ricefiles.zoom".into(),value:"125".into()}])}).unwrap();
     assert_eq!(actor.view_zoom_permille,2000,"unrelated preference refresh preserves the interactive zoom");
     actor.handle_event(&event(ZOOM_SLIDER,UiEvent::ValueChanged("1000/1000".into())),request(42)).unwrap();
     assert_eq!(actor.view_zoom_permille,2000);
-    for percent in [0,74,201] {assert!(actor.copilot_action("zoom",&serde_json::json!({"percent":percent}),request(43)).is_err());}
 }

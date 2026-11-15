@@ -108,7 +108,7 @@
     "crates/rice-apps/src/files/remote_tests.rs": "6b6b4334cd7cabace77661df3feed4e253f8cff76b87a9562f72dcf27319a119",
     "crates/rice-apps/src/files/safety_tests.rs": "fdffee9b676aa63cea87548b64fa77e59a47b8cf91c020bd7436d9481eca477b",
     "crates/rice-apps/src/files/source_drag_tests.rs": "5259b7956f9d73a1e39206fabdf4191fce013b2b90b16fae270e93f2d2eff5f9",
-    "crates/rice-apps/src/files/tests.rs": "cbb3487ed94a2a573e27a636681dea496892e7a100dc7c3781693b0caa01886f",
+    "crates/rice-apps/src/files/tests.rs": "c28c6f60819abd0c87d07af5b11bdbb127f6ad01c96f51faf93ae576c9e737ae",
     "crates/rice-apps/src/files/ux_tests.rs": "09d81455b65696eb590cd65b6e2a632e22cc48aa2ec00eb314afda705d494298",
     "crates/rice-apps/src/lib.rs": "d7074edca94c7c19330d8527086d637e07ab7950a57d32c3a1eeccd23e9cc9a3",
     "crates/rice-apps/src/time_format.rs": "56eead3b3ee8eb3bc652b9c265ed76366a7e218dba42b5049b7c91646260ff84",
