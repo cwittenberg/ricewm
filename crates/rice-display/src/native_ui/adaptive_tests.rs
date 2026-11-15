@@ -247,21 +247,29 @@ fn yellow_jacket_scrollbar_has_square_arrow_ends_and_a_proportional_thumb() {
             .expect("fixed scrollbar constraints"),
         )
         .expect("Yellow Jacket scrollbar render");
-    let square_fills = output
-        .commands
-        .iter()
-        .filter(|command| matches!(command, DrawCommand::Fill { radius: 0, .. }))
-        .count();
-    let square_borders = output
-        .commands
-        .iter()
-        .filter(|command| matches!(command, DrawCommand::Border { radius: 0, .. }))
-        .count();
-    assert_eq!(
-        square_fills, 17,
-        "track, ends, arrows, thumb, and grip marks are painted"
-    );
-    assert_eq!(square_borders, 4, "track, two ends, and thumb are outlined");
+    // Paired arrows occupy two square buttons at each end. Bevel and arrow
+    // rasterization may use multiple primitives; verify their visible bounds.
+    for y in [0, 17, 126, 143] {
+        assert!(output.commands.iter().any(|command| matches!(command,
+            DrawCommand::Fill { rect, radius: 0, .. }
+                if rect.origin.x == 0 && rect.origin.y == y
+                    && rect.size.width == 17 && rect.size.height == 17
+        )), "missing square arrow button at {y}");
+    }
+    assert!(output.commands.iter().any(|command| matches!(command,
+        DrawCommand::Border { rect, radius: 0, .. }
+            if rect.origin.x == 0 && rect.origin.y == 34
+                && rect.size.width == 17 && rect.size.height == 92
+    )), "track stays between the paired arrows");
+    assert!(output.commands.iter().any(|command| matches!(command,
+        DrawCommand::Fill { rect, radius: 0, .. }
+            if rect.origin.x == 0 && rect.origin.y == 61
+                && rect.size.width == 17 && rect.size.height == 23
+    )), "quarter-length thumb sits at forty percent of track travel");
+    assert!(!output.commands.iter().any(|command| matches!(command,
+        DrawCommand::Fill { radius, .. } | DrawCommand::Border { radius, .. }
+            if *radius != 0
+    )), "scrollbar chrome remains square");
 }
 
 #[test]

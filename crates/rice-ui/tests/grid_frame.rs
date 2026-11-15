@@ -14,7 +14,9 @@ fn logical_header_membership_keeps_disjoint_gaps_and_offscreen_other_axes() {
 
 #[test]
 fn legacy_headers_follow_visible_slot_selection_and_clear_without_selection() {
-    let mut f=fixture();assert!(f.row_header_selected(1));assert!(f.column_header_selected(1));
+    let mut f=fixture();
+    f.selection=Some(GridSelection{first_row:1,last_row:1,first_column:1,last_column:1});
+    assert!(f.row_header_selected(1));assert!(f.column_header_selected(1));
     assert!(!f.row_header_selected(0));assert!(!f.column_header_selected(0));assert!(!f.sheet_header_selected());
     f.selection=None;assert!(!f.row_header_selected(1));assert!(!f.column_header_selected(1));
 }
